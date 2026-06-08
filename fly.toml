@@ -1,0 +1,22 @@
+# Fly.io config. `fly launch` may adjust the app name to keep it globally unique.
+app = "rampedup-contact-finder"
+primary_region = "iad"   # US East; change if you prefer (e.g. "ord", "sjc", "lhr")
+
+[build]
+
+[env]
+  DEMO_MODE = "false"
+  DATA_DIR = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  # keep one machine always on so background jobs keep running between requests
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+# persistent volume for the jobs/ folder (created via: fly volumes create data)
+[mounts]
+  source = "data"
+  destination = "/data"
