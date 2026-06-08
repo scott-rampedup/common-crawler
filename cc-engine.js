@@ -242,15 +242,16 @@ function selectCandidates(records, { perDomainCap = 25, directoryRules = {}, gen
 
 // ---------------------------------------------------------------- live crawl (Phase 3 gap-fill)
 // When Common Crawl has nothing (or its index is down / 504s), go straight to the
-// live website: fetch the homepage, find the bio/contact pages it links to, follow
-// them one level deeper to individual profiles, and run the SAME extractor on each.
+// live website. To uncover EVERY matching page we read robots.txt, follow its
+// Sitemap(s) (incl. sitemap indexes and gzipped .xml.gz), and keep every same-domain
+// URL that fits the bio/contact criteria — plus homepage links + probe paths as a
+// backstop. We run the SAME extractor on each page, and we honor robots Disallow.
 // Politeness: serial, with delays, a real User-Agent, and a per-request timeout.
 
 const LIVE_PROBE_PATHS = ["/our-team/","/team/","/attorneys/","/lawyers/","/our-attorneys/",
   "/people/","/our-people/","/professionals/","/staff/","/leadership/","/our-firm/",
   "/about/","/about-us/","/contact/","/contact-us/"];
-const LIVE_DISCOVER_CAP = 40;                 // max pages we will fetch per domain
-const LINK_SKIP_EXT = /\.(pdf|docx?|xlsx?|pptx?|zip|rar|jpe?g|png|gif|svg|webp|mp4|mp3|css|js|ico|woff2?|ttf|eot|xml|rss)(\?|#|$)/i;
+const LINK_SKIP_EXT =/\.(pdf|docx?|xlsx?|pptx?|zip|rar|jpe?g|png|gif|svg|webp|mp4|mp3|css|js|ico|woff2?|ttf|eot|xml|rss)(\?|#|$)/i;
 
 // Pull same-domain <a href> links out of a page, cleaned and de-duplicated. (offline-testable)
 function extractSameDomainLinks(html, baseUrl, domain){
@@ -280,12 +281,123 @@ function isBioOrContactUrl(url, directoryRules = {}, genderMap = {}){
   return dir === "BIO URL" || dir === "Contact Us";
 }
 
+// ---- robots.txt + sitemaps: how we discover EVERY matching page ----
+
+// Parse robots.txt into { sitemaps:[urls], rules:[{allow,path}] } for our user-agent. (offline-testable)
+function parseRobots(text, ua = UA){
+  const uaLower = String(ua || "").toLowerCase();
+  const sitemaps = [];
+  const groups = []; let current = null; let lastWasAgent = false;
+
+  for(const raw of String(text || "").split(/\r?\n/)){
+    const line = raw.replace(/#.*$/, "").trim();
+    if(!line) continue;
+    const idx = line.indexOf(":");
+    if(idx < 0) continue;
+    const field = line.slice(0, idx).trim().toLowerCase();
+    const value = line.slice(idx + 1).trim();
+
+    if(field === "sitemap"){ if(value) sitemaps.push(value); continue; }
+    if(field === "user-agent"){
+      if(!lastWasAgent || !current){ current = { agents: [], rules: [] }; groups.push(current); }
+      current.agents.push(value.toLowerCase());
+      lastWasAgent = true;
+      continue;
+    }
+    if(field === "disallow" || field === "allow"){
+      if(!current){ current = { agents: ["*"], rules: [] }; groups.push(current); }
+      current.rules.push({ allow: field === "allow", path: value });
+    }
+    lastWasAgent = false;
+  }
+
+  // prefer rules from a group naming our agent; otherwise fall back to the "*" group
+  let rules = [];
+  for(const g of groups){ if(g.agents.some(a => a && a !== "*" && uaLower.includes(a))) rules = rules.concat(g.rules); }
+  if(!rules.length){ for(const g of groups){ if(g.agents.includes("*")) rules = rules.concat(g.rules); } }
+  return { sitemaps, rules };
+}
+
+function robotsPathMatches(pathname, pattern){
+  let p = pattern, anchored = false;
+  if(p.endsWith("$")){ anchored = true; p = p.slice(0, -1); }
+  const re = new RegExp("^" + p.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + (anchored ? "$" : ""));
+  return re.test(pathname);
+}
+
+// Is a path allowed by the robots rules? Longest-match wins; Allow beats equal-length Disallow. (offline-testable)
+function robotsAllows(pathname, rules = []){
+  let best = null;   // { allow, len }
+  for(const r of rules){
+    if(r.path === ""){ if(!r.allow && (!best || best.len === 0)) best = best || { allow: true, len: 0 }; continue; }
+    if(robotsPathMatches(pathname, r.path)){
+      const len = r.path.length;
+      if(!best || len > best.len || (len === best.len && r.allow)) best = { allow: r.allow, len };
+    }
+  }
+  return best ? best.allow : true;
+}
+
+// Pull <loc> URLs out of a sitemap (or sitemap index) XML blob. (offline-testable)
+function extractSitemapLocs(xml){
+  const text = String(xml || "");
+  const isIndex = /<sitemapindex[\s>]/i.test(text);
+  const locs = [];
+  const re = /<loc>\s*([^<]+?)\s*<\/loc>/gi; let m;
+  while((m = re.exec(text))){
+    const u = m[1].replace(/&amp;/g, "&").replace(/&#38;/g, "&").trim();
+    if(u) locs.push(u);
+  }
+  return { isIndex, locs };
+}
+
+// Walk a site's sitemaps and return every same-domain bio/contact URL that robots allows.
+async function collectSitemapCandidates(domain, opts, sitemaps, rules){
+  const { directoryRules = {}, genderMap = {}, _fetchDoc = fetchDoc,
+          maxSitemaps = 60, maxUrls = 60000, candidateCap = 2000 } = opts;
+  const root = String(domain || "").toLowerCase().replace(/^www\./, "");
+  const out = new Set();
+  const seenSm = new Set();
+  const queue = [...sitemaps];
+  let fetched = 0, scanned = 0;
+
+  while(queue.length && fetched < maxSitemaps && scanned < maxUrls && out.size < candidateCap){
+    const sm = queue.shift();
+    if(seenSm.has(sm)) continue;
+    seenSm.add(sm);
+    const xml = await _fetchDoc(sm);
+    fetched++;
+    await sleep(150);                              // polite pause between sitemap fetches
+    if(!xml) continue;
+
+    const { isIndex, locs } = extractSitemapLocs(xml);
+    if(isIndex){
+      for(const loc of locs){ if(seenSm.size + queue.length < maxSitemaps * 4) queue.push(loc); }
+      continue;
+    }
+    for(const loc of locs){
+      if(scanned++ > maxUrls || out.size >= candidateCap) break;
+      let abs; try{ abs = new URL(loc); }catch{ continue; }
+      if(abs.protocol !== "http:" && abs.protocol !== "https:") continue;
+      const host = abs.hostname.toLowerCase().replace(/^www\./, "");
+      if(host !== root && !host.endsWith("." + root)) continue;
+      if(LINK_SKIP_EXT.test(abs.pathname)) continue;
+      if(!isBioOrContactUrl(abs.toString(), directoryRules, genderMap)) continue;
+      if(!robotsAllows(abs.pathname, rules)) continue;
+      abs.hash = "";
+      out.add(abs.toString());
+    }
+  }
+  return [...out];
+}
+
 // Fetch a page over plain HTTP/1.1 using Node's built-in http(s). We deliberately
 // avoid global fetch here: live crawling hits thousands of arbitrary servers, and
 // fetch's HTTP/2 path can emit an UNCATCHABLE socket 'error' event when a server
 // drops the connection, which kills the whole run. http(s) lets us handle every
 // failure locally and just return "" for a bad page. Returns "" on any problem.
-function httpGetRaw(url, redirectsLeft = 4){
+function httpGetRaw(url, opts = {}){
+  const { redirectsLeft = 4, accept = /html/, maxBytes = 4 * 1024 * 1024 } = opts;
   return new Promise((resolve) => {
     let settled = false;
     const done = (v) => { if(!settled){ settled = true; resolve(v); } };
@@ -297,7 +409,7 @@ function httpGetRaw(url, redirectsLeft = 4){
       method: "GET",
       headers: {
         "User-Agent": UA,
-        "Accept": "text/html,application/xhtml+xml",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Encoding": "gzip, deflate, br",
         "Connection": "close",
       },
@@ -310,11 +422,11 @@ function httpGetRaw(url, redirectsLeft = 4){
         res.resume();                                   // drain & free the socket
         let next;
         try{ next = new URL(res.headers.location, u).toString(); }catch{ return done(""); }
-        return done(httpGetRaw(next, redirectsLeft - 1));
+        return done(httpGetRaw(next, { ...opts, redirectsLeft: redirectsLeft - 1 }));
       }
 
       const ct = (res.headers["content-type"] || "").toLowerCase();
-      if(status !== 200 || (ct && !ct.includes("html"))){ res.resume(); return done(""); }
+      if(status !== 200 || (accept && ct && !accept.test(ct))){ res.resume(); return done(""); }
 
       const enc = (res.headers["content-encoding"] || "").toLowerCase();
       let stream = res;
@@ -324,9 +436,14 @@ function httpGetRaw(url, redirectsLeft = 4){
         else if(enc === "br") stream = res.pipe(zlib.createBrotliDecompress());
       }catch{ res.resume(); return done(""); }
 
-      const chunks = []; let bytes = 0; const MAX = 4 * 1024 * 1024;   // 4 MB cap
-      stream.on("data", (c) => { bytes += c.length; if(bytes <= MAX) chunks.push(c); else { req.destroy(); } });
-      stream.on("end", () => done(Buffer.concat(chunks).toString("utf8")));
+      const chunks = []; let bytes = 0;
+      stream.on("data", (c) => { bytes += c.length; if(bytes <= maxBytes) chunks.push(c); else { req.destroy(); } });
+      stream.on("end", () => {
+        let buf = Buffer.concat(chunks);
+        // auto-gunzip a gzip-magic body (e.g. sitemap .xml.gz served without content-encoding)
+        if(buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b){ try{ buf = zlib.gunzipSync(buf); }catch{ /* keep raw */ } }
+        done(buf.toString("utf8"));
+      });
       stream.on("error", () => done(""));
       res.on("error", () => done(""));
     });
@@ -353,42 +470,82 @@ async function liveFetchPage(url){
       return await res.text();
     }catch{ return ""; }
   }
-  return httpGetRaw(url);
+  return httpGetRaw(url, { accept: /html/ });
+}
+
+// Fetch robots.txt / sitemaps — XML, plain text, or gzipped, possibly large.
+async function fetchDoc(url){
+  return httpGetRaw(url, { accept: /xml|text|gzip|octet-stream|html|rss|plain/, maxBytes: 30 * 1024 * 1024 });
 }
 
 async function liveCrawl(domain, opts = {}){
-  const { wireless, genderMap = {}, directoryRules = {}, perDomainCap = 25, _liveFetch = liveFetchPage } = opts;
+  const { wireless, genderMap = {}, directoryRules = {} } = opts;
+  const liveFetch = opts._liveFetch || liveFetchPage;     // fetch HTML pages
+  const docFetch  = opts._fetchDoc  || fetchDoc;          // fetch robots.txt / sitemaps
+  const maxPages = opts.maxPages || Number(process.env.LIVE_MAX_PAGES) || 150;   // raise to crawl more per site
+  const perDomainCap = opts.perDomainCap || maxPages;
   const today = new Date().toISOString().slice(0, 10);
   const records = [];
   const seen = new Set();
 
-  // 1) homepage — try the bare host, then www
+  // 0) robots.txt — gives us sitemap locations (to find every page) AND Disallow rules (to be polite)
+  let rules = [], sitemaps = [];
+  for(const ru of [`https://${domain}/robots.txt`, `https://www.${domain}/robots.txt`]){
+    const txt = await docFetch(ru);
+    if(txt){ const parsed = parseRobots(txt, UA); rules = parsed.rules; sitemaps = parsed.sitemaps; break; }
+  }
+  if(!sitemaps.length) sitemaps = [`https://${domain}/sitemap.xml`, `https://${domain}/sitemap_index.xml`];
+  const allowed = (urlStr) => { try{ return robotsAllows(new URL(urlStr).pathname, rules); }catch{ return true; } };
+
+  // 1) homepage — try the bare host, then www (also our link-discovery seed)
   let homeHtml = "", homeUrl = "";
   for(const u of [`https://${domain}/`, `https://www.${domain}/`]){
+    if(!allowed(u)) continue;
     seen.add(u);
-    homeHtml = await _liveFetch(u);
+    homeHtml = await liveFetch(u);
     if(homeHtml){ homeUrl = u; break; }
     await sleep(250);
   }
-  if(!homeHtml) return records;                 // site unreachable / does not resolve
+  if(homeHtml){
+    const homeRec = extractRecord(homeHtml, homeUrl, { wireless, genderMap, directoryRules, source:"Live Crawl", timestamp: today });
+    if(homeRec) records.push(homeRec);
+  }
 
-  // small firms sometimes put a person right on the homepage
-  const homeRec = extractRecord(homeHtml, homeUrl, { wireless, genderMap, directoryRules, source:"Live Crawl", timestamp: today });
-  if(homeRec) records.push(homeRec);
-
-  // 2) build the fetch queue: bio/contact links from the homepage + common probe paths
+  // 2) build the candidate queue (respecting robots Disallow)
   const queue = [];
-  const enqueue = (url) => { if(!seen.has(url) && queue.length < LIVE_DISCOVER_CAP){ seen.add(url); queue.push(url); } };
-  for(const u of extractSameDomainLinks(homeHtml, homeUrl, domain)){
-    if(isBioOrContactUrl(u, directoryRules, genderMap)) enqueue(u);
+  const enqueue = (url) => {
+    if(seen.has(url) || queue.length >= maxPages * 4) return;
+    if(!allowed(url)) return;
+    seen.add(url); queue.push(url);
+  };
+
+  // 2a) PRIMARY: every bio/contact URL listed in the site's sitemaps
+  const fromSitemaps = await collectSitemapCandidates(domain,
+    { directoryRules, genderMap, _fetchDoc: docFetch,
+      maxSitemaps: opts.maxSitemaps, maxUrls: opts.maxSitemapUrls, candidateCap: maxPages * 4 },
+    sitemaps, rules);
+  for(const u of fromSitemaps) enqueue(u);
+  const sitemapMatches = fromSitemaps.length;
+
+  // 2b) plus anything the homepage links to, and common probe paths (catches pages absent from sitemaps)
+  if(homeHtml){
+    for(const u of extractSameDomainLinks(homeHtml, homeUrl || `https://${domain}/`, domain)){
+      if(isBioOrContactUrl(u, directoryRules, genderMap)) enqueue(u);
+    }
   }
   for(const p of LIVE_PROBE_PATHS) enqueue(`https://${domain}${p}`);
 
-  // 3) bounded crawl: fetch each, extract, and follow individual bio links one level deeper
+  if(sitemapMatches > maxPages){
+    console.log(`  ${domain}: ${sitemapMatches} matching pages in sitemaps — fetching first ${maxPages} (raise LIVE_MAX_PAGES to get all)`);
+  }
+
+  // 3) crawl the queue: fetch, extract, and follow deeper bio links (capped)
+  let fetchedPages = 0;
   for(let i = 0; i < queue.length; i++){
-    if(records.length >= perDomainCap) break;
+    if(records.length >= perDomainCap || fetchedPages >= maxPages) break;
     const url = queue[i];
-    const html = await _liveFetch(url);
+    const html = await liveFetch(url);
+    fetchedPages++;
     await sleep(200);                            // polite pause between page fetches
     if(!html) continue;
     const out = extractRecord(html, url, { wireless, genderMap, directoryRules, source:"Live Crawl", timestamp: today });
@@ -629,7 +786,8 @@ async function run(csvPath, opts = {}){
 }
 
 module.exports = { run, runDomains, readDomains, selectCandidates, warcToHtml, queryIndex, fetchWarc,
-  liveCrawl, extractSameDomainLinks, isBioOrContactUrl, COLUMNS };
+  liveCrawl, extractSameDomainLinks, isBioOrContactUrl, COLUMNS,
+  parseRobots, robotsAllows, extractSitemapLocs };
 
 // ---------------------------------------------------------------- offline self-tests
 if(require.main === module){
@@ -724,10 +882,44 @@ if(require.main === module){
           `<h1>Jane Doe</h1><meta property="og:description" content="Partner at Demo Firm.">`
           + `<a href="mailto:jane.doe@demo-firm.com">e</a><a href="tel:+12012012345">c</a>`,
       };
-      const liveRecs = await liveCrawl("demo-firm.com", { wireless, _liveFetch: async (u) => livePages[u] || "" });
+      const liveRecs = await liveCrawl("demo-firm.com", { wireless,
+        _liveFetch: async (u) => livePages[u] || "", _fetchDoc: async () => "" });   // no robots/sitemap → offline
       const jane = liveRecs.find(r => String(r["Email Address"]).toLowerCase() === "jane.doe@demo-firm.com");
       ok("liveCrawl follows bio links and extracts a record", !!jane);
       ok("liveCrawl tags source = Live Crawl", jane && jane["Source"] === "Live Crawl");
+
+      // 6) robots.txt parsing: sitemaps + agent-specific rules
+      const robots = parseRobots(
+        "Sitemap: https://x.com/sitemap.xml\nUser-agent: *\nDisallow: /private/\nAllow: /private/ok\n", "RampedUp-CC-Engine/0.1");
+      ok("parseRobots extracts sitemap urls", robots.sitemaps[0] === "https://x.com/sitemap.xml");
+      ok("robotsAllows blocks a disallowed path", robotsAllows("/private/secret", robots.rules) === false);
+      ok("robotsAllows permits a normal path", robotsAllows("/attorneys/jane/", robots.rules) === true);
+      ok("robotsAllows: longer Allow overrides Disallow", robotsAllows("/private/ok", robots.rules) === true);
+
+      // 7) sitemap parsing: index vs urlset
+      const idx2 = extractSitemapLocs(`<sitemapindex><sitemap><loc>https://x.com/sm1.xml</loc></sitemap></sitemapindex>`);
+      ok("extractSitemapLocs detects a sitemap index", idx2.isIndex === true && idx2.locs[0] === "https://x.com/sm1.xml");
+      const set2 = extractSitemapLocs(`<urlset><url><loc>https://x.com/attorneys/jane/</loc></url><url><loc>https://x.com/blog/p</loc></url></urlset>`);
+      ok("extractSitemapLocs lists page urls", set2.isIndex === false && set2.locs.length === 2);
+
+      // 8) liveCrawl discovers bios from a sitemap (not linked on the homepage), offline
+      const smDomain = "smfirm.com";
+      const smPages = {
+        [`https://${smDomain}/robots.txt`]: `Sitemap: https://${smDomain}/sitemap.xml\nUser-agent: *\nDisallow: /hidden/`,
+        [`https://${smDomain}/sitemap.xml`]:
+          `<urlset><url><loc>https://${smDomain}/attorneys/amy-tran/</loc></url>` +
+          `<url><loc>https://${smDomain}/attorneys/ben-roe/</loc></url>` +
+          `<url><loc>https://${smDomain}/hidden/attorneys/secret-one/</loc></url>` + // disallowed → skipped
+          `<url><loc>https://${smDomain}/blog/post/</loc></url></urlset>`,          // not a bio → skipped
+        [`https://${smDomain}/attorneys/amy-tran/`]: `<h1>Amy Tran</h1><a href="mailto:atran@${smDomain}">e</a>`,
+        [`https://${smDomain}/attorneys/ben-roe/`]: `<h1>Ben Roe</h1><a href="mailto:broe@${smDomain}">e</a>`,
+      };
+      const smRecs = await liveCrawl(smDomain, { wireless,
+        _liveFetch: async (u) => smPages[u] || "",
+        _fetchDoc: async (u) => smPages[u] || "" });
+      const emails = smRecs.map(r => String(r["Email Address"]).toLowerCase());
+      ok("liveCrawl pulls bios listed only in the sitemap", emails.includes(`atran@${smDomain}`) && emails.includes(`broe@${smDomain}`));
+      ok("liveCrawl respects robots Disallow (no hidden/blog records)", !emails.some(e => /secret|post/.test(e)) && smRecs.length === 2);
 
       console.log(`\n${pass} passed, ${fail} failed`);
       process.exit(fail ? 1 : 0);

@@ -75,9 +75,11 @@ What is deliberately **left out** (see `.gitignore`): all scraped results, the
 
 ## Good to know / before scaling up
 
-- **Politeness:** the live crawler pauses between requests and sends a clear
-  user-agent, but it does **not** yet check each site's `robots.txt`. That's worth
-  adding before pointing it at large numbers of sites from a public server.
+- **Discovery + politeness:** the live crawler reads each site's `robots.txt`, follows
+  its `Sitemap:` entries to find every bio/contact page, and **honors `Disallow`**.
+  It pauses between requests and sends a clear user-agent. Tune how many pages it
+  fetches per site with the `LIVE_MAX_PAGES` env var (default 150; set to 300 on the
+  live deploy). It does not yet honor `Crawl-delay` — a possible future refinement.
 - **PII:** the output is real people's emails/phones. Keep the password private, and
   prefer per-person `AUTH_USERS` if more than a couple of people have access.
 - **Persistence detail:** job files are rewritten after each domain. Fine at current
