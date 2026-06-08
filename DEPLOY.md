@@ -1,4 +1,21 @@
-# Hosting the Contact Finder (plain-English guide)
+# Hosting the Contact Finder
+
+## ✅ Current live deployment (Fly.io)
+
+- **URL:** https://common-crawler.fly.dev  (HTTPS, password-protected)
+- **Host:** Fly.io app `common-crawler`, region `ewr`, 1 GB persistent volume `data` at `/data`
+- **Login:** any username + the `APP_PASSWORD` secret (set via `fly secrets`).
+- **Redeploy:** from this folder, `fly deploy --app common-crawler --ha=false`
+  (uses `Dockerfile` + `fly.toml`). Change the password with
+  `fly secrets set APP_PASSWORD=newpass --app common-crawler`.
+- **Note:** the machine is set `auto_stop_machines = false` so background jobs keep
+  running between requests.
+
+The Render guide below is an alternative path if you ever want to move hosts.
+
+---
+
+# Hosting on Render (alternative — plain-English guide)
 
 This puts the tool online for you and a few teammates, behind a password. We use
 **Render** because it's the simplest managed option: you connect a GitHub repo, it

@@ -1,10 +1,6 @@
-# fly.toml app configuration file generated for common-crawler on 2026-06-08T18:37:10Z
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
+# Fly.io config for common-crawler.
 app = 'common-crawler'
-primary_region = 'ewr'
+primary_region = 'ewr'   # must match the existing 'data' volume's region
 
 [build]
 
@@ -17,14 +13,13 @@ primary_region = 'ewr'
   destination = '/data'
 
 [http_service]
-  internal_port = 8080
+  internal_port = 3000          # our Node server listens on 3000 (NOT Fly's default 8080)
   force_https = true
-  auto_stop_machines = 'off'
+  auto_stop_machines = 'off'    # keep the machine on so background jobs keep running
   auto_start_machines = true
   min_machines_running = 1
 
 [[vm]]
-  memory = '1gb'
+  memory = '512mb'              # headroom for the 837k-entry wireless-block table per job
   cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 256
