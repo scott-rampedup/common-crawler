@@ -428,6 +428,21 @@ tbody td {
   color: #1f2937;
 }
 
+.photo-col, .photo-cell {
+  width: 48px;
+  padding-left: 12px;
+  padding-right: 8px;
+}
+
+.row-photo {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  object-fit: cover;
+  display: block;
+  background: #f3f4f6;
+}
+
 footer {
   margin-top: 24px;
   color: #6b7280;

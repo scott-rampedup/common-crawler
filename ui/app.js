@@ -66,6 +66,10 @@ function initElements() {
 
 function createHeader() {
   elements.tableHeaderRow.innerHTML = '';
+  const photoTh = document.createElement('th');     // leading thumbnail column
+  photoTh.textContent = '';
+  photoTh.className = 'photo-col';
+  elements.tableHeaderRow.appendChild(photoTh);
   for (const column of COLUMNS) {
     const th = document.createElement('th');
     th.textContent = column;
@@ -171,7 +175,7 @@ function renderTable() {
   if (rowsToRender.length === 0) {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
-    cell.colSpan = COLUMNS.length;
+    cell.colSpan = COLUMNS.length + 1;          // +1 for the leading photo column
     cell.textContent = 'No records match the current filters.';
     cell.style.padding = '20px';
     row.appendChild(cell);
@@ -181,6 +185,23 @@ function renderTable() {
 
   for (const record of rowsToRender) {
     const row = document.createElement('tr');
+
+    // leading thumbnail from the record's image (hidden if missing or fails to load)
+    const photoCell = document.createElement('td');
+    photoCell.className = 'photo-cell';
+    const src = record['Image URL'];
+    if (src) {
+      const img = document.createElement('img');
+      img.className = 'row-photo';
+      img.src = src;
+      img.alt = '';
+      img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
+      img.addEventListener('error', () => img.remove());
+      photoCell.appendChild(img);
+    }
+    row.appendChild(photoCell);
+
     for (const field of COLUMNS) {
       const cell = document.createElement('td');
       cell.textContent = record[field] || '';
