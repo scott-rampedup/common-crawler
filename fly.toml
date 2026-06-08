@@ -1,22 +1,30 @@
-# Fly.io config. `fly launch` may adjust the app name to keep it globally unique.
-app = "rampedup-contact-finder"
-primary_region = "iad"   # US East; change if you prefer (e.g. "ord", "sjc", "lhr")
+# fly.toml app configuration file generated for common-crawler on 2026-06-08T18:37:10Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'common-crawler'
+primary_region = 'ewr'
 
 [build]
 
 [env]
-  DEMO_MODE = "false"
-  DATA_DIR = "/data"
+  DATA_DIR = '/data'
+  DEMO_MODE = 'false'
+
+[[mounts]]
+  source = 'data'
+  destination = '/data'
 
 [http_service]
-  internal_port = 3000
+  internal_port = 8080
   force_https = true
-  # keep one machine always on so background jobs keep running between requests
-  auto_stop_machines = false
+  auto_stop_machines = 'off'
   auto_start_machines = true
   min_machines_running = 1
 
-# persistent volume for the jobs/ folder (created via: fly volumes create data)
-[mounts]
-  source = "data"
-  destination = "/data"
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 256
