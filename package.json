@@ -1,0 +1,17 @@
+{
+  "name": "rampedup-phase1-ui",
+  "version": "0.1.0",
+  "description": "Common Crawl + live-crawl contact extraction with a job dashboard.",
+  "main": "ui-server.js",
+  "scripts": {
+    "start": "node ui-server.js",
+    "demo:win": "set DEMO_MODE=true&& node ui-server.js",
+    "demo": "DEMO_MODE=true node ui-server.js",
+    "selftest": "node cc-engine.js --selftest"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "author": "",
+  "license": "MIT"
+}

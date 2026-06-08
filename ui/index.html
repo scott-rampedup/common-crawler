@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Common Crawl Results Dashboard</title>
+  <link rel="stylesheet" href="/ui/styles.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header>
+      <div>
+        <h1>Common Crawl Results</h1>
+        <p>Browse deduplicated email records extracted from <code>cc-results.csv</code>.</p>
+        <p id="modeIndicator" class="mode-indicator">Loading connection mode...</p>
+      </div>
+      <div class="actions">
+        <button id="downloadButton">⬇ Download CSV</button>
+        <button id="refreshButton">Refresh data</button>
+      </div>
+    </header>
+
+    <section class="stats-panel" id="statsPanel">
+      <div class="stat-card">
+        <strong id="totalCount">0</strong>
+        <span>Total records</span>
+      </div>
+      <div class="stat-card">
+        <strong id="filteredCount">0</strong>
+        <span>Displayed records</span>
+      </div>
+      <div class="stat-card">
+        <strong id="emailCount">0</strong>
+        <span>Unique emails</span>
+      </div>
+    </section>
+
+    <section class="filters-panel">
+      <div class="filter-row">
+        <label>
+          Search
+          <input id="searchInput" type="search" placeholder="Search any field" />
+        </label>
+        <label>
+          Directory (search category)
+          <select id="directoryFilter">
+            <option value="">All directories</option>
+          </select>
+        </label>
+        <label>
+          Email Type
+          <select id="emailTypeFilter">
+            <option value="">All email types</option>
+          </select>
+        </label>
+        <label class="checkbox-label">
+          <input id="showAllCheckbox" type="checkbox" />
+          Show all rows
+        </label>
+      </div>
+      <div class="filter-row">
+        <label>
+          Paste domains
+          <textarea id="domainInput" placeholder="Enter one domain or URL per line"></textarea>
+        </label>
+        <label>
+          Upload domains file
+          <input id="domainFileInput" type="file" accept=".txt,.csv" />
+        </label>
+        <div class="domain-actions">
+          <button id="clearDomainsButton" type="button">Clear domains</button>
+          <button id="applyDomainsButton" type="button">FIND CONTACTS</button>
+        </div>
+        <p id="searchStatus" class="search-status">Ready to search.</p>
+      </div>
+    </section>
+
+    <section class="jobs-panel">
+      <div class="jobs-header">
+        <h2>Search jobs</h2>
+        <p class="jobs-hint">Searches run on the server — you can close this tab and come back. Interrupted jobs can be resumed.</p>
+        <button id="refreshJobsButton" type="button">Refresh jobs</button>
+      </div>
+      <div id="jobsList" class="jobs-list">
+        <p class="jobs-empty">No jobs yet. Paste domains above and click <strong>FIND CONTACTS</strong>.</p>
+      </div>
+    </section>
+
+    <section class="table-shell">
+      <div class="table-header">
+        <p id="viewingIndicator" class="viewing-indicator hidden"></p>
+        <p id="tableSummary">Loading results...</p>
+        <div id="loadingIndicator" class="loading-indicator hidden">
+          <span class="spinner"></span>
+          <span id="loadingText">Searching for contacts...</span>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table id="resultsTable">
+          <thead>
+            <tr id="tableHeaderRow"></tr>
+          </thead>
+          <tbody id="resultsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      <p>Server endpoint: <code>/api/results</code></p>
+      <p>Start the UI with <code>node ui-server.js</code> or <code>npm start</code>.</p>
+    </footer>
+  </div>
+
+  <script src="/ui/app.js"></script>
+</body>
+</html>

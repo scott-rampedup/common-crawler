@@ -1,0 +1,24 @@
+# Render Blueprint — one-click deploy config.
+# In Render: New + > Blueprint, point it at this repo, and it reads this file.
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: rampedup-contact-finder
+    runtime: node
+    plan: starter            # Starter ($7/mo) is needed for a persistent disk + always-on
+    buildCommand: npm install
+    startCommand: node ui-server.js
+    autoDeploy: true
+    envVars:
+      - key: DEMO_MODE
+        value: "false"
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATA_DIR
+        value: /var/data     # matches the disk mountPath below
+      - key: APP_PASSWORD
+        sync: false          # set this secret in the Render dashboard, not in git
+    disk:
+      name: data
+      mountPath: /var/data   # persistent storage for the jobs/ folder
+      sizeGB: 1

@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+
+# job storage + generated results (contain scraped personal data — never commit)
+jobs/
+.testdata/
+*.engine.csv
+cc-results.csv
+cc-results-*.csv
+tmp-results.csv
+
+# spreadsheets contain some personal contacts/names — keep out of the repo
+*.xlsx
+
+# local run logs + scratch
+*-run-output.txt
+pipeline_run_output.txt
+tmp-*.js
+
+# secrets / local env
+.env
+.env.local
+
+# os junk
+.DS_Store
+Thumbs.db
+
+# local editor/agent settings
+.claude/
