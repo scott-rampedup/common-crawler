@@ -65,6 +65,12 @@
         <label>
           Upload domains file
           <input id="domainFileInput" type="file" accept=".txt,.csv" />
+          <span class="mode-toggle">
+            <span class="mode-toggle-title">Search by:</span>
+            <label class="mode-opt"><input type="radio" name="searchMode" value="domain" checked /> Domain</label>
+            <label class="mode-opt"><input type="radio" name="searchMode" value="webpage" /> Webpage</label>
+          </span>
+          <span class="mode-hint" id="modeHint">Domain: crawls the whole site for contacts.</span>
         </label>
         <div class="domain-actions">
           <label class="checkbox-label inline">

@@ -139,6 +139,28 @@ textarea {
   font-weight: 600;
 }
 
+.mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.mode-toggle-title { font-size: 0.9rem; color: #374151; font-weight: 600; }
+.mode-opt {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.92rem;
+  color: #111827;
+}
+.mode-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.82rem;
+  color: #6b7280;
+}
+
 .domain-actions {
   display: flex;
   flex-direction: column;

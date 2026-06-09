@@ -81,6 +81,7 @@ function initElements() {
   elements.applyDomainsButton = document.getElementById('applyDomainsButton');
   elements.clearDomainsButton = document.getElementById('clearDomainsButton');
   elements.liveOnlyCheckbox = document.getElementById('liveOnlyCheckbox');
+  elements.modeHint = document.getElementById('modeHint');
   elements.jobsList = document.getElementById('jobsList');
   elements.refreshJobsButton = document.getElementById('refreshJobsButton');
   elements.jobsToggle = document.getElementById('jobsToggle');
@@ -164,6 +165,36 @@ function parseDomainList(text) {
         .filter(Boolean)
     )
   );
+}
+
+// Webpage mode: keep the FULL URL per line (path/query intact), one per line.
+function parseUrlList(text) {
+  return Array.from(
+    new Set(
+      String(text || '')
+        .split(/[\r\n]+/)
+        .map((s) => s.trim())
+        .filter((s) => s && s.includes('.'))
+    )
+  );
+}
+
+function getSearchMode() {
+  const checked = document.querySelector('input[name="searchMode"]:checked');
+  return checked && checked.value === 'webpage' ? 'webpage' : 'domain';
+}
+
+function updateModeHint() {
+  if (!elements.modeHint) return;
+  const webpage = getSearchMode() === 'webpage';
+  elements.modeHint.textContent = webpage
+    ? 'Webpage: pulls contacts only from the exact URLs you provide (one per line).'
+    : 'Domain: crawls the whole site for contacts.';
+  if (elements.domainInput) {
+    elements.domainInput.placeholder = webpage
+      ? 'Enter one full webpage URL per line'
+      : 'Enter one domain or URL per line';
+  }
 }
 
 function buildFilterOptions(field, selectElement) {
@@ -445,27 +476,31 @@ async function loadResults() {
 
 // Start a search as a server-side background job, then watch it via polling.
 async function searchContacts() {
-  const domains = parseDomainList(elements.domainInput.value);
+  const mode = getSearchMode();
+  const domains = mode === 'webpage'
+    ? parseUrlList(elements.domainInput.value)
+    : parseDomainList(elements.domainInput.value);
   if (domains.length === 0) {
-    setSearchStatus('Please enter one or more domains to search.');
+    setSearchStatus(mode === 'webpage' ? 'Please enter one or more webpage URLs.' : 'Please enter one or more domains to search.');
     return;
   }
   const directoryFilter = elements.directoryFilter.value.trim();
   const liveOnly = !!(elements.liveOnlyCheckbox && elements.liveOnlyCheckbox.checked);
+  const unit = mode === 'webpage' ? 'webpage' : 'domain';
 
   try {
-    setSearchStatus(`Starting a job for ${domains.length} domain${domains.length === 1 ? '' : 's'}...`);
+    setSearchStatus(`Starting a job for ${domains.length} ${unit}${domains.length === 1 ? '' : 's'}...`);
     const response = await fetch('/api/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ domains, directoryFilter, liveOnly }),
+      body: JSON.stringify({ domains, directoryFilter, liveOnly, mode }),
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
       throw new Error(payload.error || `HTTP ${response.status}`);
     }
     const job = await response.json();
-    setSearchStatus(`Job started for ${domains.length} domain${domains.length === 1 ? '' : 's'}. It runs on the server — you can leave this page.`);
+    setSearchStatus(`Job started for ${domains.length} ${unit}${domains.length === 1 ? '' : 's'}. It runs on the server — you can leave this page.`);
     await fetchJobs();
     viewJob(job.id);            // attach the table to the new job; polling keeps it live
   } catch (error) {
@@ -795,6 +830,9 @@ function attachEvents() {
   elements.applyDomainsButton.addEventListener('click', () => searchContacts());
   elements.clearDomainsButton.addEventListener('click', () => clearDomains());
   elements.domainFileInput.addEventListener('change', (event) => handleDomainFileUpload(event));
+  document.querySelectorAll('input[name="searchMode"]').forEach((el) =>
+    el.addEventListener('change', updateModeHint));
+  updateModeHint();
 
   if (elements.firstPageBtn) elements.firstPageBtn.addEventListener('click', () => setPage(1));
   if (elements.prevPageBtn) elements.prevPageBtn.addEventListener('click', () => setPage(state.page - 1));

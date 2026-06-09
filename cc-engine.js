@@ -143,16 +143,31 @@ const COLUMNS = ["Time Stamp","Source","Web Source URL","Directory","ID","Last P
   "LinkedIn URL","Google Maps","Phone","Phone Type","Phone Location","Phone 2","Phone 2 Type"];
 
 // ---------------------------------------------------------------- input
-function readDomains(csvPath){
-  const text = fs.readFileSync(csvPath, "utf8");
+// Domain mode: reduce each line to a bare host (strip protocol/www/path), dedup.
+function normalizeDomainList(lines){
   const out = []; const seen = new Set();
-  for(const raw of text.split(/\r?\n/)){
-    let d = (raw.split(",")[0]||"").trim().toLowerCase()
+  for(const raw of lines){
+    const d = (String(raw).split(",")[0]||"").trim().toLowerCase()
       .replace(/^https?:\/\//,"").replace(/^www\./,"").replace(/\/.*$/,"");
     if(!d || d === "domain" || !d.includes(".")) continue;   // skip header / junk
     if(!seen.has(d)){ seen.add(d); out.push(d); }
   }
   return out;
+}
+// Webpage mode: keep the FULL URL (path/query intact), just ensure a protocol + dedup.
+function normalizeUrlList(lines){
+  const out = []; const seen = new Set();
+  for(const raw of lines){
+    let u = (String(raw).split(/,(?![^?]*=)/)[0]||"").trim();   // tolerate trailing CSV cols
+    if(!u || /^(domain|url|webpage)$/i.test(u) || !u.includes(".")) continue;
+    if(!/^https?:\/\//i.test(u)) u = "https://" + u;
+    try{ new URL(u); }catch{ continue; }
+    if(!seen.has(u)){ seen.add(u); out.push(u); }
+  }
+  return out;
+}
+function readDomains(csvPath){
+  return normalizeDomainList(fs.readFileSync(csvPath, "utf8").split(/\r?\n/));
 }
 function writeDomainsCsv(domains, csvPath){
   const rows = ["domain"];
@@ -169,13 +184,7 @@ function writeDomainsCsv(domains, csvPath){
 }
 
 async function runDomains(domains, opts = {}){
-  const tmpPath = path.join(os.tmpdir(), `rampedup-domains-${Date.now()}.csv`);
-  writeDomainsCsv(domains, tmpPath);
-  try {
-    return await run(tmpPath, opts);
-  } finally {
-    try { fs.unlinkSync(tmpPath); } catch (error) { /* ignore */ }
-  }
+  return run(null, { ...opts, _items: domains });   // pass the list straight through (no temp CSV)
 }
 // ---------------------------------------------------------------- CDX index (NETWORK)
 async function cdxNumPages(domain, crawl){
@@ -735,9 +744,15 @@ async function run(csvPath, opts = {}){
     onRecord = () => {}, onProgress = () => {},
   } = opts;
 
-  const domains = readDomains(csvPath);
+  // mode: 'domain' (crawl whole domain, default) | 'webpage' (only the exact URLs given)
+  const mode = opts.mode === 'webpage' ? 'webpage' : 'domain';
+  const fetchPage = opts._liveFetch || liveFetchPage;
+  const today = new Date().toISOString().slice(0, 10);
+
+  const lines = Array.isArray(opts._items) ? opts._items : fs.readFileSync(csvPath, "utf8").split(/\r?\n/);
+  const domains = mode === 'webpage' ? normalizeUrlList(lines) : normalizeDomainList(lines);
   const wireless = loadWirelessBlocks(wirelessPath);
-  console.log(`Domains: ${domains.length}   Wireless blocks: ${wireless.size.toLocaleString()}   Crawl: ${CRAWL}\n`);
+  console.log(`${mode === 'webpage' ? 'Webpages' : 'Domains'}: ${domains.length}   Wireless blocks: ${wireless.size.toLocaleString()}   Crawl: ${CRAWL}\n`);
 
   const all = [];
   const seenEmails = new Map();  // de-dupe live onRecord callbacks: best record per email
@@ -764,6 +779,28 @@ async function run(csvPath, opts = {}){
   async function processDomain(domain, index){
     const domainNumber = index + 1;
     onProgress({ status: 'domain-start', domain, index: domainNumber, total: domains.length });
+
+    // ---- WEBPAGE mode: fetch just this URL and extract; no domain crawl / no CC ----
+    if(mode === 'webpage'){
+      let kept = 0, wnote = "";
+      try{
+        const html = await fetchPage(domain);
+        if(html){
+          const out = extractRecord(html, domain, { wireless, genderMap, directoryRules, source:"Webpage", timestamp: today });
+          if(out){ ingest(out); kept++; }
+        } else { wnote = "page not reachable"; }
+      }catch(e){ wnote = e.message; }
+      if(kept > 0){
+        coverage.live++;
+        console.log(`◆ ${domain.slice(0,48).padEnd(48)} ${kept} record(s) via webpage`);
+        onProgress({ status:'domain-done', domain, index: domainNumber, total: domains.length, source:'Webpage', kept });
+      }else{
+        coverage.empty++;
+        console.log(`· ${domain.slice(0,48).padEnd(48)} no contacts found${wnote ? `  (${wnote})` : ""}`);
+        onProgress({ status:'no-candidates', domain, index: domainNumber, total: domains.length });
+      }
+      return;
+    }
 
     let ccKept = 0, liveKept = 0, note = "";
 

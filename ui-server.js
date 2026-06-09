@@ -117,6 +117,7 @@ function jobSummary(job) {
     coverage: job.coverage,
     directoryFilter: job.directoryFilter || '',
     liveOnly: !!job.liveOnly,
+    mode: job.mode || 'domain',
     error: job.error || null,
     lastProgress: job.lastProgress || null,
   };
@@ -134,6 +135,7 @@ function persistJob(job) {
     coverage: job.coverage,
     directoryFilter: job.directoryFilter || '',
     liveOnly: !!job.liveOnly,
+    mode: job.mode || 'domain',
     error: job.error || null,
     records: jobRawRecords(job),
   };
@@ -158,8 +160,8 @@ function loadJobs() {
         id: j.id, createdAt: j.createdAt, finishedAt: j.finishedAt || null, status,
         domains: j.domains || [], doneDomains: j.doneDomains || [],
         coverage: j.coverage || { found: 0, live: 0, empty: 0, errored: 0 },
-        directoryFilter: j.directoryFilter || '', liveOnly: !!j.liveOnly, error: j.error || null,
-        recordsByEmail, lastProgress: null,
+        directoryFilter: j.directoryFilter || '', liveOnly: !!j.liveOnly, mode: j.mode || 'domain',
+        error: j.error || null, recordsByEmail, lastProgress: null,
       });
     } catch (e) { console.error(`Failed to load job file ${f}:`, e.message); }
   }
@@ -178,6 +180,7 @@ async function runJobDomains(job, domainsToRun) {
       directoryFilter: job.directoryFilter,
       genderMap: GENDER_MAP,                                   // fill Gender via first-name lookup
       liveOnly: !!job.liveOnly,                                // skip Common Crawl when requested
+      mode: job.mode || 'domain',                              // 'webpage' = only the exact URLs
       shouldStop: () => job.stopRequested,                     // honor a STOP request
       outPath: path.join(JOBS_DIR, `${job.id}.engine.csv`),   // throwaway; we keep our own records
       onRecord: (row) => {
@@ -189,8 +192,9 @@ async function runJobDomains(job, domainsToRun) {
         if (p.domain && (p.status === 'domain-done' || p.status === 'no-candidates')) {
           if (!job.doneDomains.includes(p.domain)) job.doneDomains.push(p.domain);
           // tally coverage ourselves so it stays correct across resumes
-          if (p.status === 'domain-done' && p.source === 'Live Crawl') job.coverage.live += 1;
-          else if (p.status === 'domain-done') job.coverage.found += 1;
+          // (Common Crawl -> found; Live Crawl / Webpage -> live)
+          if (p.status === 'domain-done' && p.source === 'Common Crawl') job.coverage.found += 1;
+          else if (p.status === 'domain-done') job.coverage.live += 1;
           else job.coverage.empty += 1;
           persistJob(job);
         }
@@ -209,7 +213,7 @@ async function runJobDomains(job, domainsToRun) {
   console.log(`Job ${job.id} ${job.status} — ${job.recordsByEmail.size} record(s)`);
 }
 
-function startJob(domains, directoryFilter, liveOnly) {
+function startJob(domains, directoryFilter, liveOnly, mode) {
   const job = {
     id: newJobId(),
     createdAt: new Date().toISOString(),
@@ -220,6 +224,7 @@ function startJob(domains, directoryFilter, liveOnly) {
     coverage: { found: 0, live: 0, empty: 0, errored: 0 },
     directoryFilter: directoryFilter || '',
     liveOnly: !!liveOnly,
+    mode: mode === 'webpage' ? 'webpage' : 'domain',
     stopRequested: false,
     error: null,
     recordsByEmail: new Map(),
@@ -429,12 +434,13 @@ const server = http.createServer((req, res) => {
         const domains = Array.isArray(payload.domains) ? payload.domains.filter(Boolean) : [];
         const directoryFilter = typeof payload.directoryFilter === 'string' ? payload.directoryFilter.trim() : '';
         const liveOnly = payload.liveOnly === true;
+        const mode = payload.mode === 'webpage' ? 'webpage' : 'domain';
         if (domains.length === 0) {
           res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({ error: 'No domains provided' }));
           return;
         }
-        const job = startJob(domains, directoryFilter, liveOnly);
+        const job = startJob(domains, directoryFilter, liveOnly, mode);
         console.log(`Started job ${job.id} for ${domains.length} domain(s)`);
         sendJson(res, jobSummary(job));
       } catch (e) {
