@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'ui');
 const RESULTS_CSV = path.join(__dirname, 'cc-results.csv');
 const { runDomains, COLUMNS } = require('./cc-engine');
-const { loadGenderMap, loadEmailBlocklist, analyzePhones } = require('./extractor');
+const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords } = require('./extractor');
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
 // Email blocklist (addresses to drop). Loaded once; edit email-blocklist.txt to update.
@@ -202,6 +202,8 @@ async function runJobDomains(job, domainsToRun) {
     job.error = e.message;
   }
   job.stopRequested = false;
+  try { await geocodeRecords([...job.recordsByEmail.values()]); }   // City, Region, Country
+  catch (e) { console.error('geocode failed:', e.message); }
   job.finishedAt = new Date().toISOString();
   persistJob(job);
   console.log(`Job ${job.id} ${job.status} — ${job.recordsByEmail.size} record(s)`);

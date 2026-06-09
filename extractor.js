@@ -570,6 +570,54 @@ function defaultGeocode(phone){
   return AREA_REGION[Number(ten.slice(0,3))] || "";
 }
 
+// ---- real phone geocoding via libphonenumber (City, Region, Country) ----
+// Lazy-loaded + wrapped so the engine still runs if the libs aren't installed.
+let _geoTried = false, _phoneUtil = null, _PNT = null, _geocoder = null, _regionName = null;
+function loadGeoLibs(){
+  if(_geoTried) return;
+  _geoTried = true;
+  try{
+    const glp = require("google-libphonenumber");
+    _phoneUtil = glp.PhoneNumberUtil.getInstance();
+    _PNT = glp.PhoneNumberType;
+    _geocoder = require("libphonenumber-geo-carrier").geocoder;
+    _regionName = new Intl.DisplayNames(["en"], { type: "region" });
+  }catch(e){ _phoneUtil = null; _geocoder = null; }
+}
+
+// "+19169291481" -> "Sacramento, CA, United States" ("" if not geocodable / non-geographic)
+async function geocodePhone(e164){
+  loadGeoLibs();
+  if(!_phoneUtil || !_geocoder || !e164) return "";
+  try{
+    const num = _phoneUtil.parse(e164);
+    if(_PNT && _phoneUtil.getNumberType(num) === _PNT.TOLL_FREE) return "";   // toll-free has no location
+    const cc = num.getCountryCode().toString();
+    const nn = num.getNationalNumber().toString();
+    const region = _phoneUtil.getRegionCodeForNumber(num);
+    const desc = await _geocoder({ nationalNumber: nn, countryCallingCode: cc }, "en");  // "City, ST" / region
+    let country = "";
+    try{ country = region ? _regionName.of(region) : ""; }catch{ country = region || ""; }
+    return [desc, country].filter(Boolean).join(", ");
+  }catch(e){ return ""; }
+}
+
+// Fill "Phone Location" for each record from its (E.164) Phone, cached per number.
+// Async; run as a post-pass after collection. Leaves the existing value if no result.
+async function geocodeRecords(records){
+  loadGeoLibs();
+  if(!_phoneUtil || !_geocoder) return records;   // libs unavailable -> keep existing locations
+  const cache = new Map();
+  for(const r of records){
+    const base = basePhone(r["Phone"]);
+    if(!base) continue;
+    if(!cache.has(base)) cache.set(base, await geocodePhone(base));
+    const loc = cache.get(base);
+    if(loc) r["Phone Location"] = loc;
+  }
+  return records;
+}
+
 // ---- phone normalization to E.164 ----
 // country calling code by domain TLD; anything not listed (incl. .com/.org/.net…) -> US (1)
 const TLD_CC = {
@@ -678,7 +726,8 @@ function loadDirectoryRules(filePath){
 }
 
 module.exports = { extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules,
-  cleanEmail, setEmailBlocklist, loadEmailBlocklist, analyzePhones, splitExtension };
+  cleanEmail, setEmailBlocklist, loadEmailBlocklist, analyzePhones, splitExtension,
+  geocodeRecords, geocodePhone };
 
 // ---------------------------------------------------------------- self-test
 if(require.main === module){

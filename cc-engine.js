@@ -21,7 +21,7 @@ const path = require("path");
 const zlib = require("zlib");
 const http = require("http");
 const https = require("https");
-const { extractRecord, classifyDirectory, loadGenderMap, loadDirectoryRules, analyzePhones } = require("./extractor");
+const { extractRecord, classifyDirectory, loadGenderMap, loadDirectoryRules, analyzePhones, geocodeRecords } = require("./extractor");
 const { loadWirelessBlocks } = require("./wireless-block-classifier");
 
 const INDEX = "https://index.commoncrawl.org";
@@ -852,6 +852,7 @@ async function run(csvPath, opts = {}){
     console.log(`\nDropped ${all.length - unique.length} duplicate email record(s) to enforce one email per record`);
   }
   unique = analyzePhones(unique);   // dedupe Phone 2, relabel recurring Direct numbers as Office
+  await geocodeRecords(unique);     // fill Phone Location (City, Region, Country) via libphonenumber
   writeCsv(unique, outPath);
   console.log(`\nCoverage: ${coverage.found} via Common Crawl · ${coverage.live} via live crawl · ${coverage.empty} no contacts`);
   console.log(`People:   ${unique.length} unique email records → ${outPath}`);
