@@ -7,7 +7,10 @@ primary_region = 'ewr'   # must match the existing 'data' volume's region
 [env]
   DATA_DIR = '/data'
   DEMO_MODE = 'false'
-  LIVE_MAX_PAGES = '300'   # max pages the live crawler fetches per domain (sitemap-driven)
+  LIVE_MAX_PAGES = '300'        # max pages the live crawler fetches per domain (sitemap-driven)
+  DOMAIN_CONCURRENCY = '6'      # how many different domains to crawl at once
+  IN_SITE_CONCURRENCY = '3'     # how many pages from one site to fetch at once
+  CC_CONCURRENCY = '1'          # global Common Crawl request limit (keep low: shared service)
 
 [[mounts]]
   source = 'data'
@@ -21,6 +24,6 @@ primary_region = 'ewr'   # must match the existing 'data' volume's region
   min_machines_running = 1
 
 [[vm]]
-  memory = '512mb'              # headroom for the 837k-entry wireless-block table per job
+  memory = '1gb'               # headroom for the wireless-block table + concurrent crawls
   cpu_kind = 'shared'
-  cpus = 1
+  cpus = 2

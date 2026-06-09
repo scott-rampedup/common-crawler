@@ -30,6 +30,34 @@ const CRAWL = "CC-MAIN-2026-21";                 // latest monthly crawl; combin
 const UA = "RampedUp-CC-Engine/0.1 (https://rampedup.io; contact@rampedup.io)";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Keep-alive agents so we reuse TCP/TLS connections (esp. when pulling many pages
+// from one site) instead of paying a fresh handshake per request.
+const keepAliveHttp  = new http.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 16, timeout: 30000 });
+const keepAliveHttps = new https.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 16, timeout: 30000 });
+
+// Tiny concurrency limiter: run() uses one per "lane" (across-domain pool, the
+// global Common-Crawl lane, the per-site lane) to cap how many requests run at once.
+function makeLimiter(maxConcurrent){
+  let active = 0; const waiters = [];
+  const next = () => { active--; const w = waiters.shift(); if(w) w(); };
+  return function run(fn){
+    return new Promise((resolve, reject) => {
+      const start = () => {
+        active++;
+        Promise.resolve().then(fn).then(
+          (v) => { resolve(v); next(); },
+          (e) => { reject(e); next(); },
+        );
+      };
+      if(active < maxConcurrent) start(); else waiters.push(start);
+    });
+  };
+}
+
+// Common Crawl is a shared public service — keep our total CC requests serialized
+// (configurable) even when many domains run in parallel, so we never hammer it.
+const ccLimit = makeLimiter(Number(process.env.CC_CONCURRENCY) || 1);
+
 const proxyEnv = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy || null;
 const noProxyEnv = process.env.NO_PROXY || process.env.no_proxy || "";
 let ProxyAgent, undiciFetch;
@@ -182,24 +210,28 @@ function generateMockRecords(domain, count = 3) {
 
 async function queryIndex(domain, { crawl = CRAWL, maxPages = 3, demoMode = false } = {}){
   if(demoMode) return generateMockRecords(domain, maxPages);
-  
-  const pages = await cdxNumPages(domain, crawl);
-  if(!pages) return [];                            // not captured in this crawl
-  const records = [];
-  for(let page = 0; page < Math.min(pages, maxPages); page++){
-    const p = new URLSearchParams({ url:`${domain}/*`, output:"json",
-      fl:"url,filename,offset,length,timestamp", page:String(page) });
-    p.append("filter","=status:200");
-    p.append("filter","=mime-detected:text/html");
-    const res = await fetchWithRetries(`${INDEX}/${crawl}-index?${p}`, { headers:{ "User-Agent":UA } });
-    if(!res.ok) break;
-    for(const line of (await res.text()).split("\n")){
-      if(!line.trim()) continue;
-      try{ records.push(JSON.parse(line)); }catch{}
+
+  // hold the global CC lane for this domain's whole index lookup so concurrent
+  // domains never hammer Common Crawl's shared index server.
+  return ccLimit(async () => {
+    const pages = await cdxNumPages(domain, crawl);
+    if(!pages) return [];                            // not captured in this crawl
+    const records = [];
+    for(let page = 0; page < Math.min(pages, maxPages); page++){
+      const p = new URLSearchParams({ url:`${domain}/*`, output:"json",
+        fl:"url,filename,offset,length,timestamp", page:String(page) });
+      p.append("filter","=status:200");
+      p.append("filter","=mime-detected:text/html");
+      const res = await fetchWithRetries(`${INDEX}/${crawl}-index?${p}`, { headers:{ "User-Agent":UA } });
+      if(!res.ok) break;
+      for(const line of (await res.text()).split("\n")){
+        if(!line.trim()) continue;
+        try{ records.push(JSON.parse(line)); }catch{}
+      }
+      await sleep(400);                              // be polite to the index server
     }
-    await sleep(400);                              // be polite to the index server
-  }
-  return records;
+    return records;
+  });
 }
 
 // ---------------------------------------------------------------- candidate selection (offline-testable)
@@ -407,11 +439,11 @@ function httpGetRaw(url, opts = {}){
 
     const req = lib.request(u, {
       method: "GET",
+      agent: lib === http ? keepAliveHttp : keepAliveHttps,   // reuse connections per host
       headers: {
         "User-Agent": UA,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "close",
       },
       timeout: 15000,
     }, (res) => {
@@ -539,21 +571,36 @@ async function liveCrawl(domain, opts = {}){
     console.log(`  ${domain}: ${sitemapMatches} matching pages in sitemaps — fetching first ${maxPages} (raise LIVE_MAX_PAGES to get all)`);
   }
 
-  // 3) crawl the queue: fetch, extract, and follow deeper bio links (capped)
-  let fetchedPages = 0;
-  for(let i = 0; i < queue.length; i++){
-    if(records.length >= perDomainCap || fetchedPages >= maxPages) break;
-    const url = queue[i];
-    const html = await liveFetch(url);
-    fetchedPages++;
-    await sleep(200);                            // polite pause between page fetches
-    if(!html) continue;
-    const out = extractRecord(html, url, { wireless, genderMap, directoryRules, source:"Live Crawl", timestamp: today });
-    if(out) records.push(out);
-    for(const sub of extractSameDomainLinks(html, url, domain)){
-      if(isBioOrContactUrl(sub, directoryRules, genderMap)) enqueue(sub);   // e.g. /attorneys/ -> /attorneys/jane-doe/
-    }
-  }
+  // 3) crawl the queue with small in-site concurrency: a few pages from THIS site at
+  //    once (still one site), each followed by a polite pause. The queue grows as we
+  //    discover deeper bio links (e.g. /attorneys/ -> /attorneys/jane-doe/).
+  const inSite = Math.max(1, opts.inSiteConcurrency || Number(process.env.IN_SITE_CONCURRENCY) || 3);
+  const perHostDelay = opts.perHostDelay != null ? opts.perHostDelay : 200;
+  let qi = 0, active = 0, fetchedPages = 0;
+
+  await new Promise((resolve) => {
+    const tick = () => {
+      if(active === 0 && (qi >= queue.length || records.length >= perDomainCap || fetchedPages >= maxPages)){
+        return resolve();
+      }
+      while(active < inSite && qi < queue.length && records.length < perDomainCap && fetchedPages < maxPages){
+        const url = queue[qi++]; active++; fetchedPages++;
+        (async () => {
+          const html = await liveFetch(url);
+          await sleep(perHostDelay);              // polite pause per fetch (with ~inSite in flight)
+          if(html){
+            const out = extractRecord(html, url, { wireless, genderMap, directoryRules, source:"Live Crawl", timestamp: today });
+            if(out) records.push(out);
+            for(const sub of extractSameDomainLinks(html, url, domain)){
+              if(isBioOrContactUrl(sub, directoryRules, genderMap)) enqueue(sub);
+            }
+          }
+        })().catch(() => {}).finally(() => { active--; tick(); });
+      }
+    };
+    tick();
+  });
+
   return records.slice(0, perDomainCap);
 }
 
@@ -619,10 +666,13 @@ async function fetchWarc(rec, { demoMode = false } = {}){
   if(proxyEnv && ProxyAgent && undiciFetch){
     opts.dispatcher = getProxyDispatcher(url);
   }
-  const res = await fetchImpl(url, opts);
-  if(!res.ok && res.status !== 206) throw new Error(`warc ${res.status} for ${rec.url}`);
-  const gz = Buffer.from(await res.arrayBuffer());
-  return warcToHtml(zlib.gunzipSync(gz));
+  // CC data server is shared infra too — go through the global CC lane.
+  return ccLimit(async () => {
+    const res = await fetchImpl(url, opts);
+    if(!res.ok && res.status !== 206) throw new Error(`warc ${res.status} for ${rec.url}`);
+    const gz = Buffer.from(await res.arrayBuffer());
+    return warcToHtml(zlib.gunzipSync(gz));
+  });
 }
 
 /** A fetched WARC record = WARC headers \r\n\r\n  HTTP headers \r\n\r\n  BODY(html). */
@@ -700,9 +750,14 @@ async function run(csvPath, opts = {}){
     }
   };
 
-  let ccFailStreak = 0, ccDisabled = false;   // circuit breaker: stop hammering a down index
+  const liveOnly = opts.liveOnly === true || process.env.LIVE_ONLY === 'true';
+  const domainConcurrency = Math.max(1, opts.concurrency || Number(process.env.DOMAIN_CONCURRENCY) || 6);
+  let ccFailStreak = 0, ccDisabled = liveOnly;   // circuit breaker; liveOnly skips CC entirely
+  if(liveOnly) console.log("(live-only mode: skipping Common Crawl)");
+  console.log(`Crawling up to ${domainConcurrency} domain(s) at once...\n`);
 
-  for(const [index, domain] of domains.entries()){
+  // process ONE domain: Common Crawl first (unless disabled), then live-crawl fallback
+  async function processDomain(domain, index){
     const domainNumber = index + 1;
     onProgress({ status: 'domain-start', domain, index: domainNumber, total: domains.length });
 
@@ -722,7 +777,6 @@ async function run(csvPath, opts = {}){
           const out = extractRecord(html, rec.url, { wireless, genderMap, directoryRules, source:"Common Crawl",
             timestamp:(rec.timestamp||"").slice(0,8).replace(/(\d{4})(\d{2})(\d{2})/,"$1-$2-$3") });
           if(out){ ingest(out); ccKept++; }
-          await sleep(150);                          // polite pause between page fetches
         }
 
         if(ccKept === 0){
@@ -735,7 +789,6 @@ async function run(csvPath, opts = {}){
               const out = extractRecord(html, rec.url, { wireless, genderMap, directoryRules, source:"Common Crawl",
                 timestamp:(rec.timestamp||"").slice(0,8).replace(/(\d{4})(\d{2})(\d{2})/,"$1-$2-$3") });
               if(out){ ingest(out); ccKept++; }
-              await sleep(150);
             }
           }
         }
@@ -743,7 +796,7 @@ async function run(csvPath, opts = {}){
     }catch(e){                                   // 504 / outage → treat as "not in crawl", fall through to live
       note = e.message;
       ccFailStreak++;
-      if(ccFailStreak >= 3){
+      if(ccFailStreak >= 3 && !ccDisabled){
         ccDisabled = true;
         console.log(`  (Common Crawl index unresponsive — skipping it for the rest of this run, going live-only)`);
       }
@@ -773,6 +826,19 @@ async function run(csvPath, opts = {}){
       onProgress({ status: 'no-candidates', domain, index: domainNumber, total: domains.length });
     }
   }
+
+  // worker pool: crawl several DIFFERENT domains at once (each domain stays polite
+  // internally; Common Crawl stays globally rate-limited via ccLimit).
+  let cursor = 0;
+  const worker = async () => {
+    while(true){
+      const index = cursor++;
+      if(index >= domains.length) return;
+      try{ await processDomain(domains[index], index); }
+      catch(e){ coverage.empty++; console.log(`! ${domains[index].padEnd(28)} ${e.message}`); }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(domainConcurrency, domains.length) }, worker));
 
   const unique = uniqueByEmail(all);
   if(unique.length < all.length){

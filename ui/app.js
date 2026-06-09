@@ -59,6 +59,7 @@ function initElements() {
   elements.domainFileInput = document.getElementById('domainFileInput');
   elements.applyDomainsButton = document.getElementById('applyDomainsButton');
   elements.clearDomainsButton = document.getElementById('clearDomainsButton');
+  elements.liveOnlyCheckbox = document.getElementById('liveOnlyCheckbox');
   elements.jobsList = document.getElementById('jobsList');
   elements.refreshJobsButton = document.getElementById('refreshJobsButton');
   elements.viewingIndicator = document.getElementById('viewingIndicator');
@@ -243,13 +244,14 @@ async function searchContacts() {
     return;
   }
   const directoryFilter = elements.directoryFilter.value.trim();
+  const liveOnly = !!(elements.liveOnlyCheckbox && elements.liveOnlyCheckbox.checked);
 
   try {
     setSearchStatus(`Starting a job for ${domains.length} domain${domains.length === 1 ? '' : 's'}...`);
     const response = await fetch('/api/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ domains, directoryFilter }),
+      body: JSON.stringify({ domains, directoryFilter, liveOnly }),
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));

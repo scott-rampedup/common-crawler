@@ -96,6 +96,7 @@ function jobSummary(job) {
     recordCount: job.recordsByEmail.size,
     coverage: job.coverage,
     directoryFilter: job.directoryFilter || '',
+    liveOnly: !!job.liveOnly,
     error: job.error || null,
     lastProgress: job.lastProgress || null,
   };
@@ -111,6 +112,7 @@ function persistJob(job) {
     doneDomains: job.doneDomains,
     coverage: job.coverage,
     directoryFilter: job.directoryFilter || '',
+    liveOnly: !!job.liveOnly,
     error: job.error || null,
     records: jobRecords(job),
   };
@@ -135,7 +137,7 @@ function loadJobs() {
         id: j.id, createdAt: j.createdAt, finishedAt: j.finishedAt || null, status,
         domains: j.domains || [], doneDomains: j.doneDomains || [],
         coverage: j.coverage || { found: 0, live: 0, empty: 0, errored: 0 },
-        directoryFilter: j.directoryFilter || '', error: j.error || null,
+        directoryFilter: j.directoryFilter || '', liveOnly: !!j.liveOnly, error: j.error || null,
         recordsByEmail, lastProgress: null,
       });
     } catch (e) { console.error(`Failed to load job file ${f}:`, e.message); }
@@ -152,6 +154,7 @@ async function runJobDomains(job, domainsToRun) {
     await runDomains(domainsToRun, {
       demoMode: DEMO_MODE,
       directoryFilter: job.directoryFilter,
+      liveOnly: !!job.liveOnly,                                // skip Common Crawl when requested
       outPath: path.join(JOBS_DIR, `${job.id}.engine.csv`),   // throwaway; we keep our own records
       onRecord: (row) => {
         const k = String(row['Email Address'] || '').toLowerCase() || `_${job.recordsByEmail.size}`;
@@ -179,7 +182,7 @@ async function runJobDomains(job, domainsToRun) {
   console.log(`Job ${job.id} ${job.status} — ${job.recordsByEmail.size} record(s)`);
 }
 
-function startJob(domains, directoryFilter) {
+function startJob(domains, directoryFilter, liveOnly) {
   const job = {
     id: newJobId(),
     createdAt: new Date().toISOString(),
@@ -189,6 +192,7 @@ function startJob(domains, directoryFilter) {
     doneDomains: [],
     coverage: { found: 0, live: 0, empty: 0, errored: 0 },
     directoryFilter: directoryFilter || '',
+    liveOnly: !!liveOnly,
     error: null,
     recordsByEmail: new Map(),
     lastProgress: null,
@@ -383,12 +387,13 @@ const server = http.createServer((req, res) => {
         const payload = JSON.parse(body || '{}');
         const domains = Array.isArray(payload.domains) ? payload.domains.filter(Boolean) : [];
         const directoryFilter = typeof payload.directoryFilter === 'string' ? payload.directoryFilter.trim() : '';
+        const liveOnly = payload.liveOnly === true;
         if (domains.length === 0) {
           res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({ error: 'No domains provided' }));
           return;
         }
-        const job = startJob(domains, directoryFilter);
+        const job = startJob(domains, directoryFilter, liveOnly);
         console.log(`Started job ${job.id} for ${domains.length} domain(s)`);
         sendJson(res, jobSummary(job));
       } catch (e) {
