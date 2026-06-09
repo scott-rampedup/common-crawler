@@ -229,7 +229,7 @@ function applyFilters() {
   const directoryValue = normalizeValue(elements.directoryFilter.value);
   const emailTypeValue = normalizeValue(elements.emailTypeFilter.value);
   const phoneTypeValue = elements.phoneTypeFilter ? normalizeValue(elements.phoneTypeFilter.value) : '';
-  const genderValue = elements.genderFilter ? elements.genderFilter.value : 'all';
+  const genderValue = elements.genderFilter ? elements.genderFilter.value : 'na';
   const linkedinRequired = !!(elements.linkedinRequired && elements.linkedinRequired.checked);
 
   state.filtered = state.data.filter((row) => {
@@ -238,6 +238,7 @@ function applyFilters() {
     if (phoneTypeValue && normalizeValue(row['Phone Type']) !== phoneTypeValue) return false;
 
     const g = String(row.Gender || '').trim().toUpperCase();
+    // 'na' (default) = no gender filter — show everything
     if (genderValue === 'male' && g !== 'M') return false;
     else if (genderValue === 'female' && g !== 'F') return false;
     else if (genderValue === 'all' && !(g === 'M' || g === 'F')) return false;       // All = M or F
