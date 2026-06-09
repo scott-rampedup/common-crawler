@@ -34,8 +34,20 @@ header {
 }
 
 header h1 {
-  margin: 0 0 8px;
+  margin: 0;
   font-size: 2rem;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.app-logo {
+  height: 56px;
+  width: auto;
+  display: block;
 }
 
 header p {
