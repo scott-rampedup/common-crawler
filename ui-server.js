@@ -119,6 +119,7 @@ function jobSummary(job) {
 }
 
 function persistJob(job) {
+  if (job.deleted) return;                 // don't resurrect a job that was deleted
   const out = {
     id: job.id,
     createdAt: job.createdAt,
@@ -231,6 +232,19 @@ function resumeJob(id) {
   if (remaining.length === 0) { job.status = 'completed'; persistJob(job); return job; }
   runJobDomains(job, remaining);          // fire and forget
   return job;
+}
+
+function deleteJob(id) {
+  const job = jobs.get(id);
+  if (!job) return false;
+  job.deleted = true;                     // suppress any further persistence
+  job.stopRequested = true;               // wind down if it's still running
+  jobs.delete(id);
+  for (const f of [`${id}.json`, `${id}.engine.csv`]) {
+    try { fs.unlinkSync(path.join(JOBS_DIR, f)); } catch (e) { /* may not exist */ }
+  }
+  console.log(`Deleted job ${id}`);
+  return true;
 }
 
 function contentType(filePath) {
@@ -438,6 +452,8 @@ const server = http.createServer((req, res) => {
     }
 
     if (sub === '' && req.method === 'GET') { sendJson(res, jobSummary(job)); return; }
+
+    if (sub === '' && req.method === 'DELETE') { deleteJob(id); sendJson(res, { deleted: true, id }); return; }
 
     if (sub === '/records' && req.method === 'GET') { sendJson(res, jobRecords(job)); return; }
 

@@ -564,6 +564,12 @@ function renderJobs() {
       actions.appendChild(resumeBtn);
     }
 
+    const delBtn = document.createElement('button');
+    delBtn.textContent = 'Delete';
+    delBtn.classList.add('danger');
+    delBtn.addEventListener('click', () => deleteJobUI(job.id));
+    actions.appendChild(delBtn);
+
     list.appendChild(card);
   }
 
@@ -610,6 +616,29 @@ async function stopJobUI(id) {
     await fetchJobs();
   } catch (error) {
     setSearchStatus(`Could not stop: ${error.message}`);
+  }
+}
+
+async function deleteJobUI(id) {
+  if (!window.confirm('Delete this job and its results? This cannot be undone.')) return;
+  try {
+    const res = await fetch(`/api/jobs/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const wasViewing = state.viewingJobId === id;
+    await fetchJobs();
+    if (wasViewing) {
+      state.viewingJobId = null;
+      if (state.jobs.length) {
+        viewJob(state.jobs[0].id);                 // switch to the newest remaining job
+      } else {
+        state.data = [];
+        if (elements.viewingIndicator) elements.viewingIndicator.classList.add('hidden');
+        applyFilters();
+      }
+    }
+    setSearchStatus('Job deleted.');
+  } catch (error) {
+    setSearchStatus(`Could not delete: ${error.message}`);
   }
 }
 
