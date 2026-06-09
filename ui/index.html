@@ -38,10 +38,6 @@
             <option value="">All email types</option>
           </select>
         </label>
-        <label class="checkbox-label">
-          <input id="showAllCheckbox" type="checkbox" />
-          Show all rows
-        </label>
       </div>
       <div class="filter-row">
         <label>
@@ -93,6 +89,13 @@
           </thead>
           <tbody id="resultsBody"></tbody>
         </table>
+      </div>
+      <div class="pagination" id="pagination">
+        <button id="firstPageBtn" type="button" title="First page">«</button>
+        <button id="prevPageBtn" type="button" title="Previous page">‹ Prev</button>
+        <span id="pageInfo" class="page-info">Page 1 of 1</span>
+        <button id="nextPageBtn" type="button" title="Next page">Next ›</button>
+        <button id="lastPageBtn" type="button" title="Last page">»</button>
       </div>
     </section>
 

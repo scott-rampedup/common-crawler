@@ -37,7 +37,12 @@ const ROLE_LOCALS = new Set(["info","sales","support","admin","contact","hello",
   "webmaster","postmaster","abuse","noreply","no-reply","enquiries","inquiries"]);
 // path segments that signal an individual profile (when followed by a person-ish slug)
 const BIO_DIRS = new Set(["people","person","team","about","staff","bio","profile","profiles",
-  "leadership","our-team","meet","employee","agents","agent","attorneys","doctors","providers"]);
+  "leadership","our-team","meet","employee","agents","agent","attorneys","doctors","providers",
+  // common professional-services bio directories (single-word forms match the normalizer)
+  "attorney","lawyer","lawyers","partner","partners","associate","associates","principals",
+  "physician","physicians","doctor","provider","broker","brokers","realtor","realtors",
+  "advisor","advisors","consultant","consultants","clinicians","specialists","member","members",
+  "professionals","directory","biographies","biography","bios"]);
 const COMMON_TITLES = ["chief executive officer","ceo","founder","co-founder","cto","cfo","coo","cmo",
   "president","vice president","vp","director","head of","manager","lead","engineer","designer",
   "account executive","partner","associate","analyst","consultant","specialist","coordinator","owner"];
@@ -271,6 +276,47 @@ function classifyDirectory(url, html = "", rules = {}, genderMap = {}){
   return "Company";
 }
 
+// When a page has no usable <title>, infer a role title from a keyword in the URL path.
+const KEYWORD_TITLES = {
+  "accountant":"Accountant","accountants":"Accountant","admissions-staff":"Admissions",
+  "advisor":"Advisor","advisors":"Advisor","find-an-advisor":"Advisor","our-advisors":"Advisor",
+  "agent":"Agent","agent-detail":"Agent","agent-details":"Agent","agente":"Agent","agents":"Agent",
+  "find-an-agent":"Agent","agentprofile":"Agent","associates":"Associate",
+  "lawyers":"Attorney","abogados":"Attorney","attorney":"Attorney","attorney-profile":"Attorney",
+  "attorney-profiles":"Attorney","attorneys":"Attorney","attorneys-staff":"Attorney","barrister":"Attorney",
+  "barristers":"Attorney","council-staff":"Attorney","find-a-lawyer":"Attorney","lawyer":"Attorney",
+  "our-attorneys":"Attorney","our-lawyers":"Attorney","bankers":"Banker",
+  "board":"Board Member","board_of_directors":"Board Member","board-committees":"Board Member",
+  "board-directors":"Board Member","board-members":"Board Member","board-of-director":"Board Member",
+  "board-of-directors":"Board Member","board-of-management":"Board Member","bod":"Board Member","boe":"Board Member",
+  "broker":"Broker","brokers":"Broker","our-brokers":"Broker","clinicians":"Clinician","find-a-clinician":"Clinician",
+  "commissioners":"Commisioner","consultant":"Consultant","consultants":"Consultant",
+  "dentist-office":"Dentist","dentist":"Dentist","doctor":"Doctor","doctor-profile":"Doctor","doctors":"Doctor",
+  "findadoctor":"Doctor","find-a-doctor":"Doctor","find-doctor":"Doctor","find-doctors-physicians":"Doctor",
+  "doctors-providers":"Doctor","findadoc":"Doctor","financial-advisor":"Financial Advisor",
+  "wealth-management":"Financial Advisor","wealth-management-team":"Financial Advisor",
+  "loan-advisors":"Loan Officer","loan-officer":"Loan Officer","loan-officers":"Loan Officer","loanoriginator":"Loan Officer",
+  "our-partners":"Partner","partner":"Partner","partners":"Partner","physician":"Physician",
+  "physician-directory":"Physician","physician-finder":"Physician","physicians":"Physician","principals":"Principal",
+  "find-a-provider":"Provider","our-providers":"Provider","provider":"Provider","provider-directory":"Provider",
+  "providers":"Provider","providers.":"Provider","provider-search":"Provider","realestateagent":"Realtor",
+  "real-estate-agent":"Realtor","real-estate-agents":"Realtor","realtors":"Realtor","recruiters":"Recruiter",
+  "find-a-rep":"Representative","find-a-representative":"Representative","find-a-sales-rep":"Representative",
+  "find-a-sales-representative":"Representative","find-rep":"Representative","find-representative":"Representative",
+  "find-sales-rep":"Representative","rep-locator":"Representative","reps":"Representative",
+  "sales-rep-locator":"Representative","sales-representative":"Representative","sales-representatives":"Representative",
+  "sales-team":"Representative","find-a-researcher":"Researcher","researcher":"Researcher","research-staff":"Researcher",
+  "specialists":"Specialist","meet-the-teachers":"Teacher","res-teachers-and-staff":"Teacher","teachers":"Teacher",
+  "teachers_and_staff":"Teacher","teachers_staff":"Teacher","travel-agents":"Travel Agent","our-vets":"Veterinarian",
+};
+function titleFromUrlKeywords(url){
+  let segs;
+  try { segs = new URL(url).pathname.toLowerCase().split("/").filter(Boolean); }
+  catch { return ""; }
+  for(const seg of segs){ if(KEYWORD_TITLES[seg]) return KEYWORD_TITLES[seg]; }
+  return "";
+}
+
 function classifyEmail(email){
   if(!email) return "";
   const [local, domain] = email.toLowerCase().split("@"); if(!domain) return "";
@@ -324,6 +370,7 @@ function findPosition(title, description){
 function extractRecord(html, url, deps = {}){
   const { wireless, genderMap = {}, geocode = defaultGeocode, source = "", timestamp = new Date().toISOString().slice(0,10) } = deps;
   html = String(html || "");
+  url = String(url || "").split("?")[0];        // drop the query string ("?...") from the source URL
 
   const directory = classifyDirectory(url, html, deps.directoryRules, deps.genderMap);
   const isBio = directory === "BIO URL";
@@ -359,17 +406,20 @@ function extractRecord(html, url, deps = {}){
   const tels = []; const seenT = new Set();
   for(const h of hrefs){ if(/^tel:/i.test(h)){ const t = h.replace(/^tel:/i,"").trim();
     if(t && !seenT.has(t)){ seenT.add(t); tels.push(t); } } }
-  let phone="", phoneType="", phoneLocation="", phone2="";
+  let phone="", phoneType="", phoneLocation="", phone2="", phone2Type="";
   if(isBio && tels.length && wireless){
-    phone = tels[0];
-    const cls = classifyLineType(phone, wireless);
-    phoneType = cls.type;                          // Toll Free / Mobile / Direct / Unknown
-    phoneLocation = phoneType === "Toll Free" ? "" : geocode(phone);
-    phone2 = tels[1] || "";
+    const cc = countryCodeFromDomain(getBaseDomain(url));   // country from the domain TLD (default US)
+    const raw1 = tels[0];
+    phoneType = classifyLineType(raw1, wireless).type;      // classify on the raw number…
+    phoneLocation = phoneType === "Toll Free" ? "" : geocode(raw1);
+    phone = toE164(raw1, cc);                               // …then standardize to E.164
+    const raw2 = tels[1] || "";
+    if(raw2){ phone2Type = classifyLineType(raw2, wireless).type; phone2 = toE164(raw2, cc); }
   }
 
   const description = (metaContent(html,"og:description") || metaContent(html,"description")).slice(0,300);
-  const title = pageTitle(html);
+  let title = pageTitle(html);
+  if(!title) title = titleFromUrlKeywords(url);   // fall back to a role inferred from the URL path
   const position = findPosition(title, description);
   const image = findImage(html, url);
   const gender = first ? (genderMap[first.toLowerCase()] || "") : "";
@@ -400,6 +450,7 @@ function extractRecord(html, url, deps = {}){
     "Phone Type": phoneType,
     "Phone Location": phoneLocation,
     "Phone 2": phone2,
+    "Phone 2 Type": phone2Type,
   };
 }
 
@@ -409,6 +460,38 @@ const AREA_REGION = {212:"New York, NY",415:"San Francisco, CA",312:"Chicago, IL
 function defaultGeocode(phone){
   const d = String(phone).replace(/\D/g,""); const ten = d.length===11&&d[0]==="1"?d.slice(1):d;
   return AREA_REGION[Number(ten.slice(0,3))] || "";
+}
+
+// ---- phone normalization to E.164 ----
+// country calling code by domain TLD; anything not listed (incl. .com/.org/.net…) -> US (1)
+const TLD_CC = {
+  us:"1", ca:"1", uk:"44", gb:"44", ie:"353", au:"61", nz:"64", in:"91", sg:"65", hk:"852", my:"60",
+  ph:"63", de:"49", fr:"33", es:"34", it:"39", nl:"31", be:"32", ch:"41", at:"43", se:"46", no:"47",
+  dk:"45", fi:"358", pt:"351", pl:"48", cz:"420", ro:"40", gr:"30", hu:"36", lu:"352", is:"354",
+  mx:"52", br:"55", ar:"54", cl:"56", co:"57", pe:"51", za:"27", ng:"234", ke:"254", ae:"971",
+  sa:"966", il:"972", tr:"90", jp:"81", kr:"82", cn:"86", tw:"886", ru:"7", ua:"380",
+};
+function countryCodeFromDomain(domain){
+  const tld = String(domain || "").toLowerCase().split(".").pop();
+  return TLD_CC[tld] || "1";   // assume US when unknown / not inferable
+}
+// Convert a messy phone string to E.164 (+<cc><number>, digits only). Best-effort.
+function toE164(raw, cc){
+  if(!raw) return "";
+  const hasPlus = String(raw).trim().startsWith("+");
+  let digits = String(raw).replace(/\D/g, "");
+  if(!digits) return "";
+  if(hasPlus) return "+" + digits.slice(0, 15);          // already international
+  cc = cc || "1";
+  if(cc === "1"){                                         // North American Numbering Plan
+    if(digits.length === 11 && digits[0] === "1") return "+" + digits;
+    if(digits.length === 10) return "+1" + digits;
+    if(digits.length > 11) return "+" + digits.slice(0, 15);
+    return "+1" + digits;                                 // short/ext — best effort
+  }
+  digits = digits.replace(/^0+/, "");                     // drop national trunk prefix
+  if(digits.startsWith(cc)) return "+" + digits.slice(0, 15);
+  return "+" + (cc + digits).slice(0, 15);
 }
 
 function loadGenderMap(filePath){

@@ -371,6 +371,8 @@ input[type='search']:focus, select:focus {
 
 .table-scroll {
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: 620px;          /* keep the results box a consistent size; scroll inside it */
 }
 
 table {
@@ -500,6 +502,43 @@ td.maps-cell { text-align: center; }
 }
 .jobs-toggle:hover { background: #eef2ff; }
 .jobs-list.collapsed { display: none; }
+
+/* thumbnail / source-link cell */
+.photo-link { display: inline-flex; }
+.photo-fallback {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: #f3f4f6;
+  color: #6b7280;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.photo-link:hover .photo-fallback { background: #e0e7ff; color: #2563eb; }
+
+/* pagination bar under the results */
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 24px;
+  border-top: 1px solid #e5e7eb;
+}
+.pagination button {
+  appearance: none;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  color: #111827;
+  padding: 7px 12px;
+  border-radius: 9px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.pagination button:hover:not(:disabled) { background: #eef2ff; }
+.pagination button:disabled { opacity: 0.45; cursor: default; }
+.page-info { color: #4b5563; font-weight: 600; }
 
 footer {
   margin-top: 24px;

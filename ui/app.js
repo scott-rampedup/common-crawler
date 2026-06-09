@@ -1,12 +1,12 @@
-// Columns shown in the table AND written to the downloaded CSV.
-// NOTE: "Image URL" is deliberately NOT here — the image only powers the row
-// thumbnail (read directly from record['Image URL']); it's never its own column.
-const COLUMNS = [
+// Full record schema (order matches the engine / CSV download). "Image URL" is NOT
+// here — it only powers the row thumbnail.
+const CSV_COLUMNS = [
   'Time Stamp',
   'Source',
   'Web Source URL',
   'Directory',
   'ID',
+  'Last Path',
   'Bio Check',
   'First',
   'Last',
@@ -21,25 +21,35 @@ const COLUMNS = [
   'Phone',
   'Phone Type',
   'Phone Location',
-  'Phone 2'
+  'Phone 2',
+  'Phone 2 Type'
 ];
 
-const MAX_ROWS_DEFAULT = 200;
+// Columns hidden from the on-screen table (still in the CSV download):
+//  - Web Source URL: instead, the row thumbnail links to it
+//  - Title, Bio Check: removed from the UI per request
+const HIDDEN_IN_UI = new Set(['Web Source URL', 'Title', 'Bio Check']);
+const DISPLAY_COLUMNS = CSV_COLUMNS.filter((c) => !HIDDEN_IN_UI.has(c));
+
+const PAGE_SIZE = 50;
 
 // red location pin (Google-Maps style), hyperlinked to the Google Maps URL
 const PIN_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">'
   + '<path fill="currentColor" d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"/></svg>';
+// small "open link" glyph for rows that have a source URL but no image
+const LINK_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">'
+  + '<path fill="currentColor" d="M14 3v2h3.59l-9.3 9.29 1.42 1.42L19 6.41V10h2V3h-7zM5 5h6V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6h-2v6H5V5z"/></svg>';
 
 const state = {
   data: [],
   filtered: [],
-  showAll: false,
   domainList: [],
   jobs: [],
   viewingJobId: null,
   lastViewedCount: -1,
   sort: { column: null, dir: 1 },   // dir: 1 asc, -1 desc
   jobsCollapsed: false,
+  page: 1,
 };
 
 let jobsPollTimer = null;
@@ -60,7 +70,6 @@ function initElements() {
   elements.downloadButton = document.getElementById('downloadButton');
   elements.modeIndicator = document.getElementById('modeIndicator');
   elements.searchStatus = document.getElementById('searchStatus');
-  elements.showAllCheckbox = document.getElementById('showAllCheckbox');
   elements.domainInput = document.getElementById('domainInput');
   elements.domainFileInput = document.getElementById('domainFileInput');
   elements.applyDomainsButton = document.getElementById('applyDomainsButton');
@@ -73,6 +82,12 @@ function initElements() {
   elements.tableScroll = document.getElementById('tableScroll');
   elements.tableScrollTop = document.getElementById('tableScrollTop');
   elements.tableScrollTopInner = document.getElementById('tableScrollTopInner');
+  elements.pagination = document.getElementById('pagination');
+  elements.pageInfo = document.getElementById('pageInfo');
+  elements.firstPageBtn = document.getElementById('firstPageBtn');
+  elements.prevPageBtn = document.getElementById('prevPageBtn');
+  elements.nextPageBtn = document.getElementById('nextPageBtn');
+  elements.lastPageBtn = document.getElementById('lastPageBtn');
 }
 
 function createHeader() {
@@ -83,7 +98,7 @@ function createHeader() {
   photoTh.className = 'photo-col';
   elements.tableHeaderRow.appendChild(photoTh);
 
-  for (const column of COLUMNS) {
+  for (const column of DISPLAY_COLUMNS) {
     const th = document.createElement('th');
     th.className = 'sortable';
     if (column === 'Description') th.classList.add('desc-col');
@@ -103,6 +118,7 @@ function sortBy(column) {
   } else {
     state.sort = { column, dir: 1 };
   }
+  state.page = 1;
   createHeader();                                 // refresh sort arrows
   applyFilters();
 }
@@ -160,20 +176,25 @@ function buildFilterOptions(field, selectElement) {
   if (previous && uniqueValues.includes(previous)) selectElement.value = previous;
 }
 
-// Totals now live in the Search Results header (the 3 top boxes were removed).
+function rebuildFilters() {
+  buildFilterOptions('Directory', elements.directoryFilter);
+  buildFilterOptions('Email Type', elements.emailTypeFilter);
+}
+
+// Totals live in the Search Results header (the 3 top boxes were removed).
 function updateSummary() {
   const total = state.data.length;
   const displayed = state.filtered.length;
   const uniqueEmails = new Set(state.data.map((row) => normalizeValue(row['Email Address'])).filter(Boolean)).size;
   const domainCount = state.domainList.length;
 
-  const shown = state.showAll ? displayed : Math.min(displayed, MAX_ROWS_DEFAULT);
+  const start = displayed ? (state.page - 1) * PAGE_SIZE + 1 : 0;
+  const end = Math.min(state.page * PAGE_SIZE, displayed);
   const domainText = domainCount ? ` · ${domainCount} domain${domainCount === 1 ? '' : 's'} filtered` : '';
-  const cap = state.showAll || displayed <= MAX_ROWS_DEFAULT ? '' : ` · showing first ${MAX_ROWS_DEFAULT}`;
 
   elements.tableSummary.innerHTML =
-    `<strong>${total}</strong> records · <strong>${displayed}</strong> displayed · `
-    + `<strong>${uniqueEmails}</strong> unique emails${domainText}${cap}`;
+    `<strong>${total}</strong> records · showing <strong>${start}-${end}</strong> of <strong>${displayed}</strong> · `
+    + `<strong>${uniqueEmails}</strong> unique emails${domainText}`;
 }
 
 function matchesSearch(row, query) {
@@ -211,18 +232,46 @@ function applyFilters() {
   updateSummary();
 }
 
+function totalPages() {
+  return Math.max(1, Math.ceil(state.filtered.length / PAGE_SIZE));
+}
+
+function renderPagination() {
+  const pages = totalPages();
+  if (elements.pageInfo) elements.pageInfo.textContent = `Page ${state.page} of ${pages}`;
+  const atStart = state.page <= 1;
+  const atEnd = state.page >= pages;
+  if (elements.firstPageBtn) elements.firstPageBtn.disabled = atStart;
+  if (elements.prevPageBtn) elements.prevPageBtn.disabled = atStart;
+  if (elements.nextPageBtn) elements.nextPageBtn.disabled = atEnd;
+  if (elements.lastPageBtn) elements.lastPageBtn.disabled = atEnd;
+}
+
+function setPage(p) {
+  state.page = p;
+  renderTable();
+  updateSummary();
+}
+
 function renderTable() {
+  // clamp page to the available range, then slice this page
+  const pages = totalPages();
+  if (state.page > pages) state.page = pages;
+  if (state.page < 1) state.page = 1;
+  const startIdx = (state.page - 1) * PAGE_SIZE;
+  const rowsToRender = state.filtered.slice(startIdx, startIdx + PAGE_SIZE);
+
   elements.resultsBody.innerHTML = '';
-  const rowsToRender = state.showAll ? state.filtered : state.filtered.slice(0, MAX_ROWS_DEFAULT);
 
   if (rowsToRender.length === 0) {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
-    cell.colSpan = COLUMNS.length + 1;          // +1 for the leading photo column
+    cell.colSpan = DISPLAY_COLUMNS.length + 1;     // +1 for the leading photo column
     cell.textContent = 'No records match the current filters.';
     cell.style.padding = '20px';
     row.appendChild(cell);
     elements.resultsBody.appendChild(row);
+    renderPagination();
     syncTopScrollbar();
     return;
   }
@@ -231,10 +280,13 @@ function renderTable() {
   for (const record of rowsToRender) {
     const row = document.createElement('tr');
 
-    // leading thumbnail from the record's image (hidden if missing or fails to load)
+    // leading cell: thumbnail (or a link glyph), hyperlinked to the Web Source URL
     const photoCell = document.createElement('td');
     photoCell.className = 'photo-cell';
     const src = record['Image URL'];
+    const pageUrl = record['Web Source URL'];
+
+    let inner = null;
     if (src) {
       const img = document.createElement('img');
       img.className = 'row-photo';
@@ -242,12 +294,29 @@ function renderTable() {
       img.alt = '';
       img.loading = 'lazy';
       img.referrerPolicy = 'no-referrer';
-      img.addEventListener('error', () => img.remove());
-      photoCell.appendChild(img);
+      img.addEventListener('error', () => { img.replaceWith(makeLinkFallback(!!pageUrl)); });
+      inner = img;
+    } else if (pageUrl) {
+      inner = makeLinkFallback(true);
+    }
+
+    if (inner) {
+      if (pageUrl) {
+        const a = document.createElement('a');
+        a.href = pageUrl;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.title = 'Open source page';
+        a.className = 'photo-link';
+        a.appendChild(inner);
+        photoCell.appendChild(a);
+      } else {
+        photoCell.appendChild(inner);
+      }
     }
     row.appendChild(photoCell);
 
-    for (const field of COLUMNS) {
+    for (const field of DISPLAY_COLUMNS) {
       const cell = document.createElement('td');
       const value = record[field];
 
@@ -278,7 +347,15 @@ function renderTable() {
     frag.appendChild(row);
   }
   elements.resultsBody.appendChild(frag);
+  renderPagination();
   syncTopScrollbar();
+}
+
+function makeLinkFallback(hasUrl) {
+  const span = document.createElement('span');
+  span.className = 'photo-fallback';
+  if (hasUrl) span.innerHTML = LINK_SVG;
+  return span;
 }
 
 // Keep the dummy top scrollbar's width in sync with the real table width.
@@ -316,11 +393,10 @@ async function loadResults() {
 
     const data = await response.json();
     state.data = data;
-    state.showAll = elements.showAllCheckbox.checked;
+    state.page = 1;
 
     createHeader();
-    buildFilterOptions('Directory', elements.directoryFilter);
-    buildFilterOptions('Email Type', elements.emailTypeFilter);
+    rebuildFilters();
     applyFilters();
   } catch (error) {
     elements.tableSummary.textContent = `Error loading data: ${error.message}`;
@@ -480,11 +556,12 @@ async function resumeJobUI(id) {
 async function viewJob(id) {
   state.viewingJobId = id;
   state.lastViewedCount = -1;
+  state.page = 1;
   await refreshViewedRecords(true);
   renderJobs();
 }
 
-async function refreshViewedRecords(rebuildFilters) {
+async function refreshViewedRecords(rebuildHeader) {
   const id = state.viewingJobId;
   if (!id) return;
   try {
@@ -493,7 +570,6 @@ async function refreshViewedRecords(rebuildFilters) {
     const rows = await res.json();
     state.data = rows;
     state.lastViewedCount = rows.length;
-    state.showAll = elements.showAllCheckbox.checked;
 
     const job = state.jobs.find((j) => j.id === id);
     if (elements.viewingIndicator) {
@@ -506,11 +582,8 @@ async function refreshViewedRecords(rebuildFilters) {
       elements.viewingIndicator.innerHTML = `Viewing job: <strong>${job ? escapeHtml(shortJobLabel(job)) : id}</strong> [${job ? job.status : '?'}]${progressText}`;
     }
 
-    if (rebuildFilters) {
-      createHeader();
-      buildFilterOptions('Directory', elements.directoryFilter);
-      buildFilterOptions('Email Type', elements.emailTypeFilter);
-    }
+    if (rebuildHeader) createHeader();
+    rebuildFilters();                 // always refresh so Directory/Email Type fill as data streams in
     applyFilters();
   } catch (error) {
     setSearchStatus(`Could not load job records: ${error.message}`);
@@ -547,6 +620,7 @@ function setSearchStatus(text) {
 
 function applyDomainListFromInput() {
   state.domainList = parseDomainList(elements.domainInput.value);
+  state.page = 1;
   applyFilters();
 }
 
@@ -569,6 +643,7 @@ function clearDomains() {
   elements.domainInput.value = '';
   elements.domainFileInput.value = '';
   state.domainList = [];
+  state.page = 1;
   applyFilters();
 }
 
@@ -578,10 +653,11 @@ function downloadCSV() {
     return;
   }
 
-  // CSV from the filtered rows, using the same columns as the table (no Image URL).
-  const csvLines = [COLUMNS.join(',')];
+  // CSV from the filtered rows — uses the FULL column set (incl. Web Source URL,
+  // Title, Bio Check), even though those are hidden in the table.
+  const csvLines = [CSV_COLUMNS.join(',')];
   for (const row of state.filtered) {
-    const values = COLUMNS.map((col) => {
+    const values = CSV_COLUMNS.map((col) => {
       const val = String(row[col] || '');
       if (val.includes(',') || val.includes('"') || val.includes('\n')) {
         return `"${val.replace(/"/g, '""')}"`;
@@ -604,23 +680,24 @@ function downloadCSV() {
 }
 
 function attachEvents() {
-  elements.searchInput.addEventListener('input', () => applyFilters());
-  elements.directoryFilter.addEventListener('change', () => applyFilters());
-  elements.emailTypeFilter.addEventListener('change', () => applyFilters());
+  elements.searchInput.addEventListener('input', () => { state.page = 1; applyFilters(); });
+  elements.directoryFilter.addEventListener('change', () => { state.page = 1; applyFilters(); });
+  elements.emailTypeFilter.addEventListener('change', () => { state.page = 1; applyFilters(); });
   elements.refreshButton.addEventListener('click', () => {
     if (state.viewingJobId) refreshViewedRecords(true); else loadResults();
   });
   elements.downloadButton.addEventListener('click', () => downloadCSV());
   if (elements.refreshJobsButton) elements.refreshJobsButton.addEventListener('click', () => fetchJobs());
   if (elements.jobsToggle) elements.jobsToggle.addEventListener('click', () => toggleJobs());
-  elements.showAllCheckbox.addEventListener('change', (event) => {
-    state.showAll = event.target.checked;
-    renderTable();
-    updateSummary();
-  });
   elements.applyDomainsButton.addEventListener('click', () => searchContacts());
   elements.clearDomainsButton.addEventListener('click', () => clearDomains());
   elements.domainFileInput.addEventListener('change', (event) => handleDomainFileUpload(event));
+
+  if (elements.firstPageBtn) elements.firstPageBtn.addEventListener('click', () => setPage(1));
+  if (elements.prevPageBtn) elements.prevPageBtn.addEventListener('click', () => setPage(state.page - 1));
+  if (elements.nextPageBtn) elements.nextPageBtn.addEventListener('click', () => setPage(state.page + 1));
+  if (elements.lastPageBtn) elements.lastPageBtn.addEventListener('click', () => setPage(totalPages()));
+
   wireTopScrollbar();
 }
 

@@ -140,7 +140,7 @@ async function fetchWithRetries(url, opts = {}, { retries = 3, delay = 500 } = {
 // along on each record object (used for the UI thumbnail) but is not a CSV column.
 const COLUMNS = ["Time Stamp","Source","Web Source URL","Directory","ID","Last Path","Bio Check",
   "First","Last","Gender","Title","Position","Description","Email Address","Email Type",
-  "LinkedIn URL","Google Maps","Phone","Phone Type","Phone Location","Phone 2"];
+  "LinkedIn URL","Google Maps","Phone","Phone Type","Phone Location","Phone 2","Phone 2 Type"];
 
 // ---------------------------------------------------------------- input
 function readDomains(csvPath){
