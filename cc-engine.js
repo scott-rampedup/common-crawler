@@ -74,6 +74,11 @@ function makeLimiter(maxConcurrent){
 // (configurable) even when many domains run in parallel, so we never hammer it.
 const ccLimit = makeLimiter(Number(process.env.CC_CONCURRENCY) || 1);
 
+// GLOBAL crawl-concurrency cap, shared across ALL jobs in this process. Per-job pools
+// each respect this, so running several big jobs at once can't multiply the in-flight
+// load (two 48-concurrency jobs once = ~96 fetches -> heap OOM / SIGABRT).
+const globalCrawlLimit = makeLimiter(Math.max(1, Number(process.env.DOMAIN_CONCURRENCY) || 6));
+
 // Per-key (per-host) concurrency limiter: lets total concurrency be high while
 // keeping the number of simultaneous requests to ANY single host small (polite +
 // protects our IP). Used for live page fetches in webpage mode.
@@ -943,7 +948,9 @@ async function run(csvPath, opts = {}){
       if(shouldStop()){ stopped = true; return; }   // cancel: don't pick up new domains
       const index = cursor++;
       if(index >= domains.length) return;
-      try{ await processDomain(domains[index], index); }
+      // run the actual work through the GLOBAL limiter so total concurrency is bounded
+      // across every job in the process (not just within this one).
+      try{ await globalCrawlLimit(() => processDomain(domains[index], index)); }
       catch(e){ coverage.empty++; console.log(`! ${domains[index].padEnd(28)} ${e.message}`); }
     }
   };

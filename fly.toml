@@ -7,6 +7,7 @@ primary_region = 'ewr'   # must match the existing 'data' volume's region
 [env]
   DATA_DIR = '/data'
   DEMO_MODE = 'false'
+  NODE_OPTIONS = '--max-old-space-size=6144'   # let V8 use the 8GB box (default ~2GB caused SIGABRT)
   LIVE_MAX_PAGES = '300'        # max pages the live crawler fetches per domain (sitemap-driven)
   DOMAIN_CONCURRENCY = '48'     # total domains/URLs in flight (safe now: rotating proxy IPs)
   IN_SITE_CONCURRENCY = '4'     # how many pages from one site to fetch at once
