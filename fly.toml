@@ -8,9 +8,9 @@ primary_region = 'ewr'   # must match the existing 'data' volume's region
   DATA_DIR = '/data'
   DEMO_MODE = 'false'
   LIVE_MAX_PAGES = '300'        # max pages the live crawler fetches per domain (sitemap-driven)
-  DOMAIN_CONCURRENCY = '16'     # how many different domains/URLs to crawl at once
+  DOMAIN_CONCURRENCY = '48'     # total domains/URLs in flight (safe now: rotating proxy IPs)
   IN_SITE_CONCURRENCY = '4'     # how many pages from one site to fetch at once
-  HOST_CONCURRENCY = '3'        # max simultaneous requests to any single host (politeness/IP safety)
+  HOST_CONCURRENCY = '3'        # max simultaneous requests to any single host (stays polite per site)
   CC_CONCURRENCY = '1'          # global Common Crawl request limit (keep low: shared service)
   HTML_MAX_KB = '1024'          # cap HTML page size we download/parse (KB)
 
