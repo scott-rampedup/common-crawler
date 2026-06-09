@@ -20,21 +20,6 @@
       </div>
     </header>
 
-    <section class="stats-panel" id="statsPanel">
-      <div class="stat-card">
-        <strong id="totalCount">0</strong>
-        <span>Total records</span>
-      </div>
-      <div class="stat-card">
-        <strong id="filteredCount">0</strong>
-        <span>Displayed records</span>
-      </div>
-      <div class="stat-card">
-        <strong id="emailCount">0</strong>
-        <span>Unique emails</span>
-      </div>
-    </section>
-
     <section class="filters-panel">
       <div class="filter-row">
         <label>
@@ -81,6 +66,7 @@
 
     <section class="jobs-panel">
       <div class="jobs-header">
+        <button id="jobsToggle" type="button" class="jobs-toggle" aria-expanded="true">▾</button>
         <h2>Search jobs</h2>
         <p class="jobs-hint">Searches run on the server — you can close this tab and come back. Interrupted jobs can be resumed.</p>
         <button id="refreshJobsButton" type="button">Refresh jobs</button>
@@ -99,7 +85,8 @@
           <span id="loadingText">Searching for contacts...</span>
         </div>
       </div>
-      <div class="table-scroll">
+      <div class="table-scroll-top" id="tableScrollTop"><div id="tableScrollTopInner"></div></div>
+      <div class="table-scroll" id="tableScroll">
         <table id="resultsTable">
           <thead>
             <tr id="tableHeaderRow"></tr>

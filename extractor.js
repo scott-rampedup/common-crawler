@@ -132,13 +132,10 @@ function nameFromSlug(slug){
 }
 
 function inferNameFromSlug(slug, genderMap){
-  const name = nameFromSlug(slug);
-  if(!name.first) return {first:"", last:""};
-  if(genderMap && Object.keys(genderMap).length){
-    const gender = genderMap[name.first.toLowerCase()];
-    if(!gender) return {first:"", last:""};
-  }
-  return name;
+  // The slug is already gated as a person elsewhere (looksLikePersonSlug /
+  // classifyDirectory). genderMap is used ONLY to fill the Gender field later — we do
+  // NOT drop a real name just because it isn't in the census list (e.g. "Sibel").
+  return nameFromSlug(slug);
 }
 
 function colLettersToIndex(col){

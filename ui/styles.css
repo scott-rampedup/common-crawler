@@ -448,6 +448,59 @@ tbody td {
   background: #f3f4f6;
 }
 
+/* sortable headers */
+thead th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+thead th.sortable:hover { color: #2563eb; }
+thead th.sorted { color: #2563eb; }
+
+/* Description: more room, single-line ellipsis so every row is the same height */
+.desc-col { min-width: 360px; }
+td.desc-cell { max-width: 380px; }
+.desc-clip {
+  max-width: 380px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Google Maps -> a red map pin linking to the maps URL */
+td.maps-cell { text-align: center; }
+.maps-pin {
+  color: #ea4335;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.maps-pin:hover { color: #b31412; }
+
+/* second horizontal scrollbar pinned above the table, synced with the bottom one */
+.table-scroll-top {
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid #eef2f7;
+}
+.table-scroll-top > div { height: 1px; }
+
+/* Search Jobs collapse toggle */
+.jobs-toggle {
+  appearance: none;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  color: #111827;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+.jobs-toggle:hover { background: #eef2ff; }
+.jobs-list.collapsed { display: none; }
+
 footer {
   margin-top: 24px;
   color: #6b7280;

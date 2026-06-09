@@ -7,7 +7,17 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'ui');
 const RESULTS_CSV = path.join(__dirname, 'cc-results.csv');
 const { runDomains, COLUMNS } = require('./cc-engine');
+const { loadGenderMap } = require('./extractor');
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
+
+// First-name -> gender lookup, loaded once at startup (committed CSV ships in the image).
+let GENDER_MAP = {};
+try {
+  GENDER_MAP = loadGenderMap(path.join(__dirname, 'names-genders.csv'));
+  console.log(`Loaded ${Object.keys(GENDER_MAP).length.toLocaleString()} name->gender entries.`);
+} catch (e) {
+  console.warn('names-genders.csv not loaded (Gender will be blank):', e.message);
+}
 
 // Where job data lives. On a host, point DATA_DIR at a persistent disk so jobs
 // survive restarts and redeploys; locally it defaults to this folder.
@@ -154,6 +164,7 @@ async function runJobDomains(job, domainsToRun) {
     await runDomains(domainsToRun, {
       demoMode: DEMO_MODE,
       directoryFilter: job.directoryFilter,
+      genderMap: GENDER_MAP,                                   // fill Gender via first-name lookup
       liveOnly: !!job.liveOnly,                                // skip Common Crawl when requested
       outPath: path.join(JOBS_DIR, `${job.id}.engine.csv`),   // throwaway; we keep our own records
       onRecord: (row) => {

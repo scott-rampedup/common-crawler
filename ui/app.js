@@ -1,3 +1,6 @@
+// Columns shown in the table AND written to the downloaded CSV.
+// NOTE: "Image URL" is deliberately NOT here — the image only powers the row
+// thumbnail (read directly from record['Image URL']); it's never its own column.
 const COLUMNS = [
   'Time Stamp',
   'Source',
@@ -11,7 +14,6 @@ const COLUMNS = [
   'Title',
   'Position',
   'Description',
-  'Image URL',
   'Email Address',
   'Email Type',
   'LinkedIn URL',
@@ -24,6 +26,10 @@ const COLUMNS = [
 
 const MAX_ROWS_DEFAULT = 200;
 
+// red location pin (Google-Maps style), hyperlinked to the Google Maps URL
+const PIN_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">'
+  + '<path fill="currentColor" d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"/></svg>';
+
 const state = {
   data: [],
   filtered: [],
@@ -32,16 +38,16 @@ const state = {
   jobs: [],
   viewingJobId: null,
   lastViewedCount: -1,
+  sort: { column: null, dir: 1 },   // dir: 1 asc, -1 desc
+  jobsCollapsed: false,
 };
 
 let jobsPollTimer = null;
+let topScrollWired = false;
 
 const elements = {};
 
 function initElements() {
-  elements.totalCount = document.getElementById('totalCount');
-  elements.filteredCount = document.getElementById('filteredCount');
-  elements.emailCount = document.getElementById('emailCount');
   elements.tableSummary = document.getElementById('tableSummary');
   elements.loadingIndicator = document.getElementById('loadingIndicator');
   elements.loadingText = document.getElementById('loadingText');
@@ -62,20 +68,52 @@ function initElements() {
   elements.liveOnlyCheckbox = document.getElementById('liveOnlyCheckbox');
   elements.jobsList = document.getElementById('jobsList');
   elements.refreshJobsButton = document.getElementById('refreshJobsButton');
+  elements.jobsToggle = document.getElementById('jobsToggle');
   elements.viewingIndicator = document.getElementById('viewingIndicator');
+  elements.tableScroll = document.getElementById('tableScroll');
+  elements.tableScrollTop = document.getElementById('tableScrollTop');
+  elements.tableScrollTopInner = document.getElementById('tableScrollTopInner');
 }
 
 function createHeader() {
   elements.tableHeaderRow.innerHTML = '';
-  const photoTh = document.createElement('th');     // leading thumbnail column
+
+  const photoTh = document.createElement('th');     // leading thumbnail column (not sortable)
   photoTh.textContent = '';
   photoTh.className = 'photo-col';
   elements.tableHeaderRow.appendChild(photoTh);
+
   for (const column of COLUMNS) {
     const th = document.createElement('th');
-    th.textContent = column;
+    th.className = 'sortable';
+    if (column === 'Description') th.classList.add('desc-col');
+    const active = state.sort.column === column;
+    const arrow = active ? (state.sort.dir === 1 ? ' ▲' : ' ▼') : '';
+    th.textContent = column + arrow;
+    if (active) th.classList.add('sorted');
+    th.title = `Sort by ${column}`;
+    th.addEventListener('click', () => sortBy(column));
     elements.tableHeaderRow.appendChild(th);
   }
+}
+
+function sortBy(column) {
+  if (state.sort.column === column) {
+    state.sort.dir = -state.sort.dir;             // toggle direction
+  } else {
+    state.sort = { column, dir: 1 };
+  }
+  createHeader();                                 // refresh sort arrows
+  applyFilters();
+}
+
+function compareValues(a, b) {
+  const av = a == null ? '' : String(a).trim();
+  const bv = b == null ? '' : String(b).trim();
+  if (av === '' && bv === '') return 0;
+  if (av === '') return 1;                         // blanks always sort last
+  if (bv === '') return -1;
+  return av.localeCompare(bv, undefined, { numeric: true, sensitivity: 'base' });
 }
 
 function normalizeValue(value) {
@@ -122,21 +160,20 @@ function buildFilterOptions(field, selectElement) {
   if (previous && uniqueValues.includes(previous)) selectElement.value = previous;
 }
 
+// Totals now live in the Search Results header (the 3 top boxes were removed).
 function updateSummary() {
   const total = state.data.length;
   const displayed = state.filtered.length;
-  const uniqueEmails = new Set(state.data.map((row) => normalizeValue(row['Email Address']))).size;
+  const uniqueEmails = new Set(state.data.map((row) => normalizeValue(row['Email Address'])).filter(Boolean)).size;
   const domainCount = state.domainList.length;
 
-  elements.totalCount.textContent = total;
-  elements.filteredCount.textContent = displayed;
-  elements.emailCount.textContent = uniqueEmails;
-
-  const rowLimit = state.showAll ? 'all' : MAX_ROWS_DEFAULT;
   const shown = state.showAll ? displayed : Math.min(displayed, MAX_ROWS_DEFAULT);
-  const domainText = domainCount ? ` | ${domainCount} domain${domainCount === 1 ? '' : 's'} applied` : '';
+  const domainText = domainCount ? ` · ${domainCount} domain${domainCount === 1 ? '' : 's'} filtered` : '';
+  const cap = state.showAll || displayed <= MAX_ROWS_DEFAULT ? '' : ` · showing first ${MAX_ROWS_DEFAULT}`;
 
-  elements.tableSummary.textContent = `Showing ${shown} ${displayed === shown ? '' : `of ${displayed} `}records.${domainText} ${rowLimit === 'all' ? 'Showing all rows.' : `Showing first ${rowLimit}.`}`;
+  elements.tableSummary.innerHTML =
+    `<strong>${total}</strong> records · <strong>${displayed}</strong> displayed · `
+    + `<strong>${uniqueEmails}</strong> unique emails${domainText}${cap}`;
 }
 
 function matchesSearch(row, query) {
@@ -165,6 +202,11 @@ function applyFilters() {
     return matchesSearch(row, searchQuery);
   });
 
+  if (state.sort.column) {
+    const col = state.sort.column, dir = state.sort.dir;
+    state.filtered.sort((a, b) => dir * compareValues(a[col], b[col]));
+  }
+
   renderTable();
   updateSummary();
 }
@@ -181,9 +223,11 @@ function renderTable() {
     cell.style.padding = '20px';
     row.appendChild(cell);
     elements.resultsBody.appendChild(row);
+    syncTopScrollbar();
     return;
   }
 
+  const frag = document.createDocumentFragment();
   for (const record of rowsToRender) {
     const row = document.createElement('tr');
 
@@ -205,11 +249,61 @@ function renderTable() {
 
     for (const field of COLUMNS) {
       const cell = document.createElement('td');
-      cell.textContent = record[field] || '';
+      const value = record[field];
+
+      if (field === 'Google Maps') {
+        cell.className = 'maps-cell';
+        if (value) {
+          const a = document.createElement('a');
+          a.href = value;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.className = 'maps-pin';
+          a.title = 'Open in Google Maps';
+          a.innerHTML = PIN_SVG;
+          cell.appendChild(a);
+        }
+      } else if (field === 'Description') {
+        cell.className = 'desc-cell';
+        const clip = document.createElement('div');
+        clip.className = 'desc-clip';
+        clip.textContent = value || '';
+        if (value) cell.title = value;            // full text on hover
+        cell.appendChild(clip);
+      } else {
+        cell.textContent = value || '';
+      }
       row.appendChild(cell);
     }
-    elements.resultsBody.appendChild(row);
+    frag.appendChild(row);
   }
+  elements.resultsBody.appendChild(frag);
+  syncTopScrollbar();
+}
+
+// Keep the dummy top scrollbar's width in sync with the real table width.
+function syncTopScrollbar() {
+  if (!elements.tableScroll || !elements.tableScrollTopInner) return;
+  const table = document.getElementById('resultsTable');
+  const w = table ? table.scrollWidth : 0;
+  elements.tableScrollTopInner.style.width = w + 'px';
+}
+
+function wireTopScrollbar() {
+  if (topScrollWired || !elements.tableScroll || !elements.tableScrollTop) return;
+  topScrollWired = true;
+  let lock = false;
+  elements.tableScrollTop.addEventListener('scroll', () => {
+    if (lock) return; lock = true;
+    elements.tableScroll.scrollLeft = elements.tableScrollTop.scrollLeft;
+    lock = false;
+  });
+  elements.tableScroll.addEventListener('scroll', () => {
+    if (lock) return; lock = true;
+    elements.tableScrollTop.scrollLeft = elements.tableScroll.scrollLeft;
+    lock = false;
+  });
+  window.addEventListener('resize', syncTopScrollbar);
 }
 
 async function loadResults() {
@@ -311,13 +405,14 @@ function renderJobs() {
          <span class="job-meta">${job.done}/${job.total} domains</span>`
       : `<span class="job-meta">${job.done}/${job.total} domains</span>`;
 
+    const liveOnlyBit = job.liveOnly ? ' <span class="job-meta">· live-only</span>' : '';
     const errorBit = job.error ? `<span class="job-meta" style="color:#b91c1c">${escapeHtml(job.error)}</span>` : '';
 
     card.innerHTML = `
       <div class="job-main">
         <div class="job-line">
           <span class="badge ${job.status}">${job.status}</span>
-          <strong>${escapeHtml(shortJobLabel(job))}</strong>
+          <strong>${escapeHtml(shortJobLabel(job))}</strong>${liveOnlyBit}
         </div>
         <div class="job-line">
           ${progressBit}
@@ -357,6 +452,15 @@ function renderJobs() {
     }
 
     list.appendChild(card);
+  }
+}
+
+function toggleJobs() {
+  state.jobsCollapsed = !state.jobsCollapsed;
+  if (elements.jobsList) elements.jobsList.classList.toggle('collapsed', state.jobsCollapsed);
+  if (elements.jobsToggle) {
+    elements.jobsToggle.textContent = state.jobsCollapsed ? '▸' : '▾';
+    elements.jobsToggle.setAttribute('aria-expanded', String(!state.jobsCollapsed));
   }
 }
 
@@ -474,12 +578,11 @@ function downloadCSV() {
     return;
   }
 
-  // Build CSV content from filtered data
+  // CSV from the filtered rows, using the same columns as the table (no Image URL).
   const csvLines = [COLUMNS.join(',')];
   for (const row of state.filtered) {
     const values = COLUMNS.map((col) => {
       const val = String(row[col] || '');
-      // Escape quotes and wrap in quotes if contains comma, quote, or newline
       if (val.includes(',') || val.includes('"') || val.includes('\n')) {
         return `"${val.replace(/"/g, '""')}"`;
       }
@@ -509,6 +612,7 @@ function attachEvents() {
   });
   elements.downloadButton.addEventListener('click', () => downloadCSV());
   if (elements.refreshJobsButton) elements.refreshJobsButton.addEventListener('click', () => fetchJobs());
+  if (elements.jobsToggle) elements.jobsToggle.addEventListener('click', () => toggleJobs());
   elements.showAllCheckbox.addEventListener('change', (event) => {
     state.showAll = event.target.checked;
     renderTable();
@@ -517,6 +621,7 @@ function attachEvents() {
   elements.applyDomainsButton.addEventListener('click', () => searchContacts());
   elements.clearDomainsButton.addEventListener('click', () => clearDomains());
   elements.domainFileInput.addEventListener('change', (event) => handleDomainFileUpload(event));
+  wireTopScrollbar();
 }
 
 async function loadConfig() {
