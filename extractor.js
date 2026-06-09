@@ -250,11 +250,25 @@ function parseCsvRow(row){
   return cols;
 }
 // "marcus-patel" / "marcus.patel" / "marcus_patel" -> {first,last}
+// Tokens never used AS the first name (use the next token after them).
+const FIRST_NAME_SKIP = new Set(["about","bio","dr","mr","mrs","ms","hon","rev","prof"]);
+// Tokens never used AS the last name (use the previous token before them).
+const LAST_NAME_SKIP = new Set(["phd","md","esq","cpa","facs","prof","sr","jr","iii","iv","mba"]);
+
 function nameFromSlug(slug){
   const toks = String(slug||"").split(/[-_.+%20\s]+/).filter(t=>/^[a-z]+$/i.test(t));
   if(!toks.length) return {first:"",last:""};
-  if(toks.length===1) return {first:properCase(toks[0]), last:""};
-  return {first:properCase(toks[0]), last:properCase(toks[toks.length-1])};
+  // first name = first token that isn't an honorific/title prefix
+  let fi = 0;
+  while(fi < toks.length && FIRST_NAME_SKIP.has(toks[fi].toLowerCase())) fi++;
+  if(fi >= toks.length) fi = 0;                 // all skipped -> fall back to the first token
+  // last name = last token that isn't a credential/suffix
+  let li = toks.length - 1;
+  while(li >= 0 && LAST_NAME_SKIP.has(toks[li].toLowerCase())) li--;
+  if(li < 0) li = toks.length - 1;              // all skipped -> fall back to the last token
+  const first = properCase(toks[fi]);
+  const last = li > fi ? properCase(toks[li]) : "";   // only if a distinct later token remains
+  return { first, last };
 }
 
 function inferNameFromSlug(slug, genderMap){
