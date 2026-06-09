@@ -25,11 +25,14 @@ const CSV_COLUMNS = [
   'Phone 2 Type'
 ];
 
-// Columns hidden from the on-screen table (still in the CSV download):
-//  - Web Source URL: instead, the row thumbnail links to it
-//  - Title, Bio Check: removed from the UI per request
-const HIDDEN_IN_UI = new Set(['Web Source URL', 'Title', 'Bio Check']);
-const DISPLAY_COLUMNS = CSV_COLUMNS.filter((c) => !HIDDEN_IN_UI.has(c));
+// On-screen table columns. Differs from the CSV: Web Source URL, Title, Bio Check, ID
+// are hidden (still in the CSV download); "Domain" (root domain of Web Source URL) is
+// shown in ID's place; the thumbnail links to the Web Source URL.
+const DISPLAY_COLUMNS = [
+  'Time Stamp', 'Source', 'Directory', 'Domain', 'Last Path', 'First', 'Last', 'Gender',
+  'Position', 'Description', 'Email Address', 'Email Type', 'LinkedIn URL', 'Google Maps',
+  'Phone', 'Phone Type', 'Phone Location', 'Phone 2', 'Phone 2 Type'
+];
 
 const PAGE_SIZE = 50;
 
@@ -66,6 +69,9 @@ function initElements() {
   elements.searchInput = document.getElementById('searchInput');
   elements.directoryFilter = document.getElementById('directoryFilter');
   elements.emailTypeFilter = document.getElementById('emailTypeFilter');
+  elements.genderFilter = document.getElementById('genderFilter');
+  elements.phoneTypeFilter = document.getElementById('phoneTypeFilter');
+  elements.linkedinRequired = document.getElementById('linkedinRequired');
   elements.refreshButton = document.getElementById('refreshButton');
   elements.downloadButton = document.getElementById('downloadButton');
   elements.modeIndicator = document.getElementById('modeIndicator');
@@ -179,6 +185,13 @@ function buildFilterOptions(field, selectElement) {
 function rebuildFilters() {
   buildFilterOptions('Directory', elements.directoryFilter);
   buildFilterOptions('Email Type', elements.emailTypeFilter);
+  if (elements.phoneTypeFilter) buildFilterOptions('Phone Type', elements.phoneTypeFilter);
+}
+
+// root domain of the Web Source URL, attached so it's sortable/searchable like any column
+function decorateRows(rows) {
+  for (const r of rows) r.Domain = parseHostname(r['Web Source URL']);
+  return rows;
 }
 
 // Totals live in the Search Results header (the 3 top boxes were removed).
@@ -215,10 +228,23 @@ function applyFilters() {
   const searchQuery = normalizeValue(elements.searchInput.value);
   const directoryValue = normalizeValue(elements.directoryFilter.value);
   const emailTypeValue = normalizeValue(elements.emailTypeFilter.value);
+  const phoneTypeValue = elements.phoneTypeFilter ? normalizeValue(elements.phoneTypeFilter.value) : '';
+  const genderValue = elements.genderFilter ? elements.genderFilter.value : 'all';
+  const linkedinRequired = !!(elements.linkedinRequired && elements.linkedinRequired.checked);
 
   state.filtered = state.data.filter((row) => {
     if (directoryValue && normalizeValue(row.Directory) !== directoryValue) return false;
     if (emailTypeValue && normalizeValue(row['Email Type']) !== emailTypeValue) return false;
+    if (phoneTypeValue && normalizeValue(row['Phone Type']) !== phoneTypeValue) return false;
+
+    const g = String(row.Gender || '').trim().toUpperCase();
+    if (genderValue === 'male' && g !== 'M') return false;
+    else if (genderValue === 'female' && g !== 'F') return false;
+    else if (genderValue === 'all' && !(g === 'M' || g === 'F')) return false;       // All = M or F
+    else if (genderValue === 'none' && (g === 'M' || g === 'F')) return false;       // None = neither
+
+    if (linkedinRequired && !String(row['LinkedIn URL'] || '').trim()) return false;
+
     if (!matchesDomainFilter(row)) return false;
     return matchesSearch(row, searchQuery);
   });
@@ -392,7 +418,7 @@ async function loadResults() {
     }
 
     const data = await response.json();
-    state.data = data;
+    state.data = decorateRows(data);
     state.page = 1;
 
     createHeader();
@@ -582,7 +608,7 @@ async function refreshViewedRecords(rebuildHeader) {
     const res = await fetch(`/api/jobs/${id}/records`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const rows = await res.json();
-    state.data = rows;
+    state.data = decorateRows(rows);
     state.lastViewedCount = rows.length;
 
     const job = state.jobs.find((j) => j.id === id);
@@ -697,6 +723,9 @@ function attachEvents() {
   elements.searchInput.addEventListener('input', () => { state.page = 1; applyFilters(); });
   elements.directoryFilter.addEventListener('change', () => { state.page = 1; applyFilters(); });
   elements.emailTypeFilter.addEventListener('change', () => { state.page = 1; applyFilters(); });
+  if (elements.genderFilter) elements.genderFilter.addEventListener('change', () => { state.page = 1; applyFilters(); });
+  if (elements.phoneTypeFilter) elements.phoneTypeFilter.addEventListener('change', () => { state.page = 1; applyFilters(); });
+  if (elements.linkedinRequired) elements.linkedinRequired.addEventListener('change', () => { state.page = 1; applyFilters(); });
   elements.refreshButton.addEventListener('click', () => {
     if (state.viewingJobId) refreshViewedRecords(true); else loadResults();
   });
@@ -716,6 +745,7 @@ function attachEvents() {
 }
 
 async function loadConfig() {
+  if (!elements.modeIndicator) return;   // connection-mode verbiage removed from the header
   try {
     const res = await fetch('/api/config');
     if (!res.ok) throw new Error('Failed to load mode');
