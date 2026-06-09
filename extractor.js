@@ -581,10 +581,11 @@ function extractRecord(html, url, deps = {}){
 
   const description = (metaContent(html,"og:description") || metaContent(html,"description")).slice(0,300);
   const pageTtl = pageTitle(html);
-  // Title = role from the directory Path ID when known (e.g. /attorneys/ -> "Attorney"),
-  // otherwise the page's own title.
-  const title = (pathHit && pathHit.role) ? pathHit.role : pageTtl;
-  const position = findPosition(pageTtl, description);
+  // A matched directory Path ID with a role (e.g. /attorneys/ -> "Attorney") drives both
+  // Title and Position; otherwise Title = page title and Position = page-derived role.
+  const role = (pathHit && pathHit.role) ? pathHit.role : "";
+  const title = role || pageTtl;
+  const position = role || findPosition(pageTtl, description);
   const image = findImage(html, url);
   const gender = first ? (genderMap[first.toLowerCase()] || "") : "";
 
