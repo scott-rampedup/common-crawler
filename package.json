@@ -14,7 +14,9 @@
   },
   "dependencies": {
     "google-libphonenumber": "^3.2.44",
-    "libphonenumber-geo-carrier": "^2.0.0"
+    "libphonenumber-geo-carrier": "^2.0.0",
+    "http-proxy-agent": "^7.0.2",
+    "https-proxy-agent": "^7.0.6"
   },
   "author": "",
   "license": "MIT"

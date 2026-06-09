@@ -35,6 +35,22 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const keepAliveHttp  = new http.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 16, timeout: 30000 });
 const keepAliveHttps = new https.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 16, timeout: 30000 });
 
+// Optional outbound proxy for LIVE page fetches (e.g. NetNut rotating gateway).
+// Set PROXY_URL = http://USER-dc-any:PASS@gw.netnut.net:5959. Each request exits a
+// different datacenter IP, so we can crawl wide without burning one address. Common
+// Crawl traffic is NOT proxied (it's an API, not a blocking target, and saves $).
+const PROXY_URL = process.env.PROXY_URL || "";
+let proxyAgentHttp = null, proxyAgentHttps = null;
+if(PROXY_URL){
+  try{
+    const { HttpProxyAgent }  = require("http-proxy-agent");
+    const { HttpsProxyAgent } = require("https-proxy-agent");
+    proxyAgentHttp  = new HttpProxyAgent(PROXY_URL,  { keepAlive: true, maxSockets: 128 });
+    proxyAgentHttps = new HttpsProxyAgent(PROXY_URL, { keepAlive: true, maxSockets: 128 });
+    console.log(`Live-crawl proxy: ON via ${PROXY_URL.replace(/\/\/[^@]*@/, "//***:***@")}`);
+  }catch(e){ console.warn("PROXY_URL set but proxy agent unavailable:", e.message); }
+}
+
 // Tiny concurrency limiter: run() uses one per "lane" (across-domain pool, the
 // global Common-Crawl lane, the per-site lane) to cap how many requests run at once.
 function makeLimiter(maxConcurrent){
@@ -482,10 +498,13 @@ function httpGetRaw(url, opts = {}){
     let u;
     try{ u = new URL(url); }catch{ return finish(0, ""); }
     const lib = u.protocol === "http:" ? http : https;
+    const agent = PROXY_URL
+      ? (u.protocol === "http:" ? proxyAgentHttp : proxyAgentHttps)   // route via rotating proxy
+      : (lib === http ? keepAliveHttp : keepAliveHttps);
 
     const req = lib.request(u, {
       method: "GET",
-      agent: lib === http ? keepAliveHttp : keepAliveHttps,   // reuse connections per host
+      agent,
       headers: {
         "User-Agent": UA,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
