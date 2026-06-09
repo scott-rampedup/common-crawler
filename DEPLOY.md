@@ -77,9 +77,16 @@ What is deliberately **left out** (see `.gitignore`): all scraped results, the
 
 - **Discovery + politeness:** the live crawler reads each site's `robots.txt`, follows
   its `Sitemap:` entries to find every bio/contact page, and **honors `Disallow`**.
-  It pauses between requests and sends a clear user-agent. Tune how many pages it
-  fetches per site with the `LIVE_MAX_PAGES` env var (default 150; set to 300 on the
-  live deploy). It does not yet honor `Crawl-delay` — a possible future refinement.
+  It pauses between requests and sends a clear user-agent. It does not yet honor
+  `Crawl-delay` — a possible future refinement.
+- **Speed knobs (env vars):**
+  - `DOMAIN_CONCURRENCY` (default 6) — how many different domains to crawl at once.
+  - `IN_SITE_CONCURRENCY` (default 3) — pages fetched from a single site at once.
+  - `CC_CONCURRENCY` (default 1) — global Common Crawl request limit; keep low, it's
+    a shared public service.
+  - `LIVE_MAX_PAGES` (default 150; 300 on the live deploy) — max pages per site.
+  - `LIVE_ONLY=true` — skip Common Crawl entirely (also a per-search checkbox in the UI).
+  Higher concurrency = faster but more load/memory; the deploy runs 1 GB / 2 CPUs.
 - **PII:** the output is real people's emails/phones. Keep the password private, and
   prefer per-person `AUTH_USERS` if more than a couple of people have access.
 - **Persistence detail:** job files are rewritten after each domain. Fine at current
