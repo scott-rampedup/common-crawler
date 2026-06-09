@@ -84,6 +84,10 @@ function checkAuth(req, res) {
 const JOBS_DIR = path.join(DATA_DIR, 'jobs');
 try { fs.mkdirSync(JOBS_DIR, { recursive: true }); } catch (e) { /* ignore */ }
 
+// central, de-duplicated contacts database (every finished job merges into it)
+const { makeDb } = require('./db');
+const db = makeDb(DATA_DIR);
+
 const jobs = new Map();   // id -> { ...meta, recordsByEmail: Map }
 
 function newJobId() {
@@ -210,6 +214,11 @@ async function runJobDomains(job, domainsToRun) {
   catch (e) { console.error('geocode failed:', e.message); }
   job.finishedAt = new Date().toISOString();
   persistJob(job);
+  // merge this job's fully-processed records into the central database
+  try {
+    const merged = db.upsertMany(jobRecords(job));
+    console.log(`Central DB: +${merged.added} new, ${merged.updated} updated (total ${merged.total}).`);
+  } catch (e) { console.error('Central DB merge failed:', e.message); }
   console.log(`Job ${job.id} ${job.status} — ${job.recordsByEmail.size} record(s)`);
 }
 
@@ -448,6 +457,18 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ error: e.message || 'Bad request' }));
       }
     });
+    return;
+  }
+
+  // ---- central database ----
+  if (url.pathname === '/api/db/stats' && req.method === 'GET') { sendJson(res, db.stats()); return; }
+  if (url.pathname === '/api/db/records' && req.method === 'GET') { sendJson(res, db.all()); return; }
+  if (url.pathname === '/api/db/export.csv' && req.method === 'GET') {
+    res.writeHead(200, {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="contacts-database.csv"`,
+    });
+    res.end(recordsToCsv(db.all()));
     return;
   }
 

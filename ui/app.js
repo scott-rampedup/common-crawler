@@ -53,6 +53,8 @@ const state = {
   sort: { column: null, dir: 1 },   // dir: 1 asc, -1 desc
   jobsCollapsed: true,              // default collapsed; the latest job still shows
   page: 1,
+  viewingDb: false,                // true when the table shows the central database
+  lastDbCount: -1,
 };
 
 let jobsPollTimer = null;
@@ -74,6 +76,7 @@ function initElements() {
   elements.linkedinRequired = document.getElementById('linkedinRequired');
   elements.refreshButton = document.getElementById('refreshButton');
   elements.downloadButton = document.getElementById('downloadButton');
+  elements.dbButton = document.getElementById('dbButton');
   elements.modeIndicator = document.getElementById('modeIndicator');
   elements.searchStatus = document.getElementById('searchStatus');
   elements.domainInput = document.getElementById('domainInput');
@@ -462,6 +465,7 @@ async function loadResults() {
     const data = await response.json();
     state.data = decorateRows(data);
     state.page = 1;
+    state.viewingDb = false;
 
     createHeader();
     rebuildFilters();
@@ -690,10 +694,48 @@ async function deleteJobUI(id) {
 // Point the table/filters at a specific job's records.
 async function viewJob(id) {
   state.viewingJobId = id;
+  state.viewingDb = false;
   state.lastViewedCount = -1;
   state.page = 1;
   await refreshViewedRecords(true);
   renderJobs();
+}
+
+// Point the table/filters at the central contacts database.
+async function viewDatabase() {
+  try {
+    setSearchStatus('Loading master database…');
+    const res = await fetch('/api/db/records');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const rows = await res.json();
+    state.viewingDb = true;
+    state.viewingJobId = null;
+    state.page = 1;
+    state.data = decorateRows(rows);
+    state.lastDbCount = rows.length;
+    if (elements.viewingIndicator) {
+      elements.viewingIndicator.classList.remove('hidden');
+      elements.viewingIndicator.innerHTML = `Viewing: <strong>Master database</strong> — ${rows.length} contact${rows.length === 1 ? '' : 's'}`;
+    }
+    createHeader();
+    rebuildFilters();
+    applyFilters();
+    renderJobs();              // clear any job's "viewing" highlight
+    setSearchStatus(`Master database: ${rows.length} contact${rows.length === 1 ? '' : 's'}.`);
+  } catch (error) {
+    setSearchStatus(`Could not load database: ${error.message}`);
+  }
+}
+
+async function refreshDbCount() {
+  try {
+    const res = await fetch('/api/db/stats');
+    if (!res.ok) return;
+    const { total } = await res.json();
+    if (elements.dbButton) elements.dbButton.textContent = `Master database (${total})`;
+    // if we're viewing the DB and it grew (a job finished), refresh the rows
+    if (state.viewingDb && total !== state.lastDbCount) viewDatabase();
+  } catch (e) { /* ignore */ }
 }
 
 async function refreshViewedRecords(rebuildHeader) {
@@ -728,6 +770,7 @@ async function refreshViewedRecords(rebuildHeader) {
 // Poll jobs; keep the viewed job's table live while it runs.
 async function pollJobs() {
   await fetchJobs();
+  refreshDbCount();
   const id = state.viewingJobId;
   if (!id) return;
   const job = state.jobs.find((j) => j.id === id);
@@ -822,8 +865,11 @@ function attachEvents() {
   if (elements.phoneTypeFilter) elements.phoneTypeFilter.addEventListener('change', () => { state.page = 1; applyFilters(); });
   if (elements.linkedinRequired) elements.linkedinRequired.addEventListener('change', () => { state.page = 1; applyFilters(); });
   elements.refreshButton.addEventListener('click', () => {
-    if (state.viewingJobId) refreshViewedRecords(true); else loadResults();
+    if (state.viewingDb) viewDatabase();
+    else if (state.viewingJobId) refreshViewedRecords(true);
+    else loadResults();
   });
+  if (elements.dbButton) elements.dbButton.addEventListener('click', () => viewDatabase());
   elements.downloadButton.addEventListener('click', () => downloadCSV());
   if (elements.refreshJobsButton) elements.refreshJobsButton.addEventListener('click', () => fetchJobs());
   if (elements.jobsToggle) elements.jobsToggle.addEventListener('click', () => toggleJobs());
@@ -866,6 +912,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadConfig();
 
   await fetchJobs();
+  refreshDbCount();
   // open the newest job if there is one; otherwise fall back to the legacy cc-results.csv view
   if (state.jobs.length) {
     viewJob(state.jobs[0].id);

@@ -7,6 +7,8 @@ jobs/
 cc-results.csv
 cc-results-*.csv
 tmp-results.csv
+contacts.json
+contacts.json.tmp
 tmp-*.js
 *.xlsx
 *-run-output.txt

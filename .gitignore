@@ -8,6 +8,8 @@ jobs/
 cc-results.csv
 cc-results-*.csv
 tmp-results.csv
+contacts.json
+contacts.json.tmp
 
 # spreadsheets contain some personal contacts/names — keep out of the repo
 *.xlsx
