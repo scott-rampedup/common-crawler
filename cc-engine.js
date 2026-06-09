@@ -578,14 +578,15 @@ async function liveCrawl(domain, opts = {}){
   //    discover deeper bio links (e.g. /attorneys/ -> /attorneys/jane-doe/).
   const inSite = Math.max(1, opts.inSiteConcurrency || Number(process.env.IN_SITE_CONCURRENCY) || 3);
   const perHostDelay = opts.perHostDelay != null ? opts.perHostDelay : 200;
+  const shouldStop = opts.shouldStop || (() => false);
   let qi = 0, active = 0, fetchedPages = 0;
 
   await new Promise((resolve) => {
     const tick = () => {
-      if(active === 0 && (qi >= queue.length || records.length >= perDomainCap || fetchedPages >= maxPages)){
+      if(active === 0 && (qi >= queue.length || records.length >= perDomainCap || fetchedPages >= maxPages || shouldStop())){
         return resolve();
       }
-      while(active < inSite && qi < queue.length && records.length < perDomainCap && fetchedPages < maxPages){
+      while(active < inSite && qi < queue.length && records.length < perDomainCap && fetchedPages < maxPages && !shouldStop()){
         const url = queue[qi++]; active++; fetchedPages++;
         (async () => {
           const html = await liveFetch(url);
@@ -730,6 +731,7 @@ async function run(csvPath, opts = {}){
     // injectable for testing; default to the real network functions
     _queryIndex = queryIndex, _fetchWarc = fetchWarc, _liveCrawl = liveCrawl,
     liveFallback = true,        // when CC has nothing / 504s, crawl the live site
+    shouldStop = () => false,   // cooperative cancel: when true, stop taking new domains
     onRecord = () => {}, onProgress = () => {},
   } = opts;
 
@@ -832,8 +834,10 @@ async function run(csvPath, opts = {}){
   // worker pool: crawl several DIFFERENT domains at once (each domain stays polite
   // internally; Common Crawl stays globally rate-limited via ccLimit).
   let cursor = 0;
+  let stopped = false;
   const worker = async () => {
     while(true){
+      if(shouldStop()){ stopped = true; return; }   // cancel: don't pick up new domains
       const index = cursor++;
       if(index >= domains.length) return;
       try{ await processDomain(domains[index], index); }
@@ -841,6 +845,7 @@ async function run(csvPath, opts = {}){
     }
   };
   await Promise.all(Array.from({ length: Math.min(domainConcurrency, domains.length) }, worker));
+  if(stopped) console.log("Run stopped early by request.");
 
   const unique = uniqueByEmail(all);
   if(unique.length < all.length){

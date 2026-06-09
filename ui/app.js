@@ -540,6 +540,14 @@ function renderJobs() {
     viewBtn.addEventListener('click', () => viewJob(job.id));
     actions.appendChild(viewBtn);
 
+    if (job.status === 'running') {
+      const stopBtn = document.createElement('button');
+      stopBtn.textContent = 'Stop';
+      stopBtn.classList.add('danger');
+      stopBtn.addEventListener('click', () => stopJobUI(job.id));
+      actions.appendChild(stopBtn);
+    }
+
     if (job.recordCount > 0) {
       const dlBtn = document.createElement('button');
       dlBtn.textContent = 'Download CSV';
@@ -547,7 +555,7 @@ function renderJobs() {
       actions.appendChild(dlBtn);
     }
 
-    if (job.status === 'interrupted' || job.status === 'failed') {
+    if (job.status === 'interrupted' || job.status === 'failed' || job.status === 'stopped') {
       const resumeBtn = document.createElement('button');
       resumeBtn.textContent = 'Resume';
       resumeBtn.classList.add('primary');
@@ -589,6 +597,18 @@ async function resumeJobUI(id) {
     viewJob(id);
   } catch (error) {
     setSearchStatus(`Could not resume: ${error.message}`);
+  }
+}
+
+async function stopJobUI(id) {
+  try {
+    setSearchStatus('Stopping job…');
+    const res = await fetch(`/api/jobs/${id}/stop`, { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    setSearchStatus('Stop requested — finishing the current page, then halting.');
+    await fetchJobs();
+  } catch (error) {
+    setSearchStatus(`Could not stop: ${error.message}`);
   }
 }
 

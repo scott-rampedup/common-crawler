@@ -165,6 +165,7 @@ function loadJobs() {
 async function runJobDomains(job, domainsToRun) {
   job.status = 'running';
   job.error = null;
+  job.stopRequested = false;
   persistJob(job);
   try {
     await runDomains(domainsToRun, {
@@ -172,6 +173,7 @@ async function runJobDomains(job, domainsToRun) {
       directoryFilter: job.directoryFilter,
       genderMap: GENDER_MAP,                                   // fill Gender via first-name lookup
       liveOnly: !!job.liveOnly,                                // skip Common Crawl when requested
+      shouldStop: () => job.stopRequested,                     // honor a STOP request
       outPath: path.join(JOBS_DIR, `${job.id}.engine.csv`),   // throwaway; we keep our own records
       onRecord: (row) => {
         const k = String(row['Email Address'] || '').toLowerCase() || `_${job.recordsByEmail.size}`;
@@ -189,11 +191,12 @@ async function runJobDomains(job, domainsToRun) {
         }
       },
     });
-    job.status = 'completed';
+    job.status = job.stopRequested ? 'stopped' : 'completed';
   } catch (e) {
     job.status = 'failed';
     job.error = e.message;
   }
+  job.stopRequested = false;
   job.finishedAt = new Date().toISOString();
   persistJob(job);
   console.log(`Job ${job.id} ${job.status} — ${job.recordsByEmail.size} record(s)`);
@@ -210,6 +213,7 @@ function startJob(domains, directoryFilter, liveOnly) {
     coverage: { found: 0, live: 0, empty: 0, errored: 0 },
     directoryFilter: directoryFilter || '',
     liveOnly: !!liveOnly,
+    stopRequested: false,
     error: null,
     recordsByEmail: new Map(),
     lastProgress: null,
@@ -422,7 +426,7 @@ const server = http.createServer((req, res) => {
   }
 
   // routes that target a single job: /api/jobs/:id , /api/jobs/:id/records , /api/jobs/:id/results.csv , /api/jobs/:id/resume
-  const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)(\/records|\/results\.csv|\/resume)?$/);
+  const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)(\/records|\/results\.csv|\/resume|\/stop)?$/);
   if (jobMatch) {
     const id = jobMatch[1];
     const sub = jobMatch[2] || '';
@@ -450,6 +454,12 @@ const server = http.createServer((req, res) => {
       const resumed = resumeJob(id);
       console.log(`Resume requested for job ${id} -> ${resumed.status}`);
       sendJson(res, jobSummary(resumed));
+      return;
+    }
+
+    if (sub === '/stop' && req.method === 'POST') {
+      if (job.status === 'running') { job.stopRequested = true; console.log(`Stop requested for job ${id}`); }
+      sendJson(res, jobSummary(job));
       return;
     }
   }
