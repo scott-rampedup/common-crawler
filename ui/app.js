@@ -347,7 +347,17 @@ function renderTable() {
       const cell = document.createElement('td');
       const value = record[field];
 
-      if (field === 'Google Maps') {
+      if (field === 'Domain') {
+        if (value) {
+          const a = document.createElement('a');
+          a.href = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.className = 'domain-link';
+          a.textContent = value;
+          cell.appendChild(a);
+        }
+      } else if (field === 'Google Maps') {
         cell.className = 'maps-cell';
         if (value) {
           const a = document.createElement('a');

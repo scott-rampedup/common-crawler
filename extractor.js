@@ -110,6 +110,22 @@ const decode = s => String(s||"")
 const stripTags = s => decode(String(s||"").replace(/<[^>]*>/g," ").replace(/\s+/g," "));
 const properCase = s => String(s||"").replace(/\w\S*/g, w => w[0].toUpperCase()+w.slice(1).toLowerCase());
 
+// Honorifics / credentials / suffixes to strip from a display path.
+const LASTPATH_REMOVE = new Set(["dr","mr","mrs","ms","phd","md","esq","cpa","facs","prof","sr","jr","iii","mba","biography"]);
+// Tidy a URL slug into a readable name for the "Last Path" field:
+// drop file extensions, turn -/_/+/. into spaces, drop honorifics/credentials and
+// one-character tokens (stray initials), then Proper Case the result.
+function cleanLastPath(seg){
+  const s = String(seg || "")
+    .replace(/\.(aspx?|html?|pdf|php)$/i, "")     // strip .aspx/.asp/.html/.htm/.pdf/.php
+    .replace(/[-_+.]+/g, " ");                     // separators -> space
+  const tokens = s.split(/\s+/)
+    .filter(Boolean)
+    .filter((t) => t.length > 1)                   // drop one-symbol tokens (e.g. middle initials)
+    .filter((t) => !LASTPATH_REMOVE.has(t.toLowerCase()));
+  return properCase(tokens.join(" "));
+}
+
 // ---- email obfuscation + cleanup ----
 function deobfuscateEmail(s){
   return String(s || "")
@@ -541,7 +557,7 @@ function extractRecord(html, url, deps = {}){
     "Web Source URL": url,
     "Directory": directory,
     "ID": last || "",
-    "Last Path": last || "",
+    "Last Path": cleanLastPath(last),
     "Bio Check": isBio ? "Y" : "",
     "First": first,
     "Last": lastName,

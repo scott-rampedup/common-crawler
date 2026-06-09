@@ -489,6 +489,9 @@ td.maps-cell { text-align: center; }
 }
 .maps-pin:hover { color: #b31412; }
 
+.domain-link { color: #2563eb; text-decoration: none; }
+.domain-link:hover { text-decoration: underline; }
+
 /* second horizontal scrollbar pinned above the table, synced with the bottom one */
 .table-scroll-top {
   overflow-x: auto;
