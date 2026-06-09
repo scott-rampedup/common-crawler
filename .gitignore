@@ -32,3 +32,6 @@ Thumbs.db
 
 # local editor/agent settings
 .claude/
+
+# original logo drop (the served copy lives at ui/logo.png)
+/Common Crawler.png
