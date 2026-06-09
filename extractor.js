@@ -514,12 +514,15 @@ function extractRecord(html, url, deps = {}){
   let phone="", phoneType="", phoneLocation="", phone2="", phone2Type="";
   if(isBio && tels.length && wireless){
     const cc = countryCodeFromDomain(getBaseDomain(url));   // country from the domain TLD (default US)
-    const raw1 = tels[0];
-    phoneType = classifyLineType(raw1, wireless).type;      // classify on the raw number…
-    phoneLocation = phoneType === "Toll Free" ? "" : geocode(raw1);
-    phone = toE164(raw1, cc);                               // …then standardize to E.164
-    const raw2 = tels[1] || "";
-    if(raw2){ phone2Type = classifyLineType(raw2, wireless).type; phone2 = toE164(raw2, cc); }
+    const a = splitExtension(tels[0]);
+    phoneType = classifyLineType(a.main, wireless).type;    // classify on the main number (no ext)…
+    phoneLocation = phoneType === "Toll Free" ? "" : geocode(a.main);
+    phone = toE164(a.main, cc) + (a.ext ? ` ext. ${a.ext}` : "");   // …E.164 + standardized extension
+    if(tels[1]){
+      const b = splitExtension(tels[1]);
+      phone2Type = classifyLineType(b.main, wireless).type;
+      phone2 = toE164(b.main, cc) + (b.ext ? ` ext. ${b.ext}` : "");
+    }
   }
 
   const description = (metaContent(html,"og:description") || metaContent(html,"description")).slice(0,300);
@@ -599,6 +602,47 @@ function toE164(raw, cc){
   return "+" + (cc + digits).slice(0, 15);
 }
 
+// Split a phone string into { main, ext }. Handles tel: ";ext=" / ",", and
+// "ext", "extension", "x", "#" forms. ext is digits only ("" if none).
+function splitExtension(raw){
+  const s = String(raw || "");
+  let m = s.match(/;\s*ext=\s*(\d{1,6})/i);                       // tel: URI ext param
+  if(m) return { main: s.slice(0, m.index), ext: m[1] };
+  m = s.match(/(?:\bext(?:ension)?\b\.?|[x#])\s*[:.]?\s*(\d{1,6})\s*$/i);  // ext/extension/x/#
+  if(m) return { main: s.slice(0, m.index), ext: m[1] };
+  m = s.match(/,\s*(\d{1,6})\s*$/);                               // tel: comma pause -> ext
+  if(m) return { main: s.slice(0, m.index), ext: m[1] };
+  return { main: s, ext: "" };
+}
+
+// the E.164 base of a phone field, dropping any " ext. NNN" suffix
+function basePhone(p){ return String(p || "").split(/\s*ext\.?\s*/i)[0].trim(); }
+
+// Dataset-wide phone analysis (run AFTER all records are collected):
+//  1. clear Phone 2 when it's the same line as Phone
+//  2. a number seen more than once that is "Direct" becomes "Office" (shared line)
+// Returns NEW record objects; does not mutate the inputs.
+function analyzePhones(records){
+  const rows = records.map((r) => ({ ...r }));
+
+  for(const r of rows){
+    const b1 = basePhone(r["Phone"]), b2 = basePhone(r["Phone 2"]);
+    if(b1 && b2 && b1 === b2){ r["Phone 2"] = ""; r["Phone 2 Type"] = ""; }
+  }
+
+  const counts = new Map();
+  const bump = (b) => { if(b) counts.set(b, (counts.get(b) || 0) + 1); };
+  for(const r of rows){ bump(basePhone(r["Phone"])); bump(basePhone(r["Phone 2"])); }
+
+  for(const r of rows){
+    const b1 = basePhone(r["Phone"]);
+    if(b1 && counts.get(b1) > 1 && r["Phone Type"] === "Direct") r["Phone Type"] = "Office";
+    const b2 = basePhone(r["Phone 2"]);
+    if(b2 && counts.get(b2) > 1 && r["Phone 2 Type"] === "Direct") r["Phone 2 Type"] = "Office";
+  }
+  return rows;
+}
+
 function loadGenderMap(filePath){
   const rows = loadRows(filePath);
   const map = {};
@@ -634,7 +678,7 @@ function loadDirectoryRules(filePath){
 }
 
 module.exports = { extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules,
-  cleanEmail, setEmailBlocklist, loadEmailBlocklist };
+  cleanEmail, setEmailBlocklist, loadEmailBlocklist, analyzePhones, splitExtension };
 
 // ---------------------------------------------------------------- self-test
 if(require.main === module){

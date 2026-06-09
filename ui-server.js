@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'ui');
 const RESULTS_CSV = path.join(__dirname, 'cc-results.csv');
 const { runDomains, COLUMNS } = require('./cc-engine');
-const { loadGenderMap, loadEmailBlocklist } = require('./extractor');
+const { loadGenderMap, loadEmailBlocklist, analyzePhones } = require('./extractor');
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
 // Email blocklist (addresses to drop). Loaded once; edit email-blocklist.txt to update.
@@ -97,8 +97,12 @@ function recordsToCsv(records) {
   return lines.join('\n');
 }
 
-function jobRecords(job) {
+function jobRawRecords(job) {
   return [...job.recordsByEmail.values()];
+}
+// served records get the dataset-wide phone analysis (dedupe Phone 2, Direct->Office)
+function jobRecords(job) {
+  return analyzePhones(jobRawRecords(job));
 }
 
 function jobSummary(job) {
@@ -131,7 +135,7 @@ function persistJob(job) {
     directoryFilter: job.directoryFilter || '',
     liveOnly: !!job.liveOnly,
     error: job.error || null,
-    records: jobRecords(job),
+    records: jobRawRecords(job),
   };
   try { fs.writeFileSync(path.join(JOBS_DIR, `${job.id}.json`), JSON.stringify(out)); }
   catch (e) { console.error(`Failed to persist job ${job.id}:`, e.message); }
