@@ -48,7 +48,7 @@ const state = {
   viewingJobId: null,
   lastViewedCount: -1,
   sort: { column: null, dir: 1 },   // dir: 1 asc, -1 desc
-  jobsCollapsed: false,
+  jobsCollapsed: true,              // default collapsed; the latest job still shows
   page: 1,
 };
 
@@ -468,7 +468,9 @@ function renderJobs() {
   }
 
   list.innerHTML = '';
-  for (const job of state.jobs) {
+  // collapsed view keeps just the latest job (jobs are newest-first); expanded shows all
+  const jobsToShow = state.jobsCollapsed ? state.jobs.slice(0, 1) : state.jobs;
+  for (const job of jobsToShow) {
     const pct = job.total ? Math.round((job.done / job.total) * 100) : 0;
     const cov = job.coverage || { found: 0, live: 0, empty: 0 };
     const isViewing = job.id === state.viewingJobId;
@@ -529,15 +531,27 @@ function renderJobs() {
 
     list.appendChild(card);
   }
+
+  if (state.jobsCollapsed && state.jobs.length > 1) {
+    const note = document.createElement('p');
+    note.className = 'jobs-empty jobs-more';
+    note.textContent = `+ ${state.jobs.length - 1} older job${state.jobs.length - 1 === 1 ? '' : 's'} hidden — show all`;
+    note.addEventListener('click', () => toggleJobs());
+    list.appendChild(note);
+  }
 }
 
-function toggleJobs() {
-  state.jobsCollapsed = !state.jobsCollapsed;
-  if (elements.jobsList) elements.jobsList.classList.toggle('collapsed', state.jobsCollapsed);
+function applyJobsCollapsedUI() {
   if (elements.jobsToggle) {
     elements.jobsToggle.textContent = state.jobsCollapsed ? '▸' : '▾';
     elements.jobsToggle.setAttribute('aria-expanded', String(!state.jobsCollapsed));
   }
+}
+
+function toggleJobs() {
+  state.jobsCollapsed = !state.jobsCollapsed;
+  applyJobsCollapsedUI();
+  renderJobs();
 }
 
 async function resumeJobUI(id) {
@@ -720,6 +734,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initElements();
   attachEvents();
   createHeader();
+  applyJobsCollapsedUI();      // reflect the default-collapsed state on the toggle
   loadConfig();
 
   await fetchJobs();

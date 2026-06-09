@@ -7,8 +7,14 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'ui');
 const RESULTS_CSV = path.join(__dirname, 'cc-results.csv');
 const { runDomains, COLUMNS } = require('./cc-engine');
-const { loadGenderMap } = require('./extractor');
+const { loadGenderMap, loadEmailBlocklist } = require('./extractor');
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
+
+// Email blocklist (addresses to drop). Loaded once; edit email-blocklist.txt to update.
+try {
+  const bl = loadEmailBlocklist(path.join(__dirname, 'email-blocklist.txt'));
+  console.log(`Email blocklist: ${bl.size} address(es).`);
+} catch (e) { /* none */ }
 
 // First-name -> gender lookup, loaded once at startup (committed CSV ships in the image).
 let GENDER_MAP = {};

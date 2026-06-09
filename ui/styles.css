@@ -227,6 +227,13 @@ input[type='search']:focus, select:focus {
   color: #6b7280;
 }
 
+.jobs-more {
+  cursor: pointer;
+  color: #2563eb;
+  font-weight: 600;
+}
+.jobs-more:hover { text-decoration: underline; }
+
 .jobs-list {
   display: flex;
   flex-direction: column;

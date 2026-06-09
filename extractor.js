@@ -36,13 +36,65 @@ const ROLE_LOCALS = new Set(["info","sales","support","admin","contact","hello",
   "careers","office","team","marketing","help","service","press","media","jobs","accounts",
   "webmaster","postmaster","abuse","noreply","no-reply","enquiries","inquiries"]);
 // path segments that signal an individual profile (when followed by a person-ish slug)
-const BIO_DIRS = new Set(["people","person","team","about","staff","bio","profile","profiles",
-  "leadership","our-team","meet","employee","agents","agent","attorneys","doctors","providers",
-  // common professional-services bio directories (single-word forms match the normalizer)
-  "attorney","lawyer","lawyers","partner","partners","associate","associates","principals",
-  "physician","physicians","doctor","provider","broker","brokers","realtor","realtors",
-  "advisor","advisors","consultant","consultants","clinicians","specialists","member","members",
-  "professionals","directory","biographies","biography","bios"]);
+// Authoritative person/bio directory path segments (provided by RampedUp). Stored
+// NORMALIZED (lowercased, separators -> spaces) to match classifyDirectory's normalized
+// URL segments. An individual page under any of these classifies as "BIO URL".
+const BIO_DIR_RAW = [
+  "accountant","accountants","admissions-staff","advisor","advisors","find-an-advisor","our-advisors",
+  "agent","agent-detail","agent-details","agente","agents","find-an-agent","agentprofile","associates",
+  "lawyers","abogados","attorney","attorney-profile","attorney-profiles","attorneys","attorneys-staff",
+  "barrister","barristers","council-staff","find-a-lawyer","lawyer","our-attorneys","our-lawyers","bankers",
+  "board","board_of_directors","board-committees","board-directors","board-members","board-of-director",
+  "board-of-directors","board-of-management","bod","boe","broker","brokers","our-brokers","clinicians",
+  "find-a-clinician","commissioners","consultant","consultants","dentist","doctor","doctor-profile","doctors",
+  "findadoctor","find-a-doctor","find-doctor","find-doctors-physicians","doctors-providers","findadoc",
+  "financial-advisor","wealth-management","wealth-management-team","loan-advisors","loan-officer","loan-officers",
+  "LoanOriginator","our-partners","partner","partners","physician","physician-directory","physician-finder",
+  "physicians","principals","find-a-provider","our-providers","provider","provider-directory","providers",
+  "providers.","provider-search","realestateagent","real-estate-agent","real-estate-agents","realtors",
+  "recruiters","find-a-rep","find-a-representative","find-a-sales-rep","find-a-sales-representative","find-rep",
+  "find-representative","find-sales-rep","rep-locator","reps","sales-rep-locator","sales-representative",
+  "sales-representatives","sales-team","find-a-researcher","researcher","research-staff","specialists",
+  "meet-the-teachers","res-teachers-and-staff","teachers","Teachers_and_Staff","Teachers_Staff","travel-agents",
+  "our-vets","aboutleadership","about-leadership","administration","administration-staff-directory",
+  "board-and-management","board-leadership","board-management","companyleadership","company-leadership",
+  "corporate-leadership","corporate-officers","directors","directors-and-management","directors-management",
+  "directors-officers","executive_team","Executive-Bios","executive-board","executive-committee",
+  "executive-committee-bios","executive-leadership","executive-leadership-team","executive-management",
+  "executive-management-team","executive-officers","executive-profiles","executives","executive-staff",
+  "executive-team","firm-leadership","judges","key-management","leaders","leaders-bios","leadership",
+  "leadership-and-governance","leadership-and-staff","leadership-bios","leadership-board","leadership-directory",
+  "leadership-governance","leadership-group","leadership-staff","leadership-team","management","management_team",
+  "management-and-directors","management-board","management-directors","management-profile","management-team",
+  "meet-our-leadership","officers","officers-and-directors","officers-directors","our-board","our-leaders",
+  "our-leadership","our-leadership-team","our-management","our-management-team","our-officers","school-leadership",
+  "search-staff-directory-leadership","senior-leadership","senior-leadership-team","senior-management",
+  "senior-management-team","senior-staff","staff-board","staff-leadership","about-our-team","about-team",
+  "all-staff","anwaelte","author","authors","bio","biographies","biography","bios","business-team",
+  "campus-directory","chamber-staff","city-staff-directory","contact_us","contacts","corporate-team","cpa",
+  "cpt_team","department-directory","diocesan-directory","diocesan-staff","directories","directory",
+  "directory.aspx","directory-staff","district-staff","district-staff-directory","dt_team","employee",
+  "employee-directory","employees","equipe","expert","Expertos","experts","facstaff","fac-staff","faculty",
+  "faculty_and_staff","faculty_staff","facultyandstaff","faculty-and-staff","faculty-and-staff-directory",
+  "faculty-directory","facultystaff","faculty-staff","facultystaff-directory","faculty-staff-directory",
+  "faculty-staff-directory.aspx","financial-aid-staff","industry-expertise","key-people","key-staff",
+  "local-media-contact-list","media-contacts","meet-our-experts","meet-our-people","meet-our-staff",
+  "meet-our-team","meet-team","meet-the-staff","MeetTheTeam","meet-the-team","meet-us","member","members",
+  "Mitarbeitende","more-people","mortgage-team","news-events","nos-experts","office-staff","our_staff",
+  "our_team","our+people","our-experts","ourpeople","our-people","our-professionals","our-staff","ourteam",
+  "our-team","people","people_and_places","people-and-offices","people-directory","people-profiles",
+  "people-search","person","personen","personnel","personnes","persons","phone-directory","press-contacts",
+  "professional","professional-directory","professionals","profiel","profile","profiles","profissional",
+  "schooldirectory","school-directory","school-staff","staff","staff.aspx","staff.cfm","staff_directory",
+  "staff_directory.php","staff-2","staff-by-alphabet","staff-by-state","staff-category","staff-contacts",
+  "staff-council","staffdir","staffdirectory","staff-directory","StaffDirectory.aspx","staff-directory.html",
+  "staff-directory-10","staff-directory-2","staff-directory-list","staff-information","staff-item","staff-list",
+  "staff-listing","staff-listings","staff-member","staff-members","staff-profile","staff-profiles",
+  "state-directory","support-staff","team","team_member","team_members","team1","team-1","team-2","teambio",
+  "team-details","team-directory","teaminfo","teammates","teammember","team-member","teammembers","team-members",
+  "teams","the-staff","the-team","university-directory","unser-team","ymca-staff","your-team",
+];
+const BIO_DIRS = new Set(BIO_DIR_RAW.map((s) => normalizeForMatching(s)).filter(Boolean));
 const COMMON_TITLES = ["chief executive officer","ceo","founder","co-founder","cto","cfo","coo","cmo",
   "president","vice president","vp","director","head of","manager","lead","engineer","designer",
   "account executive","partner","associate","analyst","consultant","specialist","coordinator","owner"];
@@ -58,12 +110,65 @@ const decode = s => String(s||"")
 const stripTags = s => decode(String(s||"").replace(/<[^>]*>/g," ").replace(/\s+/g," "));
 const properCase = s => String(s||"").replace(/\w\S*/g, w => w[0].toUpperCase()+w.slice(1).toLowerCase());
 
+// ---- email obfuscation + cleanup ----
+function deobfuscateEmail(s){
+  return String(s || "")
+    .replace(/\s*[\[(]\s*at\s*[\])]\s*/gi, "@")     // [at] / (at)  ->  @
+    .replace(/\s*\(\s*@\s*\)\s*/g, "@")             // (@)          ->  @
+    .replace(/\s*[\[(]\s*dot\s*[\])]\s*/gi, ".");   // [dot] / (dot) ->  .
+}
+
+let EMAIL_BLOCKLIST = new Set();
+function setEmailBlocklist(emails){
+  EMAIL_BLOCKLIST = new Set([...(emails || [])].map((e) => String(e).trim().toLowerCase()).filter(Boolean));
+}
+function loadEmailBlocklist(filePath){
+  const set = new Set();
+  try{
+    for(const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/)){
+      const e = line.trim().toLowerCase();
+      if(e && !e.startsWith("#")) set.add(e);
+    }
+  }catch{ /* no list yet */ }
+  setEmailBlocklist(set);
+  return EMAIL_BLOCKLIST;
+}
+
+const IMG_EXT_RE = /\.(png|jpe?g|gif|svg|webp|bmp|ico)$/i;
+// Normalize/repair a scraped email; returns "" if it should be dropped.
+function cleanEmail(raw){
+  if(!raw) return "";
+  let e = deobfuscateEmail(raw).replace(/\s+/g, "");   // de-obfuscate + drop stray spaces
+  e = e.replace(/^mailto:/i, "").split("?")[0];
+  e = e.replace(/[.,;:>)\]]+$/, "");                    // trailing sentence punctuation (e.g. "...com.")
+  if(!e.includes("@")) return "";
+  let [local, ...rest] = e.split("@");
+  const domain = rest.join("@").toLowerCase();
+  if(!local || !domain || !domain.includes(".")) return "";
+  if(IMG_EXT_RE.test(domain)) return "";               // e.g. logo@2x.png
+  if(domain === "example.com") return "";              // placeholder domain
+
+  // leading digits = a phone number misread into the address: drop everything before the 1st letter
+  if(/^[0-9]/.test(local)) local = local.replace(/^[^A-Za-z]+/, "");
+
+  // domain echoed at the start of the local part: hilton.commainstreet@hilton.com -> mainstreet@hilton.com
+  while(local.toLowerCase().startsWith(domain)){
+    local = local.slice(domain.length).replace(/^[._\-]+/, "");
+  }
+  if(!local) return "";
+
+  const out = local + "@" + domain;
+  if(EMAIL_BLOCKLIST.has(out.toLowerCase())) return "";
+  if(!/^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/.test(out)) return "";
+  return out;
+}
+
 function extractEmailsFromText(html){
-  const text = decode(String(html||"")
+  const text = deobfuscateEmail(decode(String(html||"")
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' '));   // decode entities so obfuscated emails (&#064; = @) are matchable
+    .replace(/\s+/g, ' ')));   // decode entities + de-obfuscate so [at]/(at) emails are matchable
   const matches = Array.from(new Set((text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || [])));
   return matches;
 }
@@ -379,17 +484,17 @@ function extractRecord(html, url, deps = {}){
 
   const hrefs = anchors(html);
 
-  // email(s): mailto only, like the original — precise, low junk
+  // email(s): mailto first (precise), then a text scan. Every candidate runs through
+  // cleanEmail (de-obfuscate, strip phone prefixes / echoed domain / trailing dots,
+  // drop example.com + blocklisted) and only clean, valid addresses are kept.
   const emails = []; const seenE = new Set();
-  for(const h of hrefs){ if(/^mailto:/i.test(h)){ const e = decode(h.replace(/^mailto:/i,"").split("?")[0]);
-    if(e && e.includes("@") && !/\.(png|jpg|gif)$/i.test(e) && !seenE.has(e)){ seenE.add(e); emails.push(e); } } }
+  const addEmail = (rawCandidate) => {
+    const e = cleanEmail(decode(rawCandidate));
+    if(e && !seenE.has(e.toLowerCase())){ seenE.add(e.toLowerCase()); emails.push(e); }
+  };
+  for(const h of hrefs){ if(/^mailto:/i.test(h)) addEmail(h.replace(/^mailto:/i,"").split("?")[0]); }
   if(!emails.length){
-    for(const e of extractEmailsFromText(html)){
-      if(e && !/\.(png|jpg|gif)$/i.test(e) && !seenE.has(e)){
-        seenE.add(e);
-        emails.push(e);
-      }
-    }
+    for(const e of extractEmailsFromText(html)) addEmail(e);
   }
   const email = emails[0] || "";
 
@@ -528,7 +633,8 @@ function loadDirectoryRules(filePath){
   return rules;
 }
 
-module.exports = { extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules };
+module.exports = { extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules,
+  cleanEmail, setEmailBlocklist, loadEmailBlocklist };
 
 // ---------------------------------------------------------------- self-test
 if(require.main === module){

@@ -1,0 +1,4 @@
+# Email blocklist — one email address per line (case-insensitive).
+# Any record whose (cleaned) email matches a line here is dropped.
+# Lines starting with "#" and blank lines are ignored.
+# Add addresses below:
