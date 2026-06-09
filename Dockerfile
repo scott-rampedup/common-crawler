@@ -1,6 +1,6 @@
 # Container image for the contact finder. Works on Fly.io, Railway, Render, or any
-# host that runs a Docker image. No build step / no native deps — just Node.
-FROM node:20-slim
+# host that runs a Docker image. Node 24 for the built-in node:sqlite module.
+FROM node:24-slim
 
 WORKDIR /app
 

@@ -13,7 +13,7 @@ services:
       - key: DEMO_MODE
         value: "false"
       - key: NODE_VERSION
-        value: "20"
+        value: "24"
       - key: DATA_DIR
         value: /var/data     # matches the disk mountPath below
       - key: APP_PASSWORD

@@ -10,6 +10,9 @@ cc-results-*.csv
 tmp-results.csv
 contacts.json
 contacts.json.tmp
+contacts.db
+contacts.db-wal
+contacts.db-shm
 
 # spreadsheets contain some personal contacts/names — keep out of the repo
 *.xlsx

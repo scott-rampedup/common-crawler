@@ -10,7 +10,7 @@
     "selftest": "node cc-engine.js --selftest"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.5"
   },
   "dependencies": {
     "google-libphonenumber": "^3.2.44",

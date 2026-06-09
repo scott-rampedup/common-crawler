@@ -9,6 +9,9 @@ cc-results-*.csv
 tmp-results.csv
 contacts.json
 contacts.json.tmp
+contacts.db
+contacts.db-wal
+contacts.db-shm
 tmp-*.js
 *.xlsx
 *-run-output.txt

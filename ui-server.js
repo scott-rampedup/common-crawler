@@ -217,7 +217,7 @@ async function runJobDomains(job, domainsToRun) {
   // merge this job's fully-processed records into the central database
   try {
     const merged = db.upsertMany(jobRecords(job));
-    console.log(`Central DB: +${merged.added} new, ${merged.updated} updated (total ${merged.total}).`);
+    console.log(`Central DB: merged ${merged.processed} record(s), +${merged.added} new (total ${merged.total}).`);
   } catch (e) { console.error('Central DB merge failed:', e.message); }
   console.log(`Job ${job.id} ${job.status} — ${job.recordsByEmail.size} record(s)`);
 }
@@ -460,15 +460,35 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // ---- central database ----
+  // ---- central database (SQLite, server-side paginated) ----
   if (url.pathname === '/api/db/stats' && req.method === 'GET') { sendJson(res, db.stats()); return; }
-  if (url.pathname === '/api/db/records' && req.method === 'GET') { sendJson(res, db.all()); return; }
+  if (url.pathname === '/api/db/facets' && req.method === 'GET') { sendJson(res, db.facets()); return; }
+  if (url.pathname === '/api/db/query' && req.method === 'GET') {
+    const q = url.searchParams;
+    sendJson(res, db.query({
+      page: q.get('page'), pageSize: q.get('pageSize'),
+      search: q.get('search') || '', directory: q.get('directory') || '',
+      emailType: q.get('emailType') || '', phoneType: q.get('phoneType') || '',
+      gender: q.get('gender') || 'na', domain: q.get('domain') || '',
+      linkedin: q.get('linkedin') === '1', sort: q.get('sort') || '', dir: q.get('dir'),
+    }));
+    return;
+  }
   if (url.pathname === '/api/db/export.csv' && req.method === 'GET') {
+    const q = url.searchParams;
+    const opts = {
+      search: q.get('search') || '', directory: q.get('directory') || '',
+      emailType: q.get('emailType') || '', phoneType: q.get('phoneType') || '',
+      gender: q.get('gender') || 'na', domain: q.get('domain') || '', linkedin: q.get('linkedin') === '1',
+    };
     res.writeHead(200, {
       'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="contacts-database.csv"`,
     });
-    res.end(recordsToCsv(db.all()));
+    res.write(COLUMNS.join(',') + '\n');
+    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    db.each(opts, (rec) => { res.write(COLUMNS.map((c) => esc(rec[c])).join(',') + '\n'); });
+    res.end();
     return;
   }
 

@@ -55,7 +55,10 @@ const state = {
   page: 1,
   viewingDb: false,                // true when the table shows the central database
   lastDbCount: -1,
+  dbTotal: 0,                      // server-reported total for the current DB query
 };
+
+let dbSearchTimer = null;
 
 let jobsPollTimer = null;
 let topScrollWired = false;
@@ -130,7 +133,7 @@ function sortBy(column) {
   }
   state.page = 1;
   createHeader();                                 // refresh sort arrows
-  applyFilters();
+  if (state.viewingDb) queryDb(); else applyFilters();
 }
 
 function compareValues(a, b) {
@@ -230,6 +233,14 @@ function decorateRows(rows) {
 
 // Totals live in the Search Results header (the 3 top boxes were removed).
 function updateSummary() {
+  if (state.viewingDb) {
+    const total = state.dbTotal;
+    const start = total ? (state.page - 1) * PAGE_SIZE + 1 : 0;
+    const end = Math.min(state.page * PAGE_SIZE, total);
+    elements.tableSummary.innerHTML =
+      `Master database · <strong>${total.toLocaleString()}</strong> contacts · showing <strong>${start.toLocaleString()}-${end.toLocaleString()}</strong>`;
+    return;
+  }
   const total = state.data.length;
   const displayed = state.filtered.length;
   const uniqueEmails = new Set(state.data.map((row) => normalizeValue(row['Email Address'])).filter(Boolean)).size;
@@ -259,6 +270,7 @@ function matchesDomainFilter(row) {
 }
 
 function applyFilters() {
+  if (state.viewingDb) { queryDb(); return; }      // database view filters server-side
   const searchQuery = normalizeValue(elements.searchInput.value);
   const directoryValue = normalizeValue(elements.directoryFilter.value);
   const emailTypeValue = normalizeValue(elements.emailTypeFilter.value);
@@ -294,7 +306,8 @@ function applyFilters() {
 }
 
 function totalPages() {
-  return Math.max(1, Math.ceil(state.filtered.length / PAGE_SIZE));
+  const n = state.viewingDb ? state.dbTotal : state.filtered.length;
+  return Math.max(1, Math.ceil(n / PAGE_SIZE));
 }
 
 function renderPagination() {
@@ -310,6 +323,7 @@ function renderPagination() {
 
 function setPage(p) {
   state.page = p;
+  if (state.viewingDb) { queryDb(); return; }     // fetch that page from the server
   renderTable();
   updateSummary();
 }
@@ -320,7 +334,8 @@ function renderTable() {
   if (state.page > pages) state.page = pages;
   if (state.page < 1) state.page = 1;
   const startIdx = (state.page - 1) * PAGE_SIZE;
-  const rowsToRender = state.filtered.slice(startIdx, startIdx + PAGE_SIZE);
+  // DB view: state.data is already the current server page; job view: slice locally
+  const rowsToRender = state.viewingDb ? state.data : state.filtered.slice(startIdx, startIdx + PAGE_SIZE);
 
   elements.resultsBody.innerHTML = '';
 
@@ -701,30 +716,69 @@ async function viewJob(id) {
   renderJobs();
 }
 
-// Point the table/filters at the central contacts database.
+// Point the table at the central database (server-side paginated/filtered).
 async function viewDatabase() {
+  state.viewingDb = true;
+  state.viewingJobId = null;
+  state.page = 1;
+  setSearchStatus('Loading master database…');
+  createHeader();
+  await populateDbFilters();      // fill dropdowns from DISTINCT values in the DB
+  await queryDb();
+  renderJobs();                   // clear any job's "viewing" highlight
+}
+
+// Gather the current controls into DB query params.
+function dbQueryParams() {
+  const p = new URLSearchParams();
+  p.set('page', String(state.page));
+  p.set('pageSize', String(PAGE_SIZE));
+  const s = elements.searchInput.value.trim();
+  if (s) p.set('search', s);
+  if (elements.directoryFilter.value) p.set('directory', elements.directoryFilter.value);
+  if (elements.emailTypeFilter.value) p.set('emailType', elements.emailTypeFilter.value);
+  if (elements.phoneTypeFilter && elements.phoneTypeFilter.value) p.set('phoneType', elements.phoneTypeFilter.value);
+  const g = elements.genderFilter ? elements.genderFilter.value : 'na';
+  if (g && g !== 'na') p.set('gender', g);
+  if (elements.linkedinRequired && elements.linkedinRequired.checked) p.set('linkedin', '1');
+  if (state.sort.column) { p.set('sort', state.sort.column); p.set('dir', String(state.sort.dir)); }
+  return p;
+}
+
+async function queryDb() {
   try {
-    setSearchStatus('Loading master database…');
-    const res = await fetch('/api/db/records');
+    const res = await fetch('/api/db/query?' + dbQueryParams().toString());
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const rows = await res.json();
-    state.viewingDb = true;
-    state.viewingJobId = null;
-    state.page = 1;
-    state.data = decorateRows(rows);
-    state.lastDbCount = rows.length;
+    const out = await res.json();
+    state.data = decorateRows(out.rows || []);
+    state.dbTotal = out.total || 0;
+    renderTable();
+    updateSummary();
     if (elements.viewingIndicator) {
       elements.viewingIndicator.classList.remove('hidden');
-      elements.viewingIndicator.innerHTML = `Viewing: <strong>Master database</strong> — ${rows.length} contact${rows.length === 1 ? '' : 's'}`;
+      elements.viewingIndicator.innerHTML = `Viewing: <strong>Master database</strong> — ${state.dbTotal.toLocaleString()} contact(s) match`;
     }
-    createHeader();
-    rebuildFilters();
-    applyFilters();
-    renderJobs();              // clear any job's "viewing" highlight
-    setSearchStatus(`Master database: ${rows.length} contact${rows.length === 1 ? '' : 's'}.`);
-  } catch (error) {
-    setSearchStatus(`Could not load database: ${error.message}`);
-  }
+  } catch (error) { setSearchStatus(`Could not query database: ${error.message}`); }
+}
+
+async function populateDbFilters() {
+  try {
+    const res = await fetch('/api/db/facets');
+    if (!res.ok) return;
+    const f = await res.json();
+    const fill = (sel, values, label) => {
+      if (!sel) return;
+      const prev = sel.value;
+      sel.innerHTML = `<option value="">All ${label}</option>`;
+      for (const v of (values || [])) {
+        const o = document.createElement('option'); o.value = v; o.textContent = v; sel.appendChild(o);
+      }
+      if (prev && (values || []).includes(prev)) sel.value = prev;
+    };
+    fill(elements.directoryFilter, f.directory, 'directories');
+    fill(elements.emailTypeFilter, f.emailType, 'email types');
+    fill(elements.phoneTypeFilter, f.phoneType, 'phone types');
+  } catch (e) { /* ignore */ }
 }
 
 async function refreshDbCount() {
@@ -732,9 +786,9 @@ async function refreshDbCount() {
     const res = await fetch('/api/db/stats');
     if (!res.ok) return;
     const { total } = await res.json();
-    if (elements.dbButton) elements.dbButton.textContent = `Master database (${total})`;
-    // if we're viewing the DB and it grew (a job finished), refresh the rows
-    if (state.viewingDb && total !== state.lastDbCount) viewDatabase();
+    if (elements.dbButton) elements.dbButton.textContent = `Master database (${total.toLocaleString()})`;
+    if (state.viewingDb && total !== state.lastDbCount) { state.lastDbCount = total; queryDb(); }
+    else state.lastDbCount = total;
   } catch (e) { /* ignore */ }
 }
 
@@ -826,6 +880,13 @@ function clearDomains() {
 }
 
 function downloadCSV() {
+  // Database view: export the whole (filtered) DB straight from the server (streamed).
+  if (state.viewingDb) {
+    const p = dbQueryParams();
+    p.delete('page'); p.delete('pageSize'); p.delete('sort'); p.delete('dir');
+    window.location.href = '/api/db/export.csv?' + p.toString();
+    return;
+  }
   if (state.data.length === 0) {
     alert('No data to download');
     return;
@@ -858,7 +919,11 @@ function downloadCSV() {
 }
 
 function attachEvents() {
-  elements.searchInput.addEventListener('input', () => { state.page = 1; applyFilters(); });
+  elements.searchInput.addEventListener('input', () => {
+    state.page = 1;
+    if (state.viewingDb) { clearTimeout(dbSearchTimer); dbSearchTimer = setTimeout(queryDb, 300); }
+    else applyFilters();
+  });
   elements.directoryFilter.addEventListener('change', () => { state.page = 1; applyFilters(); });
   elements.emailTypeFilter.addEventListener('change', () => { state.page = 1; applyFilters(); });
   if (elements.genderFilter) elements.genderFilter.addEventListener('change', () => { state.page = 1; applyFilters(); });
