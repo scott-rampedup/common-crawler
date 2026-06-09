@@ -58,6 +58,40 @@ function makeLimiter(maxConcurrent){
 // (configurable) even when many domains run in parallel, so we never hammer it.
 const ccLimit = makeLimiter(Number(process.env.CC_CONCURRENCY) || 1);
 
+// Per-key (per-host) concurrency limiter: lets total concurrency be high while
+// keeping the number of simultaneous requests to ANY single host small (polite +
+// protects our IP). Used for live page fetches in webpage mode.
+function makeKeyedLimiter(maxPerKey){
+  const active = new Map();   // key -> in-flight count
+  const queue = new Map();    // key -> [thunks]
+  function launch(k, fn, resolve, reject){
+    active.set(k, (active.get(k) || 0) + 1);
+    Promise.resolve().then(fn).then(
+      (v) => { done(k); resolve(v); },
+      (e) => { done(k); reject(e); });
+  }
+  function done(k){
+    active.set(k, (active.get(k) || 1) - 1);
+    const q = queue.get(k);
+    if(q && q.length) q.shift()();
+    else if((active.get(k) || 0) <= 0){ active.delete(k); queue.delete(k); }
+  }
+  return (k, fn) => new Promise((resolve, reject) => {
+    if((active.get(k) || 0) < maxPerKey) launch(k, fn, resolve, reject);
+    else { if(!queue.has(k)) queue.set(k, []); queue.get(k).push(() => launch(k, fn, resolve, reject)); }
+  });
+}
+function hostOf(u){ try{ return new URL(u).hostname.replace(/^www\./, "").toLowerCase(); }catch{ return String(u); } }
+
+// HTML pages are capped smaller than data files — bios are tiny; this cuts download
+// + parse time and protects the event loop at high concurrency.
+const HTML_MAX_BYTES = (Number(process.env.HTML_MAX_KB) || 1024) * 1024;
+
+// lightweight network telemetry per run (so we can see if we're getting blocked)
+let _net = { fetched: 0, blocked: 0 };
+function resetNetStats(){ _net = { fetched: 0, blocked: 0 }; }
+function getNetStats(){ return { ..._net }; }
+
 const proxyEnv = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy || null;
 const noProxyEnv = process.env.NO_PROXY || process.env.no_proxy || "";
 let ProxyAgent, undiciFetch;
@@ -439,13 +473,14 @@ async function collectSitemapCandidates(domain, opts, sitemaps, rules){
 // fetch's HTTP/2 path can emit an UNCATCHABLE socket 'error' event when a server
 // drops the connection, which kills the whole run. http(s) lets us handle every
 // failure locally and just return "" for a bad page. Returns "" on any problem.
+// Returns the body string, OR (with opts.returnMeta) { status, body }. status 0 = network error.
 function httpGetRaw(url, opts = {}){
-  const { redirectsLeft = 4, accept = /html/, maxBytes = 4 * 1024 * 1024 } = opts;
+  const { redirectsLeft = 4, accept = /html/, maxBytes = 4 * 1024 * 1024, returnMeta = false } = opts;
   return new Promise((resolve) => {
     let settled = false;
-    const done = (v) => { if(!settled){ settled = true; resolve(v); } };
+    const finish = (status, body) => { if(!settled){ settled = true; resolve(returnMeta ? { status, body } : body); } };
     let u;
-    try{ u = new URL(url); }catch{ return done(""); }
+    try{ u = new URL(url); }catch{ return finish(0, ""); }
     const lib = u.protocol === "http:" ? http : https;
 
     const req = lib.request(u, {
@@ -460,16 +495,16 @@ function httpGetRaw(url, opts = {}){
     }, (res) => {
       const status = res.statusCode || 0;
 
-      // follow redirects
+      // follow redirects (propagate returnMeta)
       if(status >= 300 && status < 400 && res.headers.location && redirectsLeft > 0){
-        res.resume();                                   // drain & free the socket
+        res.resume();
         let next;
-        try{ next = new URL(res.headers.location, u).toString(); }catch{ return done(""); }
-        return done(httpGetRaw(next, { ...opts, redirectsLeft: redirectsLeft - 1 }));
+        try{ next = new URL(res.headers.location, u).toString(); }catch{ return finish(status, ""); }
+        return resolve(httpGetRaw(next, { ...opts, redirectsLeft: redirectsLeft - 1 }));
       }
 
       const ct = (res.headers["content-type"] || "").toLowerCase();
-      if(status !== 200 || (accept && ct && !accept.test(ct))){ res.resume(); return done(""); }
+      if(status !== 200 || (accept && ct && !accept.test(ct))){ res.resume(); return finish(status, ""); }
 
       const enc = (res.headers["content-encoding"] || "").toLowerCase();
       let stream = res;
@@ -477,29 +512,28 @@ function httpGetRaw(url, opts = {}){
         if(enc === "gzip") stream = res.pipe(zlib.createGunzip());
         else if(enc === "deflate") stream = res.pipe(zlib.createInflate());
         else if(enc === "br") stream = res.pipe(zlib.createBrotliDecompress());
-      }catch{ res.resume(); return done(""); }
+      }catch{ res.resume(); return finish(status, ""); }
 
       const chunks = []; let bytes = 0;
       stream.on("data", (c) => { bytes += c.length; if(bytes <= maxBytes) chunks.push(c); else { req.destroy(); } });
       stream.on("end", () => {
         let buf = Buffer.concat(chunks);
-        // auto-gunzip a gzip-magic body (e.g. sitemap .xml.gz served without content-encoding)
         if(buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b){ try{ buf = zlib.gunzipSync(buf); }catch{ /* keep raw */ } }
-        done(buf.toString("utf8"));
+        finish(200, buf.toString("utf8"));
       });
-      stream.on("error", () => done(""));
-      res.on("error", () => done(""));
+      stream.on("error", () => finish(status, ""));
+      res.on("error", () => finish(status, ""));
     });
 
-    req.on("error", () => done(""));                    // DNS failure, reset, TLS error, etc.
-    req.on("timeout", () => { req.destroy(); done(""); });
+    req.on("error", () => finish(0, ""));               // DNS failure, reset, TLS error, etc.
+    req.on("timeout", () => { req.destroy(); finish(0, ""); });
     req.end();
   });
 }
 
 async function liveFetchPage(url){
   // honor an explicit proxy via undici when one is configured; otherwise use the
-  // crash-proof built-in http(s) path above.
+  // crash-proof built-in http(s) path. Counts blocks (403/429/503) and backs off once.
   if(proxyEnv && ProxyAgent && undiciFetch){
     try{
       const res = await fetchImpl(url, {
@@ -507,13 +541,23 @@ async function liveFetchPage(url){
         redirect:"follow",
         signal: AbortSignal.timeout(15000),
       });
-      if(!res.ok) return "";
+      if(res.status === 429 || res.status === 503 || res.status === 403){ _net.blocked++; return ""; }
+      if(!res.ok) { _net.fetched++; return ""; }
       const ct = (res.headers.get("content-type") || "").toLowerCase();
+      _net.fetched++;
       if(ct && !ct.includes("html")) return "";
       return await res.text();
     }catch{ return ""; }
   }
-  return httpGetRaw(url, { accept: /html/ });
+  for(let attempt = 0; attempt < 2; attempt++){
+    const r = await httpGetRaw(url, { accept: /html/, maxBytes: HTML_MAX_BYTES, returnMeta: true });
+    if(r.status === 200){ _net.fetched++; return r.body; }
+    if((r.status === 429 || r.status === 503) && attempt === 0){ _net.blocked++; await sleep(800); continue; }  // transient throttle -> back off + retry
+    if(r.status === 403 || r.status === 429 || r.status === 503){ _net.blocked++; return ""; }                 // blocked
+    _net.fetched++;                                                                                            // 404 / other / network error
+    return "";
+  }
+  return "";
 }
 
 // Fetch robots.txt / sitemaps — XML, plain text, or gzipped, possibly large.
@@ -748,6 +792,9 @@ async function run(csvPath, opts = {}){
   const mode = opts.mode === 'webpage' ? 'webpage' : 'domain';
   const fetchPage = opts._liveFetch || liveFetchPage;
   const today = new Date().toISOString().slice(0, 10);
+  resetNetStats();
+  // cap simultaneous requests to any one host even when total concurrency is high
+  const hostGate = makeKeyedLimiter(Math.max(1, Number(process.env.HOST_CONCURRENCY) || 3));
 
   const lines = Array.isArray(opts._items) ? opts._items : fs.readFileSync(csvPath, "utf8").split(/\r?\n/);
   const domains = mode === 'webpage' ? normalizeUrlList(lines) : normalizeDomainList(lines);
@@ -784,7 +831,7 @@ async function run(csvPath, opts = {}){
     if(mode === 'webpage'){
       let kept = 0, wnote = "";
       try{
-        const html = await fetchPage(domain);
+        const html = await hostGate(hostOf(domain), () => fetchPage(domain));   // ≤HOST_CONCURRENCY per host
         if(html){
           const out = extractRecord(html, domain, { wireless, genderMap, directoryRules, source:"Webpage", timestamp: today });
           if(out){ ingest(out); kept++; }
@@ -891,9 +938,11 @@ async function run(csvPath, opts = {}){
   unique = analyzePhones(unique);   // dedupe Phone 2, relabel recurring Direct numbers as Office
   await geocodeRecords(unique);     // fill Phone Location (City, Region, Country) via libphonenumber
   writeCsv(unique, outPath);
+  const net = getNetStats();
   console.log(`\nCoverage: ${coverage.found} via Common Crawl · ${coverage.live} via live crawl · ${coverage.empty} no contacts`);
   console.log(`People:   ${unique.length} unique email records → ${outPath}`);
-  onProgress({ status: 'done', totalRecords: unique.length, coverage });
+  console.log(`Network:  ${net.fetched} fetched · ${net.blocked} blocked (403/429/503)`);
+  onProgress({ status: 'done', totalRecords: unique.length, coverage, netStats: net });
   return unique;
 }
 

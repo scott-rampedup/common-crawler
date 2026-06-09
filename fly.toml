@@ -8,9 +8,11 @@ primary_region = 'ewr'   # must match the existing 'data' volume's region
   DATA_DIR = '/data'
   DEMO_MODE = 'false'
   LIVE_MAX_PAGES = '300'        # max pages the live crawler fetches per domain (sitemap-driven)
-  DOMAIN_CONCURRENCY = '6'      # how many different domains to crawl at once
-  IN_SITE_CONCURRENCY = '3'     # how many pages from one site to fetch at once
+  DOMAIN_CONCURRENCY = '16'     # how many different domains/URLs to crawl at once
+  IN_SITE_CONCURRENCY = '4'     # how many pages from one site to fetch at once
+  HOST_CONCURRENCY = '3'        # max simultaneous requests to any single host (politeness/IP safety)
   CC_CONCURRENCY = '1'          # global Common Crawl request limit (keep low: shared service)
+  HTML_MAX_KB = '1024'          # cap HTML page size we download/parse (KB)
 
 [[mounts]]
   source = 'data'
@@ -24,6 +26,6 @@ primary_region = 'ewr'   # must match the existing 'data' volume's region
   min_machines_running = 1
 
 [[vm]]
-  memory = '1gb'               # headroom for the wireless-block table + concurrent crawls
-  cpu_kind = 'shared'
-  cpus = 2
+  memory = '8gb'               # headroom for high concurrency + the wireless-block table
+  cpu_kind = 'performance'     # dedicated vCPUs (not throttled) for sustained crawl throughput
+  cpus = 4
