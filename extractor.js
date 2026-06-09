@@ -452,6 +452,28 @@ function titleFromUrlKeywords(url){
   return "";
 }
 
+// Every known directory path term -> its role title ("" when none). Built from the
+// directory list + the role map; all of these map to Directory Type "Team".
+const DIR_TERMS = new Map();
+for(const t of BIO_DIR_RAW) DIR_TERMS.set(t.toLowerCase(), KEYWORD_TITLES[t.toLowerCase()] || "");
+for(const k of Object.keys(KEYWORD_TITLES)) if(!DIR_TERMS.has(k)) DIR_TERMS.set(k, KEYWORD_TITLES[k]);
+
+// Find the URL path segment that identifies a directory (e.g. /attorneys/jane -> attorneys).
+// Returns { id: "Attorneys", role: "Attorney" } or null. id is the matched term, prettified.
+function pathIdFromUrl(url){
+  let segs;
+  try { segs = new URL(url).pathname.split("/").filter(Boolean); }
+  catch { return null; }
+  for(const seg of segs){
+    const key = seg.toLowerCase();
+    if(DIR_TERMS.has(key)){
+      const id = properCase(seg.replace(/[-_.]+/g, " ").replace(/\b(aspx?|html?|php|cfm)\b/gi, "").trim());
+      return { id, role: DIR_TERMS.get(key) };
+    }
+  }
+  return null;
+}
+
 function classifyEmail(email){
   if(!email) return "";
   const [local, domain] = email.toLowerCase().split("@"); if(!domain) return "";
@@ -509,6 +531,8 @@ function extractRecord(html, url, deps = {}){
 
   const directory = classifyDirectory(url, html, deps.directoryRules, deps.genderMap);
   const isBio = directory === "BIO URL";
+  const pathHit = pathIdFromUrl(url);                  // {id, role} for the directory segment, or null
+  const outDirectory = pathHit ? "Team" : directory;   // matched directory term -> Directory Type "Team"
   const last = lastPathSeg(url);
   const { first, last: lastName } = isBio ? inferNameFromSlug(last, deps.genderMap) : { first:"", last:"" };
 
@@ -556,9 +580,11 @@ function extractRecord(html, url, deps = {}){
   }
 
   const description = (metaContent(html,"og:description") || metaContent(html,"description")).slice(0,300);
-  let title = pageTitle(html);
-  if(!title) title = titleFromUrlKeywords(url);   // fall back to a role inferred from the URL path
-  const position = findPosition(title, description);
+  const pageTtl = pageTitle(html);
+  // Title = role from the directory Path ID when known (e.g. /attorneys/ -> "Attorney"),
+  // otherwise the page's own title.
+  const title = (pathHit && pathHit.role) ? pathHit.role : pageTtl;
+  const position = findPosition(pageTtl, description);
   const image = findImage(html, url);
   const gender = first ? (genderMap[first.toLowerCase()] || "") : "";
 
@@ -569,8 +595,8 @@ function extractRecord(html, url, deps = {}){
     "Time Stamp": timestamp,
     "Source": source,
     "Web Source URL": url,
-    "Directory": directory,
-    "ID": last || "",
+    "Directory": outDirectory,
+    "Path ID": pathHit ? pathHit.id : "",
     "Last Path": cleanLastPath(last),
     "Bio Check": isBio ? "Y" : "",
     "First": first,

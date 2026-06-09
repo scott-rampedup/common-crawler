@@ -5,7 +5,7 @@ const CSV_COLUMNS = [
   'Source',
   'Web Source URL',
   'Directory',
-  'ID',
+  'Path ID',
   'Last Path',
   'Bio Check',
   'First',
@@ -29,7 +29,7 @@ const CSV_COLUMNS = [
 // are hidden (still in the CSV download); "Domain" (root domain of Web Source URL) is
 // shown in ID's place; the thumbnail links to the Web Source URL.
 const DISPLAY_COLUMNS = [
-  'Time Stamp', 'Source', 'Directory', 'Domain', 'Last Path', 'First', 'Last', 'Gender',
+  'Time Stamp', 'Source', 'Directory', 'Path ID', 'Domain', 'Last Path', 'First', 'Last', 'Gender',
   'Position', 'Description', 'Email Address', 'Email Type', 'LinkedIn URL', 'Google Maps',
   'Phone', 'Phone Type', 'Phone Location', 'Phone 2', 'Phone 2 Type'
 ];
