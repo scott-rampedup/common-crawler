@@ -6,6 +6,7 @@ const CSV_COLUMNS = [
   'Web Source URL',
   'Directory',
   'Path ID',
+  'Domain',
   'Last Path',
   'Bio Check',
   'First',
@@ -978,8 +979,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   await fetchJobs();
   refreshDbCount();
-  // open the newest job if there is one; otherwise fall back to the legacy cc-results.csv view
-  if (state.jobs.length) {
+  // ?view=db (e.g. the "Master database" link on the Search page) opens the DB view directly;
+  // otherwise open the newest job, or fall back to the legacy cc-results.csv view.
+  if (new URLSearchParams(location.search).get('view') === 'db') {
+    viewDatabase();
+  } else if (state.jobs.length) {
     viewJob(state.jobs[0].id);
   } else {
     loadResults();

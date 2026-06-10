@@ -107,6 +107,19 @@ function makeDb(dir) {
     if (opts.emailType) eqCI('email_type', opts.emailType);
     if (opts.phoneType) eqCI('phone_type', opts.phoneType);
     if (opts.domain) { where.push('domain = ?'); params.push(String(opts.domain).toLowerCase()); }
+    // Position keyword: substring match on the Position field.
+    if (opts.position) { where.push(`lower("position") LIKE ?`); params.push('%' + String(opts.position).toLowerCase() + '%'); }
+    // Pasted domain list: match any (root domain or a subdomain of it).
+    if (Array.isArray(opts.domains) && opts.domains.length) {
+      const parts = [];
+      for (const d of opts.domains) {
+        const dl = String(d || '').trim().toLowerCase().replace(/^www\./, '');
+        if (!dl) continue;
+        parts.push('(domain = ? OR domain LIKE ?)');
+        params.push(dl, '%.' + dl);
+      }
+      if (parts.length) where.push('(' + parts.join(' OR ') + ')');
+    }
     if (opts.linkedin) where.push(`linkedin_url <> ''`);
     switch (opts.gender) {
       case 'male': where.push(`upper(gender) = 'M'`); break;

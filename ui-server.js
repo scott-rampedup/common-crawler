@@ -341,6 +341,14 @@ function serveStaticFile(res, filePath) {
   });
 }
 
+// "acme.com, foo.org\nbar.io" -> ['acme.com','foo.org','bar.io'] (root domains, www-stripped)
+function parseDomainsParam(raw) {
+  return String(raw || '')
+    .split(/[\s,]+/)
+    .map((s) => s.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, ''))
+    .filter(Boolean);
+}
+
 function sendJson(res, data) {
   const payload = JSON.stringify(data);
   res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -355,6 +363,11 @@ const server = http.createServer((req, res) => {
 
   if (url.pathname === '/' || url.pathname === '/index.html') {
     serveStaticFile(res, path.join(PUBLIC_DIR, 'index.html'));
+    return;
+  }
+
+  if (url.pathname === '/search' || url.pathname === '/search.html') {
+    serveStaticFile(res, path.join(PUBLIC_DIR, 'search.html'));
     return;
   }
 
@@ -474,6 +487,7 @@ const server = http.createServer((req, res) => {
       search: q.get('search') || '', directory: q.get('directory') || '',
       emailType: q.get('emailType') || '', phoneType: q.get('phoneType') || '',
       gender: q.get('gender') || 'na', domain: q.get('domain') || '',
+      domains: parseDomainsParam(q.get('domains')), position: q.get('position') || '',
       linkedin: q.get('linkedin') === '1', sort: q.get('sort') || '', dir: q.get('dir'),
     }));
     return;
@@ -483,7 +497,9 @@ const server = http.createServer((req, res) => {
     const opts = {
       search: q.get('search') || '', directory: q.get('directory') || '',
       emailType: q.get('emailType') || '', phoneType: q.get('phoneType') || '',
-      gender: q.get('gender') || 'na', domain: q.get('domain') || '', linkedin: q.get('linkedin') === '1',
+      gender: q.get('gender') || 'na', domain: q.get('domain') || '',
+      domains: parseDomainsParam(q.get('domains')), position: q.get('position') || '',
+      linkedin: q.get('linkedin') === '1',
     };
     res.writeHead(200, {
       'Content-Type': 'text/csv; charset=utf-8',

@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Search Database · Common Crawler</title>
+  <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+  <link rel="apple-touch-icon" href="/ui/logo.png" />
+  <link rel="stylesheet" href="/ui/styles.css" />
+</head>
+<body class="search-page">
+  <div class="search-shell">
+    <header class="search-header">
+      <div class="brand">
+        <img class="app-logo" src="/ui/logo.png" alt="Common Crawler logo"
+             onerror="this.onerror=null;this.src='/ui/favicon.svg';" />
+        <h1>Common Crawler</h1>
+      </div>
+      <nav class="nav-actions">
+        <a class="nav-link" href="/?view=db">Master database</a>
+        <a class="nav-link green active" href="/search" aria-current="page">🔍 Search Database</a>
+      </nav>
+    </header>
+
+    <div class="search-layout">
+      <!-- LEFT: search controls (25%) -->
+      <aside class="search-panel">
+        <h2>Search</h2>
+        <label>
+          Search (any field)
+          <input id="f-search" type="search" placeholder="Name, email, company…" />
+        </label>
+        <label>
+          Directory (search category)
+          <select id="f-directory"><option value="">All directories</option></select>
+        </label>
+        <label>
+          Domain (paste domains)
+          <textarea id="f-domains" placeholder="One domain or URL per line"></textarea>
+        </label>
+        <label>
+          Position (key word)
+          <input id="f-position" type="search" placeholder="e.g. attorney, founder, VP" />
+        </label>
+        <label>
+          Email Type
+          <select id="f-emailType"><option value="">All email types</option></select>
+        </label>
+        <label>
+          Gender
+          <select id="f-gender">
+            <option value="na">N/A (all results)</option>
+            <option value="all">All (M &amp; F)</option>
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+            <option value="none">None</option>
+          </select>
+        </label>
+        <label class="checkbox-label">
+          <input id="f-linkedin" type="checkbox" />
+          Must have LinkedIn URL
+        </label>
+        <div class="search-actions">
+          <button id="applyBtn" class="primary" type="button">Search</button>
+          <button id="clearBtn" class="ghost" type="button">Clear</button>
+        </div>
+        <p id="searchHint" class="search-hint">Searching the master database.</p>
+      </aside>
+
+      <!-- RIGHT: results (75%) -->
+      <main class="results-panel">
+        <div class="results-toolbar">
+          <p id="resultsSummary">Loading…</p>
+          <div class="toolbar-actions">
+            <span id="selectedInfo" class="selected-info"></span>
+            <button id="downloadBtn" class="primary" type="button">⬇ Download CSV</button>
+          </div>
+        </div>
+        <div class="results-scroll" id="resultsScroll">
+          <table id="resultsTable">
+            <thead><tr id="headerRow"></tr></thead>
+            <tbody id="resultsBody"></tbody>
+          </table>
+        </div>
+        <div class="pagination" id="pagination">
+          <button id="firstBtn" type="button" title="First page">«</button>
+          <button id="prevBtn" type="button" title="Previous page">‹ Prev</button>
+          <span id="pageInfo" class="page-info">Page 1 of 1</span>
+          <button id="nextBtn" type="button" title="Next page">Next ›</button>
+          <button id="lastBtn" type="button" title="Last page">»</button>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/ui/search.js"></script>
+</body>
+</html>

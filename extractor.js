@@ -154,7 +154,7 @@ const IMG_EXT_RE = /\.(png|jpe?g|gif|svg|webp|bmp|ico)$/i;
 // Normalize/repair a scraped email; returns "" if it should be dropped.
 function cleanEmail(raw){
   if(!raw) return "";
-  let e = deobfuscateEmail(raw).replace(/\s+/g, "");   // de-obfuscate + drop stray spaces
+  let e = deobfuscateEmail(raw).replace(/%20/gi, "").replace(/\s+/g, "");   // de-obfuscate + drop %20 (encoded space) and stray spaces
   e = e.replace(/^mailto:/i, "").split("?")[0];
   e = e.replace(/[.,;:>)\]]+$/, "");                    // trailing sentence punctuation (e.g. "...com.")
   if(!e.includes("@")) return "";
@@ -598,6 +598,7 @@ function extractRecord(html, url, deps = {}){
     "Web Source URL": url,
     "Directory": outDirectory,
     "Path ID": pathHit ? pathHit.id : "",
+    "Domain": getBaseDomain(url),
     "Last Path": cleanLastPath(last),
     "Bio Check": isBio ? "Y" : "",
     "First": first,

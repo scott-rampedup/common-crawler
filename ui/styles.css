@@ -604,3 +604,172 @@ code {
     grid-template-columns: 1fr;
   }
 }
+
+/* Green "Search Database" link styled as a button in the top nav (main page) */
+.actions .nav-link {
+  appearance: none;
+  border: none;
+  padding: 12px 18px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 600;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  background: #2563eb;
+  color: #fff;
+}
+.actions .nav-link:hover { background: #1d4ed8; }
+.actions .nav-link.green { background: #16a34a; }
+.actions .nav-link.green:hover { background: #15803d; }
+
+/* Action buttons relocated next to Clear domains / FIND CONTACTS */
+.action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* =====================================================================
+   Search Database page (search.html) — full-bleed 25% / 75% split
+   ===================================================================== */
+body.search-page {
+  margin: 0;
+  background: linear-gradient(180deg, #f8fbff 0%, #eef4fb 100%);
+}
+
+.search-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.search-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 22px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  flex-wrap: wrap;
+}
+.search-header .brand h1 { font-size: 1.4rem; }
+.search-header .app-logo { height: 42px; }
+
+.nav-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.nav-actions .nav-link {
+  appearance: none;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  color: #111827;
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.95rem;
+}
+.nav-actions .nav-link:hover { background: #eef2ff; }
+.nav-actions .nav-link.green { background: #16a34a; color: #fff; border-color: #16a34a; }
+.nav-actions .nav-link.green:hover { background: #15803d; }
+.nav-actions .nav-link.active { box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.18); }
+
+.search-layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 25% 75%;
+  gap: 16px;
+  padding: 16px 22px 22px;
+  min-height: 0;          /* allow children to scroll instead of growing the page */
+}
+
+.search-panel {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.search-panel h2 { margin: 0 0 2px; font-size: 1.1rem; }
+.search-panel label { font-size: 0.9rem; gap: 6px; }
+.search-panel textarea { min-height: 84px; }
+.search-panel .checkbox-label { margin-top: 4px; }
+
+.search-actions { display: flex; gap: 10px; margin-top: 2px; }
+.search-actions button {
+  flex: 1;
+  appearance: none;
+  border: none;
+  border-radius: 10px;
+  padding: 11px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.search-actions .primary { background: #2563eb; color: #fff; }
+.search-actions .primary:hover { background: #1d4ed8; }
+.search-actions .ghost { background: #f1f5f9; color: #111827; }
+.search-actions .ghost:hover { background: #e2e8f0; }
+
+.search-hint { margin: 0; color: #6b7280; font-size: 0.82rem; }
+
+.results-panel {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.results-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e5e7eb;
+  flex-wrap: wrap;
+}
+.results-toolbar p { margin: 0; color: #4b5563; }
+.toolbar-actions { display: flex; align-items: center; gap: 14px; }
+.toolbar-actions .selected-info { color: #16a34a; font-weight: 700; font-size: 0.9rem; }
+.toolbar-actions .primary {
+  appearance: none;
+  border: none;
+  background: #16a34a;
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.toolbar-actions .primary:hover { background: #15803d; }
+
+.results-scroll {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+.results-panel .pagination { border-top: 1px solid #e5e7eb; }
+
+/* checkbox column */
+.check-col {
+  width: 44px;
+  text-align: center;
+  padding-left: 14px !important;
+  padding-right: 8px !important;
+}
+.row-check, .all-check { width: 16px; height: 16px; cursor: pointer; accent-color: #16a34a; }
+tbody tr.selected { background: #ecfdf5 !important; }
+
+@media (max-width: 900px) {
+  .search-shell { height: auto; min-height: 100vh; }
+  .search-layout { grid-template-columns: 1fr; }
+}
