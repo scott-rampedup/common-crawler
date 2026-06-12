@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign In · Common Crawler</title>
+  <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+  <link rel="stylesheet" href="/ui/styles.css" />
+</head>
+<body class="auth-page">
+  <div class="auth-card">
+    <img class="auth-logo" src="/ui/logo.png" alt="Common Crawler" onerror="this.style.display='none'" />
+    <h1>Sign in</h1>
+    <form id="loginForm" class="auth-form" autocomplete="on">
+      <label>Username
+        <input id="username" type="text" autocomplete="username" required />
+      </label>
+      <label>Password
+        <input id="password" type="password" autocomplete="current-password" required />
+      </label>
+      <p id="msg" class="auth-msg"></p>
+      <button class="primary" type="submit">Sign in</button>
+    </form>
+    <div class="auth-links">
+      <a href="/signup">Create an account</a>
+      <a href="/forgot">Forgot password?</a>
+    </div>
+    <p class="auth-legal">
+      <a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Use</a>
+    </p>
+  </div>
+  <script src="/ui/login.js"></script>
+</body>
+</html>

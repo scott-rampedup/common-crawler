@@ -2,3 +2,47 @@
 # Any record whose (cleaned) email matches a line here is dropped.
 # Lines starting with "#" and blank lines are ignored.
 # Add addresses below:
+a.smith@example.com.au
+accommodations-ext@fb.com
+eben@eyebytes.com
+email@example.com
+example@company.com
+example@mysite.com
+impallari@gmail.com
+info@example.com
+info@yourdomain.com
+info@yourwebsite.com
+jane.smith@test.com.au
+jane@doe.com
+john@doe.com
+matt@pixelspread.com
+micah@micahrich.com
+privacidad@santandervidaygenerales.es
+report@phishing.gov.uk
+someone@yoursite.com
+team@latofonts.com
+youremail@emaildomain.com
+youremail@internet.com
+zekisuquc419@gmail.com
+dolnovam@mail.ru
+xrumer888@outlook.com
+yourmail344@gmail.com
+yourmail@gmail.com
+ojjames2023@gmail.com
+jacksrenome@gmx.com
+clark.digihub@outlook.com
+tacusol-6816@mail.ru
+bposervices1@outlook.com
+xroomer1st@gmail.com
+eprovbelwha@mail.ru
+creativeteamhire@outlook.com
+vitya-kondratev-1969@inbox.ru
+prosavmobi1981@mail.ru
+dataentry756@outlook.com
+brandbuildingassistance@outlook.com
+techops@codesspheres.com
+3mrhahn@gmail.com
+stapuntril1990@mail.ru
+mail@example.com
+john@example.com
+john.doe@example.com

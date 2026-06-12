@@ -13,6 +13,7 @@
     "node": ">=22.5"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.104.1",
     "google-libphonenumber": "^3.2.44",
     "libphonenumber-geo-carrier": "^2.0.0",
     "http-proxy-agent": "^7.0.2",

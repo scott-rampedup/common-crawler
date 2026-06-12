@@ -13,6 +13,9 @@ contacts.json.tmp
 contacts.db
 contacts.db-wal
 contacts.db-shm
+users.db
+users.db-wal
+users.db-shm
 
 # spreadsheets contain some personal contacts/names — keep out of the repo
 *.xlsx

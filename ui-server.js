@@ -11,9 +11,10 @@ const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords } = req
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
 // Email blocklist (addresses to drop). Loaded once; edit email-blocklist.txt to update.
+let blocklist = new Set();
 try {
-  const bl = loadEmailBlocklist(path.join(__dirname, 'email-blocklist.txt'));
-  console.log(`Email blocklist: ${bl.size} address(es).`);
+  blocklist = loadEmailBlocklist(path.join(__dirname, 'email-blocklist.txt'));
+  console.log(`Email blocklist: ${blocklist.size} address(es).`);
 } catch (e) { /* none */ }
 
 // First-name -> gender lookup, loaded once at startup (committed CSV ships in the image).
@@ -87,6 +88,51 @@ try { fs.mkdirSync(JOBS_DIR, { recursive: true }); } catch (e) { /* ignore */ }
 // central, de-duplicated contacts database (every finished job merges into it)
 const { makeDb } = require('./db');
 const db = makeDb(DATA_DIR);
+const aiEnrich = require('./ai-enrich');
+
+// ---- user accounts / roles / sessions ----
+const { makeUsers } = require('./users');
+const users = makeUsers(DATA_DIR);
+{
+  const seeded = users.seedDefaultAdmin();
+  if (seeded && seeded.generated) {
+    console.log('\n========================================================================');
+    console.log(`  Default admin created -> username: "${seeded.username}"   password: "${seeded.password}"`);
+    console.log('  Sign in and change this password right away.');
+    console.log('========================================================================\n');
+  } else if (seeded) {
+    console.log(`Seeded admin "${seeded.username}" from ADMIN_USERNAME/ADMIN_PASSWORD secrets.`);
+  }
+}
+
+// One-time (idempotent) purge: remove any already-stored contacts whose email is on the
+// blocklist. New crawls already drop blocklisted emails at ingestion; this catches ones
+// stored before they were added to the list.
+try {
+  const before = db.count();
+  for (const e of blocklist) db.deleteByEmail(e);
+  const removed = before - db.count();
+  if (removed) console.log(`Email blocklist: removed ${removed} existing contact(s).`);
+} catch (e) { /* ignore */ }
+
+// One-time background backfill: fill missing Phone Location / Phone 2 Location for existing
+// records (toll-free numbers, non-E.164 phones, and the newer Phone 2 Location field). Runs
+// async so it never blocks server startup.
+(async () => {
+  try {
+    const need = [];
+    db.each({}, (rec) => {
+      if (!rec['Phone Location'] || (rec['Phone 2'] && !rec['Phone 2 Location'])) need.push(rec);
+    });
+    if (!need.length) return;
+    await geocodeRecords(need);
+    const items = need
+      .map((r) => ({ email: r['Email Address'], loc1: r['Phone Location'], loc2: r['Phone 2 Location'] }))
+      .filter((x) => x.loc1 || x.loc2);
+    const filled = db.backfillLocations(items);
+    if (filled) console.log(`Phone geocode backfill: filled ${filled} location(s) across ${need.length} record(s).`);
+  } catch (e) { console.warn('Phone geocode backfill failed:', e.message); }
+})();
 
 const jobs = new Map();   // id -> { ...meta, recordsByEmail: Map }
 
@@ -355,13 +401,160 @@ function sendJson(res, data) {
   res.end(payload);
 }
 
+// ---- session / auth helpers ----
+const jsonHdr = { 'Content-Type': 'application/json; charset=utf-8' };
+const SESSION_COOKIE = 'sid';
+const RANK_ANALYST = users.roleRank('analyst');
+const RANK_ADMIN = users.roleRank('admin');
+
+function parseCookies(req) {
+  const out = {};
+  for (const part of String(req.headers['cookie'] || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return out;
+}
+function currentUser(req) { return users.sessionUser(parseCookies(req)[SESSION_COOKIE]); }
+function setSessionCookie(res, token) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${60 * 60 * 24 * 14}`);
+}
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`);
+}
+function readJsonBody(req, cb) {
+  let body = '';
+  req.on('data', (c) => { body += c; if (body.length > 2e6) req.destroy(); });
+  req.on('end', () => { try { cb(JSON.parse(body || '{}')); } catch (e) { cb(null); } });
+}
+function jsonErr(res, code, msg) { res.writeHead(code, jsonHdr); res.end(JSON.stringify({ error: msg })); }
+
+// Admin-only API (the request handler already verified the admin role before calling this).
+function handleAdmin(req, res, p) {
+  let m = p.match(/^\/api\/admin\/pages\/(privacy|terms)$/);
+  if (m) {
+    const key = m[1];
+    if (req.method === 'GET') { sendJson(res, { key, content: users.getSetting(key) || '' }); return; }
+    if (req.method === 'POST') {
+      readJsonBody(req, (b) => {
+        if (!b || typeof b.content !== 'string') return jsonErr(res, 400, 'Bad request');
+        users.setSetting(key, b.content); sendJson(res, { ok: true });
+      });
+      return;
+    }
+  }
+  if (p === '/api/admin/users' && req.method === 'GET') { sendJson(res, users.listUsers()); return; }
+  if (p === '/api/admin/users' && req.method === 'POST') {
+    readJsonBody(req, (b) => {
+      if (!b) return jsonErr(res, 400, 'Bad request');
+      const r = users.createUser({
+        username: b.username, password: b.password, role: b.role, active: b.active !== false,
+        first: b.first, last: b.last, company: b.company, title: b.title, email: b.email, phone: b.phone,
+      });
+      if (!r.ok) return jsonErr(res, 400, r.error);
+      sendJson(res, r.user);
+    });
+    return;
+  }
+  m = p.match(/^\/api\/admin\/users\/(\d+)\/(activate|deactivate|promote|demote|delete|reset-password)$/);
+  if (m && req.method === 'POST') {
+    const id = Number(m[1]); const action = m[2];
+    const t = users.getById(id);
+    if (!t) return jsonErr(res, 404, 'User not found');
+    const lastAdmin = t.role === 'admin' && t.active && users.activeAdminCount() <= 1;
+    if (action === 'activate') users.setActive(id, true);
+    else if (action === 'deactivate') { if (lastAdmin) return jsonErr(res, 400, 'Cannot deactivate the last active admin.'); users.setActive(id, false); users.destroyUserSessions(id); }
+    else if (action === 'promote') users.setRole(id, t.role === 'user' ? 'analyst' : 'admin');
+    else if (action === 'demote') { if (lastAdmin) return jsonErr(res, 400, 'Cannot demote the last active admin.'); users.setRole(id, t.role === 'admin' ? 'analyst' : 'user'); }
+    else if (action === 'delete') { if (lastAdmin) return jsonErr(res, 400, 'Cannot delete the last active admin.'); users.deleteUser(id); }
+    else if (action === 'reset-password') { sendJson(res, { ok: true, tempPassword: users.resetPassword(id) }); return; }
+    sendJson(res, { ok: true });
+    return;
+  }
+  jsonErr(res, 404, 'Not found');
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   console.log(`[${new Date().toISOString()}] ${req.method} ${url.pathname}`);
 
-  if (!checkAuth(req, res)) return;   // gate everything behind the password when configured
+  // ---------------- authentication + role gate ----------------
+  const me = currentUser(req);
+  const p = url.pathname;
+  const PUBLIC_PATH = (
+    p.startsWith('/ui/') || p === '/favicon.ico' ||
+    p === '/login' || p === '/signup' || p === '/forgot' || p === '/privacy' || p === '/terms' ||
+    p === '/api/auth/login' || p === '/api/auth/signup' || p === '/api/auth/logout' || p === '/api/auth/me' ||
+    (p.startsWith('/api/pages/') && req.method === 'GET')
+  );
+  if (!PUBLIC_PATH && !me) {
+    if (p.startsWith('/api/')) jsonErr(res, 401, 'Authentication required');
+    else { res.writeHead(302, { Location: '/login' }); res.end(); }
+    return;
+  }
+  const rank = me ? users.roleRank(me.role) : -1;
+  const isAnalyst = rank >= RANK_ANALYST;
+  const isAdmin = rank >= RANK_ADMIN;
+
+  // ---- public auth + legal pages ----
+  if (p === '/login') { serveStaticFile(res, path.join(PUBLIC_DIR, 'login.html')); return; }
+  if (p === '/signup') { serveStaticFile(res, path.join(PUBLIC_DIR, 'signup.html')); return; }
+  if (p === '/forgot') { serveStaticFile(res, path.join(PUBLIC_DIR, 'forgot.html')); return; }
+  if (p === '/privacy' || p === '/terms') { serveStaticFile(res, path.join(PUBLIC_DIR, 'legal.html')); return; }
+
+  // ---- public page content (Privacy Policy / Terms of Use text) ----
+  if (p.startsWith('/api/pages/') && req.method === 'GET') {
+    const key = p.slice('/api/pages/'.length);
+    if (key === 'privacy' || key === 'terms') {
+      sendJson(res, { key, title: key === 'privacy' ? 'Privacy Policy' : 'Terms of Use', content: users.getSetting(key) || '' });
+    } else { jsonErr(res, 404, 'Not found'); }
+    return;
+  }
+
+  // ---- auth API ----
+  if (p === '/api/auth/me') { if (me) sendJson(res, users.pub(me)); else jsonErr(res, 401, 'Not signed in'); return; }
+  if (p === '/api/auth/login' && req.method === 'POST') {
+    readJsonBody(req, (b) => {
+      if (!b) return jsonErr(res, 400, 'Bad request');
+      const row = users.verify(b.username, b.password);
+      if (!row) return jsonErr(res, 401, 'Invalid username or password.');
+      if (!row.active) return jsonErr(res, 403, 'Your account is pending administrator activation.');
+      setSessionCookie(res, users.createSession(row.id));
+      sendJson(res, users.pub(row));
+    });
+    return;
+  }
+  if (p === '/api/auth/logout' && req.method === 'POST') {
+    users.destroySession(parseCookies(req)[SESSION_COOKIE]); clearSessionCookie(res); sendJson(res, { ok: true });
+    return;
+  }
+  if (p === '/api/auth/signup' && req.method === 'POST') {
+    readJsonBody(req, (b) => {
+      if (!b) return jsonErr(res, 400, 'Bad request');
+      if (!b.agree) return jsonErr(res, 400, 'You must accept the Privacy Policy and Terms of Use to sign up.');
+      const r = users.createUser({
+        username: b.username, password: b.password, role: 'user', active: 0,
+        first: b.first, last: b.last, company: b.company, title: b.title, email: b.email, phone: b.phone,
+      });
+      if (!r.ok) return jsonErr(res, 400, r.error);
+      console.log(`New signup pending activation: "${r.user.username}" (${r.user.email || 'no email'})`);
+      sendJson(res, { ok: true });
+    });
+    return;
+  }
+
+  // ---- admin page + API (admin only) ----
+  if (p === '/admin') {
+    if (!isAdmin) { res.writeHead(302, { Location: '/search' }); res.end(); return; }
+    serveStaticFile(res, path.join(PUBLIC_DIR, 'admin.html')); return;
+  }
+  if (p.startsWith('/api/admin/')) {
+    if (!isAdmin) return jsonErr(res, 403, 'Admin access required');
+    handleAdmin(req, res, p); return;
+  }
 
   if (url.pathname === '/' || url.pathname === '/index.html') {
+    if (!isAnalyst) { res.writeHead(302, { Location: '/search' }); res.end(); return; }   // 'user' role -> Search only
     serveStaticFile(res, path.join(PUBLIC_DIR, 'index.html'));
     return;
   }
@@ -378,6 +571,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (url.pathname === '/api/results') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     fs.readFile(RESULTS_CSV, 'utf8', (err, csvText) => {
       if (err) {
         res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -397,6 +591,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (url.pathname === '/api/search' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', async () => {
@@ -444,6 +639,7 @@ const server = http.createServer((req, res) => {
   // ---- background jobs API ----
   // GET /api/jobs  -> list of job summaries (newest first)
   if (url.pathname === '/api/jobs' && req.method === 'GET') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     const list = [...jobs.values()].map(jobSummary)
       .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
     sendJson(res, list);
@@ -452,6 +648,7 @@ const server = http.createServer((req, res) => {
 
   // POST /api/jobs  { domains: [...], directoryFilter? }  -> start a job
   if (url.pathname === '/api/jobs' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
@@ -488,6 +685,7 @@ const server = http.createServer((req, res) => {
       emailType: q.get('emailType') || '', phoneType: q.get('phoneType') || '',
       gender: q.get('gender') || 'na', domain: q.get('domain') || '',
       domains: parseDomainsParam(q.get('domains')), position: q.get('position') || '',
+      type: q.get('type') || '',
       linkedin: q.get('linkedin') === '1', sort: q.get('sort') || '', dir: q.get('dir'),
     }));
     return;
@@ -499,6 +697,7 @@ const server = http.createServer((req, res) => {
       emailType: q.get('emailType') || '', phoneType: q.get('phoneType') || '',
       gender: q.get('gender') || 'na', domain: q.get('domain') || '',
       domains: parseDomainsParam(q.get('domains')), position: q.get('position') || '',
+      type: q.get('type') || '',
       linkedin: q.get('linkedin') === '1',
     };
     res.writeHead(200, {
@@ -512,9 +711,111 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // POST /api/db/update  { edits: [{ email, updates }] }  -> apply manual edits to records
+  if (url.pathname === '/api/db/update' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const edits = Array.isArray(payload.edits) ? payload.edits : [];
+        const results = edits.map((e) => {
+          try { return { email: e.email, ...db.updateRecord(e.email, e.updates || {}) }; }
+          catch (err) { return { email: e.email, ok: false, error: err.message || 'update failed' }; }
+        });
+        sendJson(res, { results });
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: e.message || 'Bad request' }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/db/delete  { emails: [...] }  -> permanently delete records from the DB
+  if (url.pathname === '/api/db/delete' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const emails = (Array.isArray(payload.emails) ? payload.emails : [])
+          .map((e) => String(e || '').trim().toLowerCase()).filter(Boolean);
+        if (!emails.length) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: 'No records selected' }));
+          return;
+        }
+        const before = db.count();
+        for (const e of emails) db.deleteByEmail(e);
+        sendJson(res, { deleted: before - db.count() });
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: e.message || 'Bad request' }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/db/ai-enrich  { emails: [...] }  -> Claude cleans/infers fields, auto-applies
+  if (url.pathname === '/api/db/ai-enrich' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', async () => {
+      try {
+        if (!aiEnrich.isConfigured()) {
+          res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: 'AI Search is not configured (ANTHROPIC_API_KEY is not set on the server).' }));
+          return;
+        }
+        const payload = JSON.parse(body || '{}');
+        const emails = (Array.isArray(payload.emails) ? payload.emails : [])
+          .map((e) => String(e || '').trim().toLowerCase()).filter(Boolean);
+        if (!emails.length) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: 'No records selected' }));
+          return;
+        }
+        // Load fresh records from the DB (don't trust client-sent field values).
+        const records = emails.map((e) => db.getByEmail(e)).filter(Boolean);
+        const enriched = await aiEnrich.enrichMany(records, { concurrency: 4 });
+        const results = [];
+        for (let k = 0; k < records.length; k++) {
+          const rec = records[k];
+          const email = String(rec['Email Address'] || '').trim().toLowerCase();
+          const en = enriched[k] || { ok: false, error: 'no result' };
+          if (!en.ok) { results.push({ email, ok: false, error: en.error }); continue; }
+          const fields = Object.keys(en.updates || {});
+          if (!fields.length) { results.push({ email, ok: true, changed: 0, changes: {} }); continue; }
+          try {
+            const upd = db.updateRecord(email, en.updates);   // auto-apply
+            results.push({
+              email, ok: upd.ok, changed: fields.length, changes: en.changes,
+              newEmail: en.updates['Email Address'] || undefined,
+            });
+          } catch (err) {
+            results.push({ email, ok: false, error: err.message || 'apply failed' });
+          }
+        }
+        sendJson(res, { results });
+      } catch (e) {
+        console.error('ai-enrich error:', e);
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: e.message || 'AI Search failed' }));
+        }
+      }
+    });
+    return;
+  }
+
   // routes that target a single job: /api/jobs/:id , /api/jobs/:id/records , /api/jobs/:id/results.csv , /api/jobs/:id/resume
   const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)(\/records|\/results\.csv|\/resume|\/stop)?$/);
   if (jobMatch) {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     const id = jobMatch[1];
     const sub = jobMatch[2] || '';
     const job = jobs.get(id);

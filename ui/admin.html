@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin · Common Crawler</title>
+  <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+  <link rel="apple-touch-icon" href="/ui/logo.png" />
+  <link rel="stylesheet" href="/ui/styles.css" />
+</head>
+<body class="search-page admin-page">
+  <div class="search-shell">
+    <header class="search-header">
+      <div class="brand">
+        <img class="app-logo" src="/ui/logo.png" alt="Common Crawler logo"
+             onerror="this.onerror=null;this.src='/ui/favicon.svg';" />
+        <h1>Common Crawler</h1>
+      </div>
+      <nav class="nav-actions">
+        <a class="nav-link" href="/">Master database</a>
+        <a class="nav-link green" href="/search">🔍 Search Database</a>
+        <a class="nav-link active" href="/admin" aria-current="page">⚙ Admin</a>
+      </nav>
+    </header>
+
+    <main class="admin-main">
+      <section class="admin-section">
+        <h2>Users <span id="pendingBadge" class="pending-badge"></span></h2>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead><tr>
+              <th>Username</th><th>Name</th><th>Company</th><th>Title</th><th>Email</th>
+              <th>Phone</th><th>Role</th><th>Status</th><th>Actions</th>
+            </tr></thead>
+            <tbody id="usersBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="admin-section">
+        <h2>Create a user</h2>
+        <form id="createForm" class="admin-create">
+          <input id="c-username" placeholder="Username" required />
+          <input id="c-password" placeholder="Password" required />
+          <select id="c-role"><option value="user">user</option><option value="analyst">analyst</option><option value="admin">admin</option></select>
+          <input id="c-first" placeholder="First name" />
+          <input id="c-last" placeholder="Last name" />
+          <input id="c-company" placeholder="Company" />
+          <input id="c-title" placeholder="Title" />
+          <input id="c-email" placeholder="Email" />
+          <input id="c-phone" placeholder="Phone" />
+          <label class="admin-active"><input id="c-active" type="checkbox" checked /> Active</label>
+          <button class="primary" type="submit">Create user</button>
+        </form>
+        <p id="createMsg" class="admin-msg"></p>
+      </section>
+
+      <section class="admin-section">
+        <h2>Page content</h2>
+        <p class="admin-hint">Edit the public legal pages shown at
+          <a href="/privacy" target="_blank" rel="noopener">/privacy</a> and
+          <a href="/terms" target="_blank" rel="noopener">/terms</a> (no login required to view them).</p>
+        <div class="admin-pages">
+          <div class="admin-page-edit">
+            <label>Privacy Policy</label>
+            <textarea id="page-privacy" rows="16"></textarea>
+            <button class="primary" data-page="privacy" type="button">Save Privacy Policy</button>
+          </div>
+          <div class="admin-page-edit">
+            <label>Terms of Use</label>
+            <textarea id="page-terms" rows="16"></textarea>
+            <button class="primary" data-page="terms" type="button">Save Terms of Use</button>
+          </div>
+        </div>
+        <p id="pagesMsg" class="admin-msg"></p>
+      </section>
+    </main>
+  </div>
+
+  <script src="/ui/nav.js"></script>
+  <script src="/ui/admin.js"></script>
+</body>
+</html>

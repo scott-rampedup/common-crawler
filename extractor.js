@@ -95,9 +95,6 @@ const BIO_DIR_RAW = [
   "teams","the-staff","the-team","university-directory","unser-team","ymca-staff","your-team",
 ];
 const BIO_DIRS = new Set(BIO_DIR_RAW.map((s) => normalizeForMatching(s)).filter(Boolean));
-const COMMON_TITLES = ["chief executive officer","ceo","founder","co-founder","cto","cfo","coo","cmo",
-  "president","vice president","vp","director","head of","manager","lead","engineer","designer",
-  "account executive","partner","associate","analyst","consultant","specialist","coordinator","owner"];
 
 // ---------------------------------------------------------------- text utils
 const fromCP = (n, fallback) => { try{ return (n > 0 && n <= 0x10FFFF) ? String.fromCodePoint(n) : fallback; }catch{ return fallback; } };
@@ -249,27 +246,11 @@ function parseCsvRow(row){
   cols.push(cur);
   return cols;
 }
-// "marcus-patel" / "marcus.patel" / "marcus_patel" -> {first,last}
-// Tokens never used AS the first name (use the next token after them).
-const FIRST_NAME_SKIP = new Set(["about","bio","dr","mr","mrs","ms","hon","rev","prof"]);
-// Tokens never used AS the last name (use the previous token before them).
-const LAST_NAME_SKIP = new Set(["phd","md","esq","cpa","facs","prof","sr","jr","iii","iv","mba"]);
-
-function nameFromSlug(slug){
-  const toks = String(slug||"").split(/[-_.+%20\s]+/).filter(t=>/^[a-z]+$/i.test(t));
-  if(!toks.length) return {first:"",last:""};
-  // first name = first token that isn't an honorific/title prefix
-  let fi = 0;
-  while(fi < toks.length && FIRST_NAME_SKIP.has(toks[fi].toLowerCase())) fi++;
-  if(fi >= toks.length) fi = 0;                 // all skipped -> fall back to the first token
-  // last name = last token that isn't a credential/suffix
-  let li = toks.length - 1;
-  while(li >= 0 && LAST_NAME_SKIP.has(toks[li].toLowerCase())) li--;
-  if(li < 0) li = toks.length - 1;              // all skipped -> fall back to the last token
-  const first = properCase(toks[fi]);
-  const last = li > fi ? properCase(toks[li]) : "";   // only if a distinct later token remains
-  return { first, last };
-}
+// first/last from a URL slug, e.g. "dr-marcus-patel-bio.html" -> {first:"Marcus",last:"Patel"}.
+// Cleaning (extension strip, separator split, honorific/credential/page-word removal) is shared
+// with AI Search and lives in name-from-path.js.
+const { nameFromPath } = require("./name-from-path");
+function nameFromSlug(slug){ return nameFromPath(slug); }
 
 function inferNameFromSlug(slug, genderMap){
   // The slug is already gated as a person elsewhere (looksLikePersonSlug /
@@ -511,9 +492,56 @@ function findImage(html, url){
   const src = (cand && cand[0].match(/\bsrc\s*=\s*["']([^"']+)["']/i)) || html.match(/<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/i);
   return src ? toAbs(src[1], url) : "";
 }
+// ---- Position dictionary (data/position-titles.json) -----------------------
+// ~6,300 observed job titles, pre-sorted longest-first. findPosition() scans the
+// list and returns the FIRST title that appears as a STANDALONE phrase in the
+// page's Title + Description. Because the list is longest-first, the most specific
+// title wins: "Vice President of Sales" before "Vice President" before "President";
+// "Director of Information Technology" before "Director".
+//
+// Matching is whole-token only (each candidate and the haystack are normalized to
+// single-space-delimited, space-padded strings, then tested with includes(" term ")).
+// That means a title is NEVER matched inside a larger word — "CTO" can't match
+// inside "Dire-cto-r" or "Vi-cto-r". Short all-caps acronyms (<=3 letters: CEO,
+// CTO, VP, IT, HR, AP, ...) are matched CASE-SENSITIVELY and only when they appear
+// in UPPERCASE in the source, so ordinary prose ("...it is...", "...hr team...")
+// never yields a false Position.
+function buildPositionMatchers(){
+  let list = [];
+  try { list = JSON.parse(fs.readFileSync(path.join(__dirname, "data", "position-titles.json"), "utf8")); }
+  catch { list = []; }
+  const matchers = [];
+  for(const title of list){
+    const letters = title.replace(/[^A-Za-z]/g, "");
+    const isAcronym = letters.length > 0 && letters.length <= 3 && letters === letters.toUpperCase();
+    // acronyms: keep original case, only collapse punctuation; others: lowercase + &->and
+    const key = isAcronym
+      ? " " + title.replace(/[^A-Za-z0-9]+/g, " ").trim().replace(/\s+/g, " ") + " "
+      : " " + title.toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ") + " ";
+    if(key.trim()) matchers.push({ title, key, firstToken: key.trim().split(" ")[0], cased: isAcronym });
+  }
+  return matchers;
+}
+let POSITION_MATCHERS = null;
+
 function findPosition(title, description){
-  const hay = (title+" "+description).toLowerCase();
-  for(const t of COMMON_TITLES){ if(hay.includes(t)) return properCase(t).replace(/\bCeo\b/,"CEO").replace(/\bVp\b/,"VP").replace(/\bCto\b/,"CTO"); }
+  if(!POSITION_MATCHERS) POSITION_MATCHERS = buildPositionMatchers();
+  const text = String(title || "") + " " + String(description || "");
+  // Two space-padded, single-spaced haystacks: lowercased for normal titles,
+  // original-case for acronyms. Padding + single spaces make includes() a
+  // standalone (whole-token) test.
+  const lowerHay = " " + text.toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ") + " ";
+  const casedHay = " " + text.replace(/[^A-Za-z0-9]+/g, " ").trim().replace(/\s+/g, " ") + " ";
+  // first-token sets prune the ~6,300 candidates to the few worth an includes() check
+  const lowerTokens = new Set(lowerHay.trim().split(" "));
+  const casedTokens = new Set(casedHay.trim().split(" "));
+  for(const m of POSITION_MATCHERS){
+    if(m.cased){
+      if(casedTokens.has(m.firstToken) && casedHay.includes(m.key)) return m.title;
+    } else {
+      if(lowerTokens.has(m.firstToken) && lowerHay.includes(m.key)) return m.title;
+    }
+  }
   return "";
 }
 
@@ -617,6 +645,7 @@ function extractRecord(html, url, deps = {}){
     "Phone Location": phoneLocation,
     "Phone 2": phone2,
     "Phone 2 Type": phone2Type,
+    "Phone 2 Location": "",
   };
 }
 
@@ -627,6 +656,8 @@ function defaultGeocode(phone){
   const d = String(phone).replace(/\D/g,""); const ten = d.length===11&&d[0]==="1"?d.slice(1):d;
   return AREA_REGION[Number(ten.slice(0,3))] || "";
 }
+
+const { countryForDomain } = require("./tld-lookup");   // domain-TLD country (Phone Location fallback)
 
 // ---- real phone geocoding via libphonenumber (City, Region, Country) ----
 // Lazy-loaded + wrapped so the engine still runs if the libs aren't installed.
@@ -643,20 +674,27 @@ function loadGeoLibs(){
   }catch(e){ _phoneUtil = null; _geocoder = null; }
 }
 
-// "+19169291481" -> "Sacramento, CA, United States" ("" if not geocodable / non-geographic)
-async function geocodePhone(e164){
+// "+19169291481" -> "Sacramento, CA, United States". Normalizes non-E.164 input first, and
+// always returns at least the country for a valid number (incl. toll-free, which has no area).
+// "" only when the number can't be parsed at all. `cc` = default country calling code.
+async function geocodePhone(raw, cc){
   loadGeoLibs();
-  if(!_phoneUtil || !_geocoder || !e164) return "";
+  if(!_phoneUtil || !_geocoder || !raw) return "";
+  let e164 = String(raw).trim();
+  if(!e164.startsWith("+")) e164 = toE164(e164, cc || "1");   // accept formatted / national numbers
+  if(!e164) return "";
   try{
     const num = _phoneUtil.parse(e164);
-    if(_PNT && _phoneUtil.getNumberType(num) === _PNT.TOLL_FREE) return "";   // toll-free has no location
-    const cc = num.getCountryCode().toString();
-    const nn = num.getNationalNumber().toString();
     const region = _phoneUtil.getRegionCodeForNumber(num);
-    const desc = await _geocoder({ nationalNumber: nn, countryCallingCode: cc }, "en");  // "City, ST" / region
     let country = "";
     try{ country = region ? _regionName.of(region) : ""; }catch{ country = region || ""; }
-    return [desc, country].filter(Boolean).join(", ");
+    let desc = "";
+    if(!(_PNT && _phoneUtil.getNumberType(num) === _PNT.TOLL_FREE)){   // toll-free -> country only
+      const ccd = num.getCountryCode().toString();
+      const nn = num.getNationalNumber().toString();
+      try{ desc = await _geocoder({ nationalNumber: nn, countryCallingCode: ccd }, "en") || ""; }catch{ desc = ""; }
+    }
+    return [desc, country].filter(Boolean).join(", ") || country;
   }catch(e){ return ""; }
 }
 
@@ -664,14 +702,16 @@ async function geocodePhone(e164){
 // Async; run as a post-pass after collection. Leaves the existing value if no result.
 async function geocodeRecords(records){
   loadGeoLibs();
-  if(!_phoneUtil || !_geocoder) return records;   // libs unavailable -> keep existing locations
   const cache = new Map();
+  const lookup = async (raw, cc) => { const k = cc + "|" + raw; if(!cache.has(k)) cache.set(k, await geocodePhone(raw, cc)); return cache.get(k); };
   for(const r of records){
+    const cc = countryCodeFromDomain(r["Domain"]);   // default calling code for non-E.164 numbers
     const base = basePhone(r["Phone"]);
-    if(!base) continue;
-    if(!cache.has(base)) cache.set(base, await geocodePhone(base));
-    const loc = cache.get(base);
+    let loc = base ? await lookup(base, cc) : "";
+    if(!loc) loc = countryForDomain(r["Domain"]);    // fall back to the domain's TLD country
     if(loc) r["Phone Location"] = loc;
+    const base2 = basePhone(r["Phone 2"]);
+    if(base2){ const loc2 = await lookup(base2, cc); if(loc2) r["Phone 2 Location"] = loc2; }
   }
   return records;
 }
@@ -785,7 +825,7 @@ function loadDirectoryRules(filePath){
 
 module.exports = { extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules,
   cleanEmail, setEmailBlocklist, loadEmailBlocklist, analyzePhones, splitExtension,
-  geocodeRecords, geocodePhone };
+  geocodeRecords, geocodePhone, findPosition };
 
 // ---------------------------------------------------------------- self-test
 if(require.main === module){

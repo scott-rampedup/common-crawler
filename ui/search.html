@@ -26,6 +26,7 @@
       <!-- LEFT: search controls (25%) -->
       <aside class="search-panel">
         <h2>Search</h2>
+        <div class="search-fields">
         <label>
           Search (any field)
           <input id="f-search" type="search" placeholder="Name, email, company…" />
@@ -47,6 +48,10 @@
           <select id="f-emailType"><option value="">All email types</option></select>
         </label>
         <label>
+          Domain Type
+          <select id="f-type"><option value="">All types</option></select>
+        </label>
+        <label>
           Gender
           <select id="f-gender">
             <option value="na">N/A (all results)</option>
@@ -60,6 +65,7 @@
           <input id="f-linkedin" type="checkbox" />
           Must have LinkedIn URL
         </label>
+        </div>
         <div class="search-actions">
           <button id="applyBtn" class="primary" type="button">Search</button>
           <button id="clearBtn" class="ghost" type="button">Clear</button>
@@ -73,6 +79,9 @@
           <p id="resultsSummary">Loading…</p>
           <div class="toolbar-actions">
             <span id="selectedInfo" class="selected-info"></span>
+            <button id="editBtn" class="ghost" type="button" disabled>✏ Edit</button>
+            <button id="aiBtn" class="ghost" type="button" disabled>✨ AI Search</button>
+            <button id="deleteBtn" class="danger" type="button" disabled>🗑 Delete</button>
             <button id="downloadBtn" class="primary" type="button">⬇ Download CSV</button>
           </div>
         </div>
@@ -93,6 +102,9 @@
     </div>
   </div>
 
+  <div id="modalRoot"></div>
+
+  <script src="/ui/nav.js"></script>
   <script src="/ui/search.js"></script>
 </body>
 </html>
