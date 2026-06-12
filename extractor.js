@@ -28,6 +28,7 @@ const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib");
 const { classifyLineType } = require("./wireless-block-classifier");
+const { intlMobileType } = require("./intl-mobile");
 
 // ---------------------------------------------------------------- config
 const FREE_DOMAINS = new Set(["gmail.com","yahoo.com","hotmail.com","outlook.com",
@@ -597,13 +598,17 @@ function extractRecord(html, url, deps = {}){
   if(isBio && tels.length && wireless){
     const cc = countryCodeFromDomain(getBaseDomain(url));   // country from the domain TLD (default US)
     const a = splitExtension(tels[0]);
+    const e164a = toE164(a.main, cc);
     phoneType = classifyLineType(a.main, wireless).type;    // classify on the main number (no ext)…
+    if(intlMobileType(e164a)) phoneType = "Mobile";         // …non-NANP mobile by country prefix
     phoneLocation = phoneType === "Toll Free" ? "" : geocode(a.main);
-    phone = toE164(a.main, cc) + (a.ext ? ` ext. ${a.ext}` : "");   // …E.164 + standardized extension
+    phone = e164a + (a.ext ? ` ext. ${a.ext}` : "");        // …E.164 + standardized extension
     if(tels[1]){
       const b = splitExtension(tels[1]);
+      const e164b = toE164(b.main, cc);
       phone2Type = classifyLineType(b.main, wireless).type;
-      phone2 = toE164(b.main, cc) + (b.ext ? ` ext. ${b.ext}` : "");
+      if(intlMobileType(e164b)) phone2Type = "Mobile";
+      phone2 = e164b + (b.ext ? ` ext. ${b.ext}` : "");
     }
   }
 
