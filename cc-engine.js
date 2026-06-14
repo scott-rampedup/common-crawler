@@ -300,6 +300,33 @@ async function queryIndex(domain, { crawl = CRAWL, maxPages = 3, demoMode = fals
   });
 }
 
+// Look up ONE exact URL in the Common Crawl index (not a domain prefix). Returns the latest
+// 200/text-html capture record { url, filename, offset, length, timestamp }, or null if the URL
+// isn't archived. Lets webpage mode read a page from the archive when the live site blocks us
+// (e.g. Cloudflare). Throws only when the index itself is unreachable, so callers can trip a breaker.
+async function queryIndexUrl(url, { crawl = CRAWL, demoMode = false } = {}){
+  if(demoMode){ const recs = generateMockRecords(url, 1); return recs[0] || null; }
+  return ccLimit(async () => {
+    const p = new URLSearchParams({ url, output:"json", fl:"url,filename,offset,length,timestamp" });
+    p.append("filter","=status:200");
+    p.append("filter","=mime-detected:text/html");
+    let res;
+    try{
+      res = await fetchWithRetries(`${INDEX}/${crawl}-index?${p}`, { headers:{ "User-Agent":UA } });
+    }catch(e){
+      if(/\b404\b/.test(String(e && e.message))) return null;   // 404 = not captured in this crawl
+      throw e;                                                  // 5xx / network = genuine index failure
+    }
+    let best = null;
+    for(const line of (await res.text()).split("\n")){
+      if(!line.trim()) continue;
+      let rec; try{ rec = JSON.parse(line); }catch{ continue; }
+      if(!best || (rec.timestamp||"") > (best.timestamp||"")) best = rec;   // keep the latest capture
+    }
+    return best;
+  });
+}
+
 // ---------------------------------------------------------------- candidate selection (offline-testable)
 const CANDIDATE_FALLBACK_RE = /(contact|support|help|team|leadership|about|customer|sales|careers|staff|investor|media|press|board)/i;
 
@@ -487,6 +514,59 @@ async function collectSitemapCandidates(domain, opts, sitemaps, rules){
     }
   }
   return [...out];
+}
+
+// Extract bio/contact page URLs from USER-SUPPLIED sitemaps (uploaded or pasted), as opposed
+// to collectSitemapCandidates which walks a known domain's own sitemaps. Accepts inline XML
+// `content` (a urlset OR a sitemapindex) and/or a list of sitemap `urls` to fetch. Sitemap-index
+// entries are fetched and recursed; gzipped sitemaps are handled transparently by fetchDoc.
+// Returns every <loc> page URL that passes isBioOrContactUrl, deduped — ready to run as a
+// 'webpage' job. (offline-testable via opts._fetchDoc)
+async function extractBioUrlsFromSitemaps(opts = {}){
+  const { content = "", urls = [], directoryRules = {}, genderMap = {}, _fetchDoc = fetchDoc,
+          maxSitemaps = 100, maxUrls = 200000, candidateCap = 100000 } = opts;
+  const bio = new Set();
+  const seenSm = new Set();
+  const queue = [];
+  if(String(content || "").trim()) queue.push({ inline: content });
+  for(const u of urls){ if(u) queue.push({ url: String(u).trim() }); }
+  let fetched = 0, fetchedOk = 0, totalUrls = 0;
+
+  while(queue.length && fetched < maxSitemaps && totalUrls < maxUrls && bio.size < candidateCap){
+    const item = queue.shift();
+    let xml = "";
+    if(item.inline != null){
+      xml = item.inline;
+    } else {
+      if(seenSm.has(item.url)) continue;
+      seenSm.add(item.url);
+      xml = await _fetchDoc(item.url);
+      fetched++;
+      if(xml) fetchedOk++;                           // distinguishes "blocked/empty" from "fetched but no matches"
+      await sleep(120);                              // polite pause between sitemap fetches
+    }
+    if(!xml) continue;
+
+    const { isIndex, locs } = extractSitemapLocs(xml);
+    if(isIndex){                                     // sitemap index -> its <loc>s are child sitemaps
+      for(const loc of locs){
+        if(seenSm.has(loc)) continue;
+        if(seenSm.size + queue.length >= maxSitemaps * 4) break;
+        queue.push({ url: loc });
+      }
+      continue;
+    }
+    for(const loc of locs){                          // urlset -> its <loc>s are page URLs
+      if(totalUrls++ >= maxUrls || bio.size >= candidateCap) break;
+      let abs; try{ abs = new URL(loc); }catch{ continue; }
+      if(abs.protocol !== "http:" && abs.protocol !== "https:") continue;
+      if(LINK_SKIP_EXT.test(abs.pathname)) continue;
+      if(!isBioOrContactUrl(abs.toString(), directoryRules, genderMap)) continue;
+      abs.hash = "";
+      bio.add(abs.toString());
+    }
+  }
+  return { bioUrls: [...bio], totalUrls, sitemapsFetched: fetched, sitemapsOk: fetchedOk };
 }
 
 // Fetch a page over plain HTTP/1.1 using Node's built-in http(s). We deliberately
@@ -806,7 +886,7 @@ async function run(csvPath, opts = {}){
     wirelessPath = (__dirname + "/WIRELESS_BLOCKS.TXT"),
     genderMap = {}, directoryRules = {}, outPath = "cc-results.csv",
     // injectable for testing; default to the real network functions
-    _queryIndex = queryIndex, _fetchWarc = fetchWarc, _liveCrawl = liveCrawl,
+    _queryIndex = queryIndex, _queryIndexUrl = queryIndexUrl, _fetchWarc = fetchWarc, _liveCrawl = liveCrawl,
     liveFallback = true,        // when CC has nothing / 504s, crawl the live site
     shouldStop = () => false,   // cooperative cancel: when true, stop taking new domains
     onRecord = () => {}, onProgress = () => {},
@@ -851,20 +931,41 @@ async function run(csvPath, opts = {}){
     const domainNumber = index + 1;
     onProgress({ status: 'domain-start', domain, index: domainNumber, total: domains.length });
 
-    // ---- WEBPAGE mode: fetch just this URL and extract; no domain crawl / no CC ----
+    // ---- WEBPAGE mode: this exact URL only. Common Crawl archive first (bypasses live
+    //      blocks like Cloudflare), then live-fetch fallback. No domain crawl. ----
     if(mode === 'webpage'){
-      let kept = 0, wnote = "";
-      try{
-        const html = await hostGate(hostOf(domain), () => fetchPage(domain));   // ≤HOST_CONCURRENCY per host
-        if(html){
-          const out = extractRecord(html, domain, { wireless, genderMap, directoryRules, source:"Webpage", timestamp: today });
-          if(out){ ingest(out); kept++; }
-        } else { wnote = "page not reachable"; }
-      }catch(e){ wnote = e.message; }
+      let kept = 0, wnote = "", fromCC = false;
+      // 1) Common Crawl: read the archived snapshot of this exact URL (unless CC is disabled)
+      if(!ccDisabled){
+        try{
+          const rec = await _queryIndexUrl(domain, opts);
+          ccFailStreak = 0;                                          // index responded → it's up
+          if(rec){
+            let html = ""; try{ html = await _fetchWarc(rec, opts); }catch{ html = ""; }
+            if(html){
+              const ts = (rec.timestamp||"").slice(0,8).replace(/(\d{4})(\d{2})(\d{2})/,"$1-$2-$3");
+              const out = extractRecord(html, domain, { wireless, genderMap, directoryRules, source:"Common Crawl", timestamp: ts });
+              if(out){ ingest(out); kept++; fromCC = true; }
+            }
+          }
+        }catch(e){
+          if(++ccFailStreak >= 3){ ccDisabled = true; console.log("(Common Crawl unreachable — webpage mode falling back to live only)"); }
+        }
+      }
+      // 2) live fetch fallback (the original webpage behavior) when CC had nothing
+      if(kept === 0){
+        try{
+          const html = await hostGate(hostOf(domain), () => fetchPage(domain));   // ≤HOST_CONCURRENCY per host
+          if(html){
+            const out = extractRecord(html, domain, { wireless, genderMap, directoryRules, source:"Webpage", timestamp: today });
+            if(out){ ingest(out); kept++; }
+          } else { wnote = "page not reachable"; }
+        }catch(e){ wnote = e.message; }
+      }
       if(kept > 0){
-        coverage.live++;
-        console.log(`◆ ${domain.slice(0,48).padEnd(48)} ${kept} record(s) via webpage`);
-        onProgress({ status:'domain-done', domain, index: domainNumber, total: domains.length, source:'Webpage', kept });
+        if(fromCC) coverage.found++; else coverage.live++;
+        console.log(`◆ ${domain.slice(0,48).padEnd(48)} ${kept} record(s) via ${fromCC ? 'Common Crawl' : 'webpage'}`);
+        onProgress({ status:'domain-done', domain, index: domainNumber, total: domains.length, source: fromCC ? 'Common Crawl' : 'Webpage', kept });
       }else{
         coverage.empty++;
         console.log(`· ${domain.slice(0,48).padEnd(48)} no contacts found${wnote ? `  (${wnote})` : ""}`);
@@ -972,9 +1073,9 @@ async function run(csvPath, opts = {}){
   return unique;
 }
 
-module.exports = { run, runDomains, readDomains, selectCandidates, warcToHtml, queryIndex, fetchWarc,
+module.exports = { run, runDomains, readDomains, selectCandidates, warcToHtml, queryIndex, queryIndexUrl, fetchWarc,
   liveCrawl, extractSameDomainLinks, isBioOrContactUrl, COLUMNS,
-  parseRobots, robotsAllows, extractSitemapLocs };
+  parseRobots, robotsAllows, extractSitemapLocs, extractBioUrlsFromSitemaps };
 
 // ---------------------------------------------------------------- offline self-tests
 if(require.main === module){
@@ -1038,6 +1139,23 @@ if(require.main === module){
       ok("pipeline classified the phone as Mobile via the block table", recs[0]["Phone Type"] === "Mobile");
       ok("pipeline tagged source = Common Crawl", recs[0]["Source"] === "Common Crawl");
       ok("results CSV was written", fs.existsSync(`${tmp}/cc-results.csv`));
+
+      // 3b) webpage mode: Common Crawl first (bypasses live blocks like Cloudflare), live as fallback
+      let wpLive = 0;
+      const wpRecs = await run("", {
+        mode: "webpage",
+        _items: ["https://blocked.com/team/jane-smith/", "https://blocked.com/team/bob-uncrawled/"],
+        wirelessPath:(__dirname + "/WIRELESS_BLOCKS.TXT"),
+        genderMap:{ jane:"F" }, outPath:`${tmp}/wp-results.csv`,
+        _queryIndexUrl: async (u) => u.includes("jane-smith")
+          ? ({ url:u, filename:"f", offset:0, length:1, timestamp:"20260201000000" }) : null,   // only jane is archived
+        _fetchWarc: async () => `<h1>Jane Smith</h1><a href="mailto:jane.smith@blocked.com">e</a>`,
+        _liveFetch: async () => { wpLive++; return ""; },                                        // live blocked -> empty
+      });
+      ok("webpage mode reads an archived URL from Common Crawl",
+        wpRecs.some(r => String(r["Email Address"]).toLowerCase() === "jane.smith@blocked.com" && r["Source"] === "Common Crawl"));
+      ok("webpage mode live-fetches only the URL CC didn't have", wpLive === 1);
+
       const duplicateRows = [
         { "Email Address": "test@xyz.com", "Phone": "", "Email Type": "Role-Based" },
         { "Email Address": "TEST@xyz.com", "Phone": "+12025550123", "Email Type": "Professional", "First": "Test", "Last": "User" },
@@ -1088,6 +1206,28 @@ if(require.main === module){
       ok("extractSitemapLocs detects a sitemap index", idx2.isIndex === true && idx2.locs[0] === "https://x.com/sm1.xml");
       const set2 = extractSitemapLocs(`<urlset><url><loc>https://x.com/attorneys/jane/</loc></url><url><loc>https://x.com/blog/p</loc></url></urlset>`);
       ok("extractSitemapLocs lists page urls", set2.isIndex === false && set2.locs.length === 2);
+
+      // 7b) extractBioUrlsFromSitemaps: inline index -> child urlset -> bio-only, deduped
+      const smHost = "smx.com";
+      const smDocs = {
+        [`https://${smHost}/child.xml`]:
+          `<urlset><url><loc>https://${smHost}/attorneys/jane-doe/</loc></url>` +
+          `<url><loc>https://${smHost}/attorneys/jane-doe/</loc></url>` +     // dup -> collapsed
+          `<url><loc>https://${smHost}/blog/post-1/</loc></url>` +            // not a bio -> skipped
+          `<url><loc>https://${smHost}/team/john-roe.pdf</loc></url></urlset>`, // skipped ext
+      };
+      const smOut = await extractBioUrlsFromSitemaps({
+        content: `<sitemapindex><sitemap><loc>https://${smHost}/child.xml</loc></sitemap></sitemapindex>`,
+        _fetchDoc: async (u) => smDocs[u] || "",
+      });
+      ok("extractBioUrlsFromSitemaps recurses index + keeps bio urls only",
+        smOut.bioUrls.length === 1 && smOut.bioUrls[0] === `https://${smHost}/attorneys/jane-doe/`);
+      const smOut2 = await extractBioUrlsFromSitemaps({
+        urls: [`https://${smHost}/child.xml`],
+        _fetchDoc: async (u) => smDocs[u] || "",
+      });
+      ok("extractBioUrlsFromSitemaps works from a fetched sitemap URL too",
+        smOut2.bioUrls.length === 1 && smOut2.sitemapsFetched === 1);
 
       // 8) liveCrawl discovers bios from a sitemap (not linked on the homepage), offline
       const smDomain = "smfirm.com";

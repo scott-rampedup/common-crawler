@@ -188,19 +188,25 @@ function parseUrlList(text) {
 
 function getSearchMode() {
   const checked = document.querySelector('input[name="searchMode"]:checked');
-  return checked && checked.value === 'webpage' ? 'webpage' : 'domain';
+  const v = checked ? checked.value : 'domain';
+  return v === 'webpage' || v === 'sitemap' ? v : 'domain';
 }
 
 function updateModeHint() {
   if (!elements.modeHint) return;
-  const webpage = getSearchMode() === 'webpage';
-  elements.modeHint.textContent = webpage
-    ? 'Webpage: pulls contacts only from the exact URLs you provide (one per line).'
-    : 'Domain: crawls the whole site for contacts.';
-  if (elements.domainInput) {
-    elements.domainInput.placeholder = webpage
-      ? 'Enter one full webpage URL per line'
-      : 'Enter one domain or URL per line';
+  const mode = getSearchMode();
+  if (mode === 'sitemap') {
+    elements.modeHint.textContent =
+      'Sitemap: reads the sitemap(s) and processes the Bio/Contact URLs it finds. Paste XML or sitemap URLs, or upload a .xml / .xml.gz file (index files supported).';
+    if (elements.domainInput) {
+      elements.domainInput.placeholder = 'Paste sitemap XML, or one sitemap URL per line (e.g. https://example.com/sitemap.xml)';
+    }
+  } else if (mode === 'webpage') {
+    elements.modeHint.textContent = 'Webpage: pulls contacts only from the exact URLs you provide (one per line).';
+    if (elements.domainInput) elements.domainInput.placeholder = 'Enter one full webpage URL per line';
+  } else {
+    elements.modeHint.textContent = 'Domain: crawls the whole site for contacts.';
+    if (elements.domainInput) elements.domainInput.placeholder = 'Enter one domain or URL per line';
   }
 }
 
@@ -494,9 +500,70 @@ async function loadResults() {
   }
 }
 
+// Sitemap mode: send the pasted/uploaded sitemap to the server, which extracts the Bio/Contact
+// URLs, then start a normal 'webpage' job for those URLs. `body` is text (paste) or an
+// ArrayBuffer (file, possibly .xml.gz — the server gunzips it).
+async function extractSitemapAndRun(body, contentType) {
+  try {
+    setSearchStatus('Reading sitemap(s) and extracting Bio URLs…');
+    const res = await fetch('/api/sitemap/extract', {
+      method: 'POST',
+      headers: { 'Content-Type': contentType },
+      body,
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      throw new Error(payload.error || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    const bioUrls = Array.isArray(data.bioUrls) ? data.bioUrls : [];
+    const scanned = data.totalUrls || 0;
+    const fetched = data.sitemapsFetched || 0;
+    const fetchedOk = data.sitemapsOk || 0;
+    if (bioUrls.length === 0) {
+      if (fetched > 0 && fetchedOk === 0) {
+        setSearchStatus('Couldn’t read the sitemap — the site is likely blocking automated access (e.g. Cloudflare). Open the sitemap in your browser, then paste its XML here or upload the saved .xml file (that skips the fetch).');
+      } else if (scanned === 0) {
+        setSearchStatus('No URLs found. Make sure the input is a valid <urlset> or <sitemapindex> sitemap.');
+      } else {
+        setSearchStatus(`Scanned ${scanned} URL${scanned === 1 ? '' : 's'} but none looked like Bio/Contact pages.`);
+      }
+      return;
+    }
+    setSearchStatus(`Found ${bioUrls.length} Bio URL${bioUrls.length === 1 ? '' : 's'} from ${scanned} sitemap URL${scanned === 1 ? '' : 's'}. Starting job…`);
+
+    const directoryFilter = elements.directoryFilter.value.trim();
+    const liveOnly = !!(elements.liveOnlyCheckbox && elements.liveOnlyCheckbox.checked);
+    const jobRes = await fetch('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domains: bioUrls, mode: 'webpage', directoryFilter, liveOnly }),
+    });
+    if (!jobRes.ok) {
+      const payload = await jobRes.json().catch(() => ({}));
+      throw new Error(payload.error || `HTTP ${jobRes.status}`);
+    }
+    const job = await jobRes.json();
+    setSearchStatus(`Job started for ${bioUrls.length} Bio URL${bioUrls.length === 1 ? '' : 's'} from the sitemap. It runs on the server — you can leave this page.`);
+    await fetchJobs();
+    viewJob(job.id);
+  } catch (error) {
+    setSearchStatus(`Could not process sitemap: ${error.message}`);
+  }
+}
+
 // Start a search as a server-side background job, then watch it via polling.
 async function searchContacts() {
   const mode = getSearchMode();
+  if (mode === 'sitemap') {
+    const text = elements.domainInput.value.trim();
+    if (!text) {
+      setSearchStatus('Paste sitemap XML or sitemap URL(s) above, or upload a sitemap file.');
+      return;
+    }
+    await extractSitemapAndRun(text, 'text/plain; charset=utf-8');
+    return;
+  }
   const domains = mode === 'webpage'
     ? parseUrlList(elements.domainInput.value)
     : parseDomainList(elements.domainInput.value);
@@ -860,6 +927,14 @@ function applyDomainListFromInput() {
 function handleDomainFileUpload(event) {
   const file = event.target.files?.[0];
   if (!file) return;
+
+  // Sitemap mode: files may be gzipped (.xml.gz) — send raw bytes so the server can gunzip + parse.
+  if (getSearchMode() === 'sitemap') {
+    const reader = new FileReader();
+    reader.onload = () => { extractSitemapAndRun(reader.result, 'application/octet-stream'); };
+    reader.readAsArrayBuffer(file);
+    return;
+  }
 
   const reader = new FileReader();
   reader.onload = () => {

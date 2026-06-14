@@ -2,11 +2,12 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'ui');
 const RESULTS_CSV = path.join(__dirname, 'cc-results.csv');
-const { runDomains, COLUMNS } = require('./cc-engine');
+const { runDomains, COLUMNS, extractBioUrlsFromSitemaps } = require('./cc-engine');
 const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords } = require('./extractor');
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
@@ -672,6 +673,45 @@ const server = http.createServer((req, res) => {
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ error: e.message || 'Bad request' }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/sitemap/extract  (raw body: sitemap XML, a gzipped sitemap, or a newline/comma
+  // list of sitemap URLs) -> { ok, bioUrls, totalUrls, sitemapsFetched }. The client then runs
+  // bioUrls as a normal 'webpage' job. Reads the body as bytes so .xml.gz uploads work.
+  if (url.pathname === '/api/sitemap/extract' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    const chunks = []; let size = 0; let aborted = false;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > 64 * 1024 * 1024) { aborted = true; req.destroy(); return; }   // 64MB cap
+      chunks.push(c);
+    });
+    req.on('end', async () => {
+      if (aborted) return;
+      try {
+        let buf = Buffer.concat(chunks);
+        // gunzip an uploaded .gz (magic 1f 8b); fetched .gz is handled inside the engine's fetchDoc
+        if (buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b) { try { buf = zlib.gunzipSync(buf); } catch { /* keep raw */ } }
+        const text = buf.toString('utf8').trim();
+        if (!text) return jsonErr(res, 400, 'Empty sitemap input.');
+
+        const looksXml = /<\?xml|<urlset[\s>]|<sitemapindex[\s>]/i.test(text);
+        let content = '', urls = [];
+        if (looksXml) {
+          content = text;
+        } else {
+          urls = text.split(/[\r\n,]+/).map((s) => s.trim()).filter((s) => /^https?:\/\//i.test(s));
+          if (!urls.length) return jsonErr(res, 400, 'No sitemap XML or sitemap URL(s) found in the input.');
+        }
+        // directoryRules stays {} on the server by design (see project notes); genderMap aids bio detection
+        const out = await extractBioUrlsFromSitemaps({ content, urls, genderMap: GENDER_MAP });
+        console.log(`Sitemap extract: ${out.bioUrls.length} bio URL(s) from ${out.totalUrls} URL(s) across ${out.sitemapsFetched} fetched sitemap(s)`);
+        sendJson(res, { ok: true, ...out });
+      } catch (e) {
+        jsonErr(res, 500, e.message || 'Failed to parse sitemap.');
       }
     });
     return;
