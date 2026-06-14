@@ -483,12 +483,14 @@ const server = http.createServer((req, res) => {
   const p = url.pathname;
   const PUBLIC_PATH = (
     p.startsWith('/ui/') || p === '/favicon.ico' ||
+    p === '/home' ||
     p === '/login' || p === '/signup' || p === '/forgot' || p === '/privacy' || p === '/terms' ||
     p === '/api/auth/login' || p === '/api/auth/signup' || p === '/api/auth/logout' || p === '/api/auth/me' ||
     (p.startsWith('/api/pages/') && req.method === 'GET')
   );
   if (!PUBLIC_PATH && !me) {
     if (p.startsWith('/api/')) jsonErr(res, 401, 'Authentication required');
+    else if (p === '/' || p === '/index.html') { serveStaticFile(res, path.join(PUBLIC_DIR, 'home.html')); return; }  // anon root -> public landing
     else { res.writeHead(302, { Location: '/login' }); res.end(); }
     return;
   }
@@ -501,6 +503,7 @@ const server = http.createServer((req, res) => {
   if (p === '/signup') { serveStaticFile(res, path.join(PUBLIC_DIR, 'signup.html')); return; }
   if (p === '/forgot') { serveStaticFile(res, path.join(PUBLIC_DIR, 'forgot.html')); return; }
   if (p === '/privacy' || p === '/terms') { serveStaticFile(res, path.join(PUBLIC_DIR, 'legal.html')); return; }
+  if (p === '/home') { serveStaticFile(res, path.join(PUBLIC_DIR, 'home.html')); return; }  // public landing (always reachable)
 
   // ---- public page content (Privacy Policy / Terms of Use text) ----
   if (p.startsWith('/api/pages/') && req.method === 'GET') {
