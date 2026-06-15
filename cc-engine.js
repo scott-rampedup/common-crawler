@@ -653,12 +653,19 @@ async function liveFetchPage(url){
       return await res.text();
     }catch{ return ""; }
   }
-  for(let attempt = 0; attempt < 2; attempt++){
+  // With a rotating residential proxy a 403/429/503 means that exit IP was blocked — retry
+  // to roll a fresh IP from the gateway. Without a proxy, only 429/503 (transient) are retried.
+  const maxAttempts = PROXY_URL ? 4 : 2;
+  for(let attempt = 0; attempt < maxAttempts; attempt++){
     const r = await httpGetRaw(url, { accept: /html/, maxBytes: HTML_MAX_BYTES, returnMeta: true });
     if(r.status === 200){ _net.fetched++; return r.body; }
-    if((r.status === 429 || r.status === 503) && attempt === 0){ _net.blocked++; await sleep(800); continue; }  // transient throttle -> back off + retry
-    if(r.status === 403 || r.status === 429 || r.status === 503){ _net.blocked++; return ""; }                 // blocked
-    _net.fetched++;                                                                                            // 404 / other / network error
+    if(r.status === 403 || r.status === 429 || r.status === 503){                              // blocked
+      _net.blocked++;
+      const canRetry = attempt < maxAttempts - 1 && (PROXY_URL || r.status === 429 || r.status === 503);
+      if(canRetry){ await sleep(PROXY_URL ? 400 : 800); continue; }
+      return "";
+    }
+    _net.fetched++;                                                                            // 404 / other / network error
     return "";
   }
   return "";
@@ -1095,10 +1102,11 @@ module.exports = { run, runDomains, readDomains, selectCandidates, warcToHtml, q
 // ---------------------------------------------------------------- offline self-tests
 if(require.main === module){
   const parseArgs = argv => {
-    const opts = { csvPath: "", genderPath: "", directoryRulesPath: "", selftest:false };
+    const opts = { csvPath: "", genderPath: "", directoryRulesPath: "", selftest:false, proxyTest:false };
     for(let i = 2; i < argv.length; i++){
       const a = argv[i];
       if(a === "--selftest") { opts.selftest = true; continue; }
+      if(a === "--proxy-test") { opts.proxyTest = true; continue; }
       if(a === "--gender" || a === "--gender-file") { opts.genderPath = argv[++i] || ""; continue; }
       if(a === "--directory-rules" || a === "--dir-rules" || a === "--dirs") { opts.directoryRulesPath = argv[++i] || ""; continue; }
       if(!opts.csvPath) opts.csvPath = a;
@@ -1107,6 +1115,39 @@ if(require.main === module){
   };
 
   const args = parseArgs(process.argv);
+
+  // `node cc-engine.js --proxy-test [url]` — verify the configured proxy reaches a target
+  // (default: a bot-protected Howard Hanna agent page). Shows the exit IP across 3 calls
+  // (should vary on a rotating residential gateway) then fetches the page via liveFetchPage.
+  if(args.proxyTest){
+    (async () => {
+      const mask = (s) => String(s || "").replace(/\/\/[^@]*@/, "//***:***@");
+      console.log(`PROXY_URL:        ${PROXY_URL ? mask(PROXY_URL) : "(not set)"}`);
+      console.log(`HTTPS_PROXY:       ${proxyEnv ? mask(proxyEnv) + (ProxyAgent ? "" : "  — undici NOT installed, this won't work") : "(not set)"}`);
+      if(!PROXY_URL && !proxyEnv){ console.log("\nNo proxy configured. Set PROXY_URL=http://user:pass@gateway:port and re-run."); return; }
+
+      console.log("\nExit IP (3 samples — should vary on a rotating residential gateway):");
+      for(let i = 0; i < 3; i++){
+        const r = await httpGetRaw("https://ipinfo.io/json", { accept: /json|text|html/, maxBytes: 64 * 1024, returnMeta: true });
+        let info = (r.body || "").trim();
+        try{ const j = JSON.parse(r.body); info = `${j.ip}   ${j.org || ""}   ${[j.city, j.region, j.country].filter(Boolean).join(", ")}`; }catch{}
+        console.log(`  [${r.status}] ${info || "(no response — proxy unreachable / bad credentials?)"}`);
+      }
+
+      const target = args.csvPath || "https://www.howardhanna.com/Agent/Detail/Aaron-Foster/72909";
+      console.log(`\nFetching target via liveFetchPage: ${target}`);
+      resetNetStats();
+      const t0 = Date.now();
+      const html = await liveFetchPage(target);
+      const blockedSig = /just a moment|access denied|reference #\d|akamai|attention required|verify you are human|enable javascript and cookies/i.test(html.slice(0, 4000));
+      console.log(`  bytes: ${html.length}   time: ${Date.now() - t0}ms   net: ${JSON.stringify(_net)}`);
+      console.log(`  result: ${html.length > 5000 && !blockedSig ? "OK — looks like a real page ✅"
+        : html.length ? "got HTML but it looks like a block/challenge page ⚠️ (residential proxy may not be enough — consider a web-unblocker endpoint)"
+        : "BLOCKED / empty ❌"}`);
+    })().catch(e => { console.error(e); process.exit(1); });
+    return;
+  }
+
   if(args.selftest){
     (async () => {
       let pass = 0, fail = 0;

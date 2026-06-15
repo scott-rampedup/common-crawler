@@ -11,6 +11,23 @@
 - **Note:** the machine is set `auto_stop_machines = false` so background jobs keep
   running between requests.
 
+### Residential proxy (for bot-protected sites)
+
+Some target sites (Akamai/Cloudflare, e.g. `howardhanna.com`) return **403** to a
+datacenter IP, so live page fetches need a **residential rotating proxy**. The engine
+routes every live fetch through `PROXY_URL` when set, and rolls a fresh exit IP on each
+blocked retry. (A datacenter proxy will still be blocked — it must be residential.)
+
+1. Get a residential gateway URL from a provider (NetNut / Bright Data / Oxylabs /
+   Decodo). Format: `http://USER:PASS@GATEWAY:PORT` (see `.env.example` for per-provider
+   examples). Prefer a **per-request rotating** endpoint.
+2. Set it: `fly secrets set PROXY_URL='http://user:pass@gateway:port' --app common-crawler`
+   (this restarts the machine; no redeploy needed).
+3. Verify: `PROXY_URL='...' node cc-engine.js --proxy-test` (locally) — shows the exit IP
+   across 3 calls (should vary) and whether it can fetch a Howard Hanna agent page.
+4. If a plain residential proxy still hits a JS/TLS challenge, switch `PROXY_URL` to the
+   provider's **web-unblocker** endpoint (same URL format) — it solves the challenge.
+
 The Render guide below is an alternative path if you ever want to move hosts.
 
 ---
