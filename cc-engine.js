@@ -871,10 +871,13 @@ function uniqueByEmail(records){
   const best = new Map();
   for(const r of records){
     const email = String(r["Email Address"] || "").trim().toLowerCase();
-    if(!email) continue;
-    const current = best.get(email);
+    // email-less records (webpage mode, kept for email modelling) de-dupe by source URL so
+    // they don't all collapse onto one row; rows with neither email nor URL are dropped.
+    const key = email || ("url:" + String(r["Web Source URL"] || "").trim().toLowerCase());
+    if(key === "url:") continue;
+    const current = best.get(key);
     if(!current || scoreRecord(r) > scoreRecord(current)){
-      best.set(email, r);
+      best.set(key, r);
     }
   }
   return [...best.values()];
@@ -913,9 +916,12 @@ async function run(csvPath, opts = {}){
   const ingest = (out) => {
     all.push(out);
     const email = String(out["Email Address"] || "").trim().toLowerCase();
-    const current = seenEmails.get(email);
+    // de-dupe by email; email-less records (webpage mode, kept for email modelling) would
+    // ALL collapse onto the "" key, so key those by their source URL instead.
+    const key = email || ("url:" + String(out["Web Source URL"] || "").trim().toLowerCase());
+    const current = seenEmails.get(key);
     if(!current || scoreRecord(out) > scoreRecord(current)){
-      seenEmails.set(email, out);
+      seenEmails.set(key, out);
       onRecord(out);
     }
   };
@@ -944,7 +950,7 @@ async function run(csvPath, opts = {}){
             let html = ""; try{ html = await _fetchWarc(rec, opts); }catch{ html = ""; }
             if(html){
               const ts = (rec.timestamp||"").slice(0,8).replace(/(\d{4})(\d{2})(\d{2})/,"$1-$2-$3");
-              const out = extractRecord(html, domain, { wireless, genderMap, directoryRules, source:"Common Crawl", timestamp: ts });
+              const out = extractRecord(html, domain, { wireless, genderMap, directoryRules, source:"Common Crawl", timestamp: ts, allowNoEmail: true });
               if(out){ ingest(out); kept++; fromCC = true; }
             }
           }
@@ -957,7 +963,7 @@ async function run(csvPath, opts = {}){
         try{
           const html = await hostGate(hostOf(domain), () => fetchPage(domain));   // ≤HOST_CONCURRENCY per host
           if(html){
-            const out = extractRecord(html, domain, { wireless, genderMap, directoryRules, source:"Webpage", timestamp: today });
+            const out = extractRecord(html, domain, { wireless, genderMap, directoryRules, source:"Webpage", timestamp: today, allowNoEmail: true });
             if(out){ ingest(out); kept++; }
           } else { wnote = "page not reachable"; }
         }catch(e){ wnote = e.message; }

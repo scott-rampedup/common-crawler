@@ -250,7 +250,7 @@ function parseCsvRow(row){
 // first/last from a URL slug, e.g. "dr-marcus-patel-bio.html" -> {first:"Marcus",last:"Patel"}.
 // Cleaning (extension strip, separator split, honorific/credential/page-word removal) is shared
 // with AI Search and lives in name-from-path.js.
-const { nameFromPath } = require("./name-from-path");
+const { nameFromPath, pathNameTokens } = require("./name-from-path");
 function nameFromSlug(slug){ return nameFromPath(slug); }
 
 function inferNameFromSlug(slug, genderMap){
@@ -623,7 +623,18 @@ function extractRecord(html, url, deps = {}){
   const gender = first ? (genderMap[first.toLowerCase()] || "") : "";
 
   // ---- QUALITY GATE ----
-  if(!email) return null;                      // require a valid email address for every record
+  // Normally every record needs a real email. EXCEPTION — when deps.allowNoEmail is set
+  // (sitemap / webpage mode, where the user explicitly targets these URLs): keep a clean
+  // person bio that publishes a name + assigned Gender but no email, so its address can be
+  // MODELLED downstream from the company's known pattern (labelled Email Type "Modelled").
+  // Guarded tightly to real people: a BIO URL with first+last+gender AND a 2–3 token slug
+  // (e.g. /our-people/adam-gage) — this drops news headlines like /news/jane-doe-joins-as-... .
+  if(!email){
+    const slugTokens = isBio ? pathNameTokens(last).length : 0;
+    const keepForModelling = deps.allowNoEmail && isBio && first && lastName && gender
+      && slugTokens >= 2 && slugTokens <= 3;
+    if(!keepForModelling) return null;         // require a valid email address for every other record
+  }
 
   return {
     "Time Stamp": timestamp,

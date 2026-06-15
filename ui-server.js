@@ -8,7 +8,8 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'ui');
 const RESULTS_CSV = path.join(__dirname, 'cc-results.csv');
 const { runDomains, COLUMNS, extractBioUrlsFromSitemaps } = require('./cc-engine');
-const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords } = require('./extractor');
+const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords, classifyEmail, cleanEmail } = require('./extractor');
+const { modelEmail } = require('./email-pattern');
 const mailer = require('./mailer');
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
@@ -220,6 +221,54 @@ function loadJobs() {
   console.log(`Loaded ${jobs.size} saved job(s) from ${JOBS_DIR}`);
 }
 
+// Fill in a best-guess email for bio records that have a name + Gender but no published
+// address (sitemap/webpage mode). The format is LEARNED from that company's own
+// Professional emails — this job's finds plus the central DB — and the result is labelled
+// Email Type "Modelled" so a guess is never mistaken for a verified address. If the company
+// publishes no parseable emails at all (e.g. rsmuk.com), nothing is modelled and the people
+// are still kept with their name + phone + LinkedIn. Mutates job records in place.
+function modelMissingEmails(job) {
+  if ((job.mode || 'domain') !== 'webpage') return 0;          // sitemap/webpage only
+  const records = [...job.recordsByEmail.values()];
+  const missing = records.filter((r) =>
+    !cleanEmail(r['Email Address']) && r['First'] && r['Last'] && r['Gender']);
+  if (!missing.length) return 0;
+
+  // group the email-less people by company domain
+  const byDomain = new Map();
+  for (const r of missing) {
+    const d = String(r['Domain'] || '').toLowerCase();
+    if (!d) continue;
+    if (!byDomain.has(d)) byDomain.set(d, []);
+    byDomain.get(d).push(r);
+  }
+
+  let modelled = 0;
+  for (const [domain, people] of byDomain) {
+    // pattern seed: Professional emails for THIS domain — from this job + the central DB
+    const samples = [];
+    const addSample = (r) => {
+      const email = cleanEmail(r['Email Address']);
+      if (email && r['First'] && r['Last'] && classifyEmail(email) === 'Professional') {
+        samples.push({ first: r['First'], last: r['Last'], email });
+      }
+    };
+    for (const r of records) if (String(r['Domain'] || '').toLowerCase() === domain) addSample(r);
+    try {
+      const res = db.query({ domain, emailType: 'Professional', pageSize: 500 });
+      for (const r of (res.rows || [])) addSample(r);
+    } catch (e) { /* central DB lookup is best-effort */ }
+
+    if (!samples.length) continue;                            // no pattern to learn from
+    for (const r of people) {
+      const email = modelEmail(samples, r['First'], r['Last']);
+      if (email) { r['Email Address'] = email; r['Email Type'] = 'Modelled'; modelled++; }
+    }
+  }
+  if (modelled) console.log(`Job ${job.id}: modelled ${modelled} email(s) from company pattern(s).`);
+  return modelled;
+}
+
 // run a set of domains for a job, accumulating records + coverage, persisting per domain
 async function runJobDomains(job, domainsToRun) {
   job.status = 'running';
@@ -258,6 +307,8 @@ async function runJobDomains(job, domainsToRun) {
     job.error = e.message;
   }
   job.stopRequested = false;
+  try { modelMissingEmails(job); }                                  // model emails for email-less bios (sitemap/webpage)
+  catch (e) { console.error('email modelling failed:', e.message); }
   try { await geocodeRecords([...job.recordsByEmail.values()]); }   // City, Region, Country
   catch (e) { console.error('geocode failed:', e.message); }
   job.finishedAt = new Date().toISOString();
