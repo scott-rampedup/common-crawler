@@ -36,20 +36,32 @@ const keepAliveHttp  = new http.Agent({ keepAlive: true, maxSockets: 64, maxFree
 const keepAliveHttps = new https.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 16, timeout: 30000 });
 
 // Optional outbound proxy for LIVE page fetches (e.g. NetNut rotating gateway).
-// Set PROXY_URL = http://USER-dc-any:PASS@gw.netnut.net:5959. Each request exits a
-// different datacenter IP, so we can crawl wide without burning one address. Common
+// Two tiers, used cheapest-first by liveFetchPage:
+//   PROXY_URL           = primary, e.g. a cheap DATACENTER gateway
+//                         (http://USER-dc-any:PASS@gw.netnut.net:5959)
+//   PROXY_FALLBACK_URL  = RESIDENTIAL gateway, used only when the primary is blocked
+//                         (http://USER-res-any:PASS@gw.netnut.net:5959)
+// Each request exits a different IP, so we crawl wide without burning one address, and we
+// only spend (pricier) residential bandwidth on sites that block datacenter IPs. Common
 // Crawl traffic is NOT proxied (it's an API, not a blocking target, and saves $).
-const PROXY_URL = process.env.PROXY_URL || "";
-let proxyAgentHttp = null, proxyAgentHttps = null;
-if(PROXY_URL){
+const mask = (s) => String(s || "").replace(/\/\/[^@]*@/, "//***:***@");
+function makeProxyAgents(url){
+  if(!url) return { http: null, https: null };
   try{
     const { HttpProxyAgent }  = require("http-proxy-agent");
     const { HttpsProxyAgent } = require("https-proxy-agent");
-    proxyAgentHttp  = new HttpProxyAgent(PROXY_URL,  { keepAlive: true, maxSockets: 128 });
-    proxyAgentHttps = new HttpsProxyAgent(PROXY_URL, { keepAlive: true, maxSockets: 128 });
-    console.log(`Live-crawl proxy: ON via ${PROXY_URL.replace(/\/\/[^@]*@/, "//***:***@")}`);
-  }catch(e){ console.warn("PROXY_URL set but proxy agent unavailable:", e.message); }
+    return { http:  new HttpProxyAgent(url,  { keepAlive: true, maxSockets: 128 }),
+             https: new HttpsProxyAgent(url, { keepAlive: true, maxSockets: 128 }) };
+  }catch(e){ console.warn("proxy agent unavailable:", e.message); return { http: null, https: null }; }
 }
+const PROXY_URL = process.env.PROXY_URL || "";
+const PROXY_FALLBACK_URL = process.env.PROXY_FALLBACK_URL || "";
+const _proxyPrimary  = makeProxyAgents(PROXY_URL);
+const _proxyFallback = makeProxyAgents(PROXY_FALLBACK_URL);
+let proxyAgentHttp = _proxyPrimary.http, proxyAgentHttps = _proxyPrimary.https;
+let proxyAgentHttpFb = _proxyFallback.http, proxyAgentHttpsFb = _proxyFallback.https;
+if(PROXY_URL)          console.log(`Live-crawl proxy (primary): ON via ${mask(PROXY_URL)}`);
+if(PROXY_FALLBACK_URL) console.log(`Live-crawl proxy (residential fallback): ON via ${mask(PROXY_FALLBACK_URL)}`);
 
 // Tiny concurrency limiter: run() uses one per "lane" (across-domain pool, the
 // global Common-Crawl lane, the per-site lane) to cap how many requests run at once.
@@ -583,9 +595,13 @@ function httpGetRaw(url, opts = {}){
     let u;
     try{ u = new URL(url); }catch{ return finish(0, ""); }
     const lib = u.protocol === "http:" ? http : https;
-    const agent = PROXY_URL
-      ? (u.protocol === "http:" ? proxyAgentHttp : proxyAgentHttps)   // route via rotating proxy
-      : (lib === http ? keepAliveHttp : keepAliveHttps);
+    const isHttp = u.protocol === "http:";
+    // opts.proxyTier: 'fallback' routes via the residential gateway; default is the primary.
+    const agent = (opts.proxyTier === "fallback" && PROXY_FALLBACK_URL)
+      ? (isHttp ? proxyAgentHttpFb : proxyAgentHttpsFb)               // residential fallback
+      : PROXY_URL
+        ? (isHttp ? proxyAgentHttp : proxyAgentHttps)                 // primary rotating proxy
+        : (lib === http ? keepAliveHttp : keepAliveHttps);            // direct
 
     const req = lib.request(u, {
       method: "GET",
@@ -653,20 +669,26 @@ async function liveFetchPage(url){
       return await res.text();
     }catch{ return ""; }
   }
-  // With a rotating residential proxy a 403/429/503 means that exit IP was blocked — retry
-  // to roll a fresh IP from the gateway. Without a proxy, only 429/503 (transient) are retried.
-  const maxAttempts = PROXY_URL ? 4 : 2;
-  for(let attempt = 0; attempt < maxAttempts; attempt++){
-    const r = await httpGetRaw(url, { accept: /html/, maxBytes: HTML_MAX_BYTES, returnMeta: true });
-    if(r.status === 200){ _net.fetched++; return r.body; }
-    if(r.status === 403 || r.status === 429 || r.status === 503){                              // blocked
-      _net.blocked++;
-      const canRetry = attempt < maxAttempts - 1 && (PROXY_URL || r.status === 429 || r.status === 503);
-      if(canRetry){ await sleep(PROXY_URL ? 400 : 800); continue; }
+  // Try the primary proxy/direct first, then escalate to the residential fallback only if the
+  // page is still blocked — so pricier residential bandwidth is spent only on sites that need
+  // it. With a rotating gateway a 403/429/503 means that exit IP was blocked, so we retry to
+  // roll a fresh IP. Without a proxy, only 429/503 (transient) are retried.
+  const tiers = PROXY_FALLBACK_URL ? ["primary", "fallback"] : ["primary"];
+  for(const tier of tiers){
+    const rotates = tier === "fallback" || PROXY_URL;        // a gateway is in front -> a fresh IP per attempt
+    const maxAttempts = rotates ? 4 : 2;
+    for(let attempt = 0; attempt < maxAttempts; attempt++){
+      const r = await httpGetRaw(url, { accept: /html/, maxBytes: HTML_MAX_BYTES, returnMeta: true, proxyTier: tier });
+      if(r.status === 200){ _net.fetched++; return r.body; }
+      if(r.status === 403 || r.status === 429 || r.status === 503){                            // blocked
+        _net.blocked++;
+        const canRetry = attempt < maxAttempts - 1 && (rotates || r.status === 429 || r.status === 503);
+        if(canRetry){ await sleep(rotates ? 400 : 800); continue; }
+        break;                                                                                 // tier exhausted -> escalate to next tier
+      }
+      _net.fetched++;                                                                          // 404 / other -> definitive, don't escalate
       return "";
     }
-    _net.fetched++;                                                                            // 404 / other / network error
-    return "";
   }
   return "";
 }
@@ -1116,23 +1138,28 @@ if(require.main === module){
 
   const args = parseArgs(process.argv);
 
-  // `node cc-engine.js --proxy-test [url]` — verify the configured proxy reaches a target
-  // (default: a bot-protected Howard Hanna agent page). Shows the exit IP across 3 calls
-  // (should vary on a rotating residential gateway) then fetches the page via liveFetchPage.
+  // `node cc-engine.js --proxy-test [url]` — verify the configured proxies reach a target
+  // (default: a bot-protected Howard Hanna agent page). For each tier it shows the exit IP
+  // across 3 calls (should vary on a rotating gateway) then fetches the page via the full
+  // liveFetchPage chain (primary -> residential fallback).
   if(args.proxyTest){
     (async () => {
-      const mask = (s) => String(s || "").replace(/\/\/[^@]*@/, "//***:***@");
-      console.log(`PROXY_URL:        ${PROXY_URL ? mask(PROXY_URL) : "(not set)"}`);
-      console.log(`HTTPS_PROXY:       ${proxyEnv ? mask(proxyEnv) + (ProxyAgent ? "" : "  — undici NOT installed, this won't work") : "(not set)"}`);
-      if(!PROXY_URL && !proxyEnv){ console.log("\nNo proxy configured. Set PROXY_URL=http://user:pass@gateway:port and re-run."); return; }
+      console.log(`PROXY_URL (primary):          ${PROXY_URL ? mask(PROXY_URL) : "(not set)"}`);
+      console.log(`PROXY_FALLBACK_URL (resi):    ${PROXY_FALLBACK_URL ? mask(PROXY_FALLBACK_URL) : "(not set)"}`);
+      console.log(`HTTPS_PROXY (undici):         ${proxyEnv ? mask(proxyEnv) + (ProxyAgent ? "" : "  — undici NOT installed, this won't work") : "(not set)"}`);
+      if(!PROXY_URL && !PROXY_FALLBACK_URL && !proxyEnv){ console.log("\nNo proxy configured. Set PROXY_URL / PROXY_FALLBACK_URL and re-run."); return; }
 
-      console.log("\nExit IP (3 samples — should vary on a rotating residential gateway):");
-      for(let i = 0; i < 3; i++){
-        const r = await httpGetRaw("https://ipinfo.io/json", { accept: /json|text|html/, maxBytes: 64 * 1024, returnMeta: true });
-        let info = (r.body || "").trim();
-        try{ const j = JSON.parse(r.body); info = `${j.ip}   ${j.org || ""}   ${[j.city, j.region, j.country].filter(Boolean).join(", ")}`; }catch{}
-        console.log(`  [${r.status}] ${info || "(no response — proxy unreachable / bad credentials?)"}`);
-      }
+      const showExitIps = async (label, tier) => {
+        console.log(`\n${label} exit IP (3 samples — should vary on a rotating gateway):`);
+        for(let i = 0; i < 3; i++){
+          const r = await httpGetRaw("https://ipinfo.io/json", { accept: /json|text|html/, maxBytes: 64 * 1024, returnMeta: true, proxyTier: tier });
+          let info = (r.body || "").trim();
+          try{ const j = JSON.parse(r.body); info = `${j.ip}   ${j.org || ""}   ${[j.city, j.region, j.country].filter(Boolean).join(", ")}`; }catch{}
+          console.log(`  [${r.status}] ${info || "(no response — proxy unreachable / bad credentials?)"}`);
+        }
+      };
+      if(PROXY_URL) await showExitIps("PRIMARY", "primary");
+      if(PROXY_FALLBACK_URL) await showExitIps("RESIDENTIAL FALLBACK", "fallback");
 
       const target = args.csvPath || "https://www.howardhanna.com/Agent/Detail/Aaron-Foster/72909";
       console.log(`\nFetching target via liveFetchPage: ${target}`);
