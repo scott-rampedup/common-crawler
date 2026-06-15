@@ -26,13 +26,14 @@ blocked retry. (A datacenter proxy will still be blocked — it must be resident
 3. Verify: `PROXY_URL='...' node cc-engine.js --proxy-test` (locally) — shows the exit IP
    across 3 calls (should vary) and whether it can fetch a Howard Hanna agent page.
 4. For Akamai/Cloudflare-JS sites (e.g. `howardhanna.com`) a plain residential proxy still
-   gets a JS/TLS challenge it can't solve. Add a **Website Unblocker** as a third tier:
-   `fly secrets set PROXY_UNBLOCKER_URL='http://user:pass@unblocker-endpoint:port' --app common-crawler`.
-   It runs a real browser, so it fires **last** (priciest) — only when datacenter + residential
-   are both blocked. TLS verification is skipped for this tier (unblockers MITM HTTPS).
+   gets a JS/TLS challenge it can't solve. Add a **Website Unblocker API** as a third tier:
+   `fly secrets set UNBLOCKER_API_URL='https://user:pass@unblocker.netnut.io/unblock' --app common-crawler`.
+   NetNut's unblocker is an HTTP **API** (POST `{url,format:html}`), not a proxy — it renders the
+   page in a real browser. It's slow (~60-90s/page) and billed per request, so it fires **last**,
+   only when datacenter + residential are both blocked.
 
 Escalation order per live fetch: `PROXY_URL` (datacenter) → `PROXY_FALLBACK_URL` (residential)
-→ `PROXY_UNBLOCKER_URL` (unblocker). `--proxy-test` shows all configured tiers.
+→ `UNBLOCKER_API_URL` (unblocker). `--proxy-test` shows all configured tiers and tests the chain.
 
 The Render guide below is an alternative path if you ever want to move hosts.
 

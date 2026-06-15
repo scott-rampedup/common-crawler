@@ -38,18 +38,20 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const keepAliveHttp  = new http.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 16, timeout: 30000 });
 const keepAliveHttps = new https.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 16, timeout: 30000 });
 
-// Optional outbound proxies for LIVE page fetches (e.g. NetNut). THREE tiers, escalated
-// cheapest-first by liveFetchPage — a tier is tried only when the previous one is blocked:
+// Optional outbound proxies + unblocker for LIVE page fetches (e.g. NetNut). THREE tiers,
+// escalated cheapest-first by liveFetchPage — a tier is tried only when the previous one is blocked:
 //   PROXY_URL            = primary, a cheap DATACENTER gateway
 //                          (http://USER-dc-any:PASS@gw.netnut.net:5959)
 //   PROXY_FALLBACK_URL   = RESIDENTIAL gateway, for sites that block datacenter IPs
 //                          (http://USER-res-us:PASS@gw.netnut.net:5959)
-//   PROXY_UNBLOCKER_URL  = WEBSITE UNBLOCKER (runs a real browser, solves JS/TLS challenges),
-//                          for Akamai/Cloudflare-JS sites a raw proxy can't pass. Priciest, so
-//                          it fires last. Unblockers MITM TLS, so this tier skips cert checks.
-// Each request exits a different IP, so we crawl wide without burning one address, and we
-// only spend pricier bandwidth on the sites that actually need it. Common Crawl traffic is
-// NOT proxied (it's an API, not a blocking target, and saves $).
+//   UNBLOCKER_API_URL    = WEBSITE UNBLOCKER API (runs a real browser, solves JS/TLS challenges)
+//                          for Akamai/Cloudflare-JS sites a raw proxy can't pass. NetNut's is an
+//                          HTTP API (POST {url,format:html}), NOT a proxy — and slow (~60-90s/page)
+//                          + billed per request, so it fires LAST and only on still-blocked pages.
+//                          (https://USER:PASS@unblocker.netnut.io/unblock)
+// Each proxied request exits a different IP, so we crawl wide without burning one address, and we
+// only spend pricier bandwidth on the sites that actually need it. Common Crawl traffic is NOT
+// proxied (it's an API, not a blocking target, and saves $).
 const mask = (s) => String(s || "").replace(/\/\/[^@]*@/, "//***:***@");
 function makeProxyAgents(url){
   if(!url) return { http: null, https: null };
@@ -64,16 +66,14 @@ function makeProxyAgents(url){
 }
 const PROXY_URL = process.env.PROXY_URL || "";
 const PROXY_FALLBACK_URL = process.env.PROXY_FALLBACK_URL || "";
-const PROXY_UNBLOCKER_URL = process.env.PROXY_UNBLOCKER_URL || "";
+const UNBLOCKER_API_URL = process.env.UNBLOCKER_API_URL || "";
 const _proxyPrimary   = makeProxyAgents(PROXY_URL);
 const _proxyFallback  = makeProxyAgents(PROXY_FALLBACK_URL);
-const _proxyUnblocker = makeProxyAgents(PROXY_UNBLOCKER_URL);
 let proxyAgentHttp = _proxyPrimary.http, proxyAgentHttps = _proxyPrimary.https;
 let proxyAgentHttpFb = _proxyFallback.http, proxyAgentHttpsFb = _proxyFallback.https;
-let proxyAgentHttpUb = _proxyUnblocker.http, proxyAgentHttpsUb = _proxyUnblocker.https;
-if(PROXY_URL)           console.log(`Live-crawl proxy (primary): ON via ${mask(PROXY_URL)}`);
-if(PROXY_FALLBACK_URL)  console.log(`Live-crawl proxy (residential fallback): ON via ${mask(PROXY_FALLBACK_URL)}`);
-if(PROXY_UNBLOCKER_URL) console.log(`Live-crawl proxy (website unblocker): ON via ${mask(PROXY_UNBLOCKER_URL)}`);
+if(PROXY_URL)          console.log(`Live-crawl proxy (primary): ON via ${mask(PROXY_URL)}`);
+if(PROXY_FALLBACK_URL) console.log(`Live-crawl proxy (residential fallback): ON via ${mask(PROXY_FALLBACK_URL)}`);
+if(UNBLOCKER_API_URL)  console.log(`Live-crawl website-unblocker API: ON via ${mask(UNBLOCKER_API_URL)}`);
 
 // Tiny concurrency limiter: run() uses one per "lane" (across-domain pool, the
 // global Common-Crawl lane, the per-site lane) to cap how many requests run at once.
@@ -608,14 +608,13 @@ function httpGetRaw(url, opts = {}){
     try{ u = new URL(url); }catch{ return finish(0, ""); }
     const lib = u.protocol === "http:" ? http : https;
     const isHttp = u.protocol === "http:";
-    // opts.proxyTier: 'unblocker' -> website unblocker; 'fallback' -> residential; else primary/direct.
-    const agent = (opts.proxyTier === "unblocker" && PROXY_UNBLOCKER_URL)
-      ? (isHttp ? proxyAgentHttpUb : proxyAgentHttpsUb)               // website unblocker (browser render)
-      : (opts.proxyTier === "fallback" && PROXY_FALLBACK_URL)
-        ? (isHttp ? proxyAgentHttpFb : proxyAgentHttpsFb)             // residential fallback
-        : PROXY_URL
-          ? (isHttp ? proxyAgentHttp : proxyAgentHttps)              // primary rotating proxy
-          : (lib === http ? keepAliveHttp : keepAliveHttps);         // direct
+    // opts.proxyTier: 'fallback' -> residential gateway; else primary rotating proxy / direct.
+    // (The website unblocker is an HTTP API, not a proxy — see unblockerFetch.)
+    const agent = (opts.proxyTier === "fallback" && PROXY_FALLBACK_URL)
+      ? (isHttp ? proxyAgentHttpFb : proxyAgentHttpsFb)              // residential fallback
+      : PROXY_URL
+        ? (isHttp ? proxyAgentHttp : proxyAgentHttps)               // primary rotating proxy
+        : (lib === http ? keepAliveHttp : keepAliveHttps);          // direct
 
     const reqOpts = {
       method: "GET",
@@ -627,9 +626,6 @@ function httpGetRaw(url, opts = {}){
       },
       timeout: opts.timeout || 15000,
     };
-    // Website Unblockers MITM HTTPS to inject/solve challenges, so their cert won't validate
-    // against the target domain — skip TLS verification for that (configured, trusted) tier only.
-    if(opts.proxyTier === "unblocker") reqOpts.rejectUnauthorized = false;
     const req = lib.request(u, reqOpts, (res) => {
       const status = res.statusCode || 0;
 
@@ -669,6 +665,59 @@ function httpGetRaw(url, opts = {}){
   });
 }
 
+// Website-unblocker API (NetNut): POST {url, format:"html"} to the configured endpoint, which
+// renders the page in a real browser (solving Akamai/Cloudflare JS+TLS challenges) and returns
+// the final HTML. Slow (~60-90s) + billed per request, so liveFetchPage only calls it as a last
+// resort. Returns the HTML on success, "" otherwise. Endpoint + Basic-auth creds come from
+// UNBLOCKER_API_URL (https://USER:PASS@host/path).
+function unblockerFetch(target, timeoutMs = 120000){
+  return new Promise((resolve) => {
+    if(!UNBLOCKER_API_URL) return resolve("");
+    let api; try{ api = new URL(UNBLOCKER_API_URL); }catch{ return resolve(""); }
+    const lib = api.protocol === "http:" ? http : https;
+    const auth = (api.username || api.password)
+      ? `${decodeURIComponent(api.username)}:${decodeURIComponent(api.password)}` : undefined;
+    const body = JSON.stringify({ url: target, format: "html" });
+    let settled = false;
+    const done = (s) => { if(!settled){ settled = true; resolve(s); } };
+    const req = lib.request({
+      protocol: api.protocol, hostname: api.hostname, port: api.port || undefined,
+      path: api.pathname + api.search, method: "POST", auth,
+      headers: {
+        "Content-Type": "application/json", "Accept": "text/html, application/json",
+        "Accept-Encoding": "gzip, deflate, br", "Content-Length": Buffer.byteLength(body),
+      },
+      timeout: timeoutMs,
+    }, (res) => {
+      const status = res.statusCode || 0;
+      const enc = (res.headers["content-encoding"] || "").toLowerCase();
+      let stream = res;
+      try{
+        if(enc === "gzip") stream = res.pipe(zlib.createGunzip());
+        else if(enc === "deflate") stream = res.pipe(zlib.createInflate());
+        else if(enc === "br") stream = res.pipe(zlib.createBrotliDecompress());
+      }catch{ res.resume(); return done(""); }
+      const chunks = []; let bytes = 0;
+      stream.on("data", (c) => { bytes += c.length; if(bytes <= HTML_MAX_BYTES) chunks.push(c); else req.destroy(); });
+      stream.on("end", () => {
+        if(status !== 200) return done("");
+        const text = Buffer.concat(chunks).toString("utf8");
+        // format:html returns raw HTML, but tolerate a JSON envelope ({html|content|data|body})
+        if(text.trimStart().startsWith("{")){
+          try{ const j = JSON.parse(text); return done(j.html || j.content || j.data || j.body || ""); }
+          catch{ return done(""); }
+        }
+        done(text);
+      });
+      stream.on("error", () => done(""));
+      res.on("error", () => done(""));
+    });
+    req.on("error", () => done(""));
+    req.on("timeout", () => { req.destroy(); done(""); });
+    req.write(body); req.end();
+  });
+}
+
 async function liveFetchPage(url){
   // honor an explicit proxy via undici when one is configured; otherwise use the
   // crash-proof built-in http(s) path. Counts blocks (403/429/503) and backs off once.
@@ -687,30 +736,35 @@ async function liveFetchPage(url){
       return await res.text();
     }catch{ return ""; }
   }
-  // Escalate cheapest-first: primary (datacenter/direct) -> residential -> website unblocker.
-  // A tier is tried only if the previous one was BLOCKED (403/429/503), never on a 404/network
-  // error. With a rotating gateway a block means that exit IP was flagged, so we retry to roll a
-  // fresh IP. The unblocker is slow (browser render) + self-rotates, so it gets a longer timeout.
+  // Escalate cheapest-first across proxy tiers, then the unblocker API as a last resort. A
+  // tier is tried only if the previous one was BLOCKED (403/429/503), never on a 404/network
+  // error. With a rotating gateway a block means that exit IP was flagged, so we retry to roll
+  // a fresh IP.
   const TIERS = [
-    { name: "primary",   attempts: PROXY_URL ? 4 : 2, timeout: 15000, proxied: !!PROXY_URL },
-    { name: "fallback",  attempts: 4,                 timeout: 15000, proxied: true, on: !!PROXY_FALLBACK_URL },
-    { name: "unblocker", attempts: 2,                 timeout: 45000, proxied: true, on: !!PROXY_UNBLOCKER_URL },
+    { name: "primary",  attempts: PROXY_URL ? 4 : 2, proxied: !!PROXY_URL },
+    { name: "fallback", attempts: 4,                 proxied: true, on: !!PROXY_FALLBACK_URL },
   ].filter(t => t.on !== false);
   for(const tier of TIERS){
     const rotates = tier.proxied;                            // a gateway is in front -> a fresh IP per attempt
     for(let attempt = 0; attempt < tier.attempts; attempt++){
       const r = await httpGetRaw(url, { accept: /html/, maxBytes: HTML_MAX_BYTES, returnMeta: true,
-        proxyTier: tier.name, timeout: tier.timeout, userAgent: tier.proxied ? BROWSER_UA : UA });
+        proxyTier: tier.name, timeout: 15000, userAgent: tier.proxied ? BROWSER_UA : UA });
       if(r.status === 200){ _net.fetched++; return r.body; }
       if(r.status === 403 || r.status === 429 || r.status === 503){                            // blocked
         _net.blocked++;
         const canRetry = attempt < tier.attempts - 1 && (rotates || r.status === 429 || r.status === 503);
         if(canRetry){ await sleep(rotates ? 400 : 800); continue; }
-        break;                                                                                 // tier exhausted -> escalate to next tier
+        break;                                                                                 // tier exhausted -> escalate
       }
       _net.fetched++;                                                                          // 404 / other -> definitive, don't escalate
       return "";
     }
+  }
+  // Last resort: the website-unblocker API (real browser; slow + per-request cost).
+  if(UNBLOCKER_API_URL){
+    const html = await unblockerFetch(url);
+    if(html){ _net.fetched++; return html; }
+    _net.blocked++;
   }
   return "";
 }
@@ -1160,22 +1214,24 @@ if(require.main === module){
 
   const args = parseArgs(process.argv);
 
-  // `node cc-engine.js --proxy-test [url]` — verify the configured proxies reach a target
-  // (default: a bot-protected Howard Hanna agent page). For each tier it shows the exit IP
-  // across 3 calls (should vary on a rotating gateway) then fetches the page via the full
-  // liveFetchPage chain (primary -> residential fallback).
+  // `node cc-engine.js --proxy-test [url]` — verify the configured proxies + unblocker reach a
+  // target (default: a bot-protected Howard Hanna agent page). Shows each proxy tier's exit IP
+  // across 3 calls (should vary on a rotating gateway), then fetches the page via the full
+  // liveFetchPage chain (primary -> residential -> unblocker API).
   if(args.proxyTest){
     (async () => {
+      const realPage = (html) => html.length > 5000 &&
+        !/just a moment|access denied|reference #\d|akamai|attention required|verify you are human|enable javascript and cookies/i.test(html.slice(0, 4000));
       console.log(`PROXY_URL (primary):          ${PROXY_URL ? mask(PROXY_URL) : "(not set)"}`);
       console.log(`PROXY_FALLBACK_URL (resi):    ${PROXY_FALLBACK_URL ? mask(PROXY_FALLBACK_URL) : "(not set)"}`);
-      console.log(`PROXY_UNBLOCKER_URL:          ${PROXY_UNBLOCKER_URL ? mask(PROXY_UNBLOCKER_URL) : "(not set)"}`);
+      console.log(`UNBLOCKER_API_URL:            ${UNBLOCKER_API_URL ? mask(UNBLOCKER_API_URL) : "(not set)"}`);
       console.log(`HTTPS_PROXY (undici):         ${proxyEnv ? mask(proxyEnv) + (ProxyAgent ? "" : "  — undici NOT installed, this won't work") : "(not set)"}`);
-      if(!PROXY_URL && !PROXY_FALLBACK_URL && !PROXY_UNBLOCKER_URL && !proxyEnv){ console.log("\nNo proxy configured. Set PROXY_URL / PROXY_FALLBACK_URL / PROXY_UNBLOCKER_URL and re-run."); return; }
+      if(!PROXY_URL && !PROXY_FALLBACK_URL && !UNBLOCKER_API_URL && !proxyEnv){ console.log("\nNothing configured. Set PROXY_URL / PROXY_FALLBACK_URL / UNBLOCKER_API_URL and re-run."); return; }
 
       const showExitIps = async (label, tier) => {
         console.log(`\n${label} exit IP (3 samples — should vary on a rotating gateway):`);
         for(let i = 0; i < 3; i++){
-          const r = await httpGetRaw("https://ipinfo.io/json", { accept: /json|text|html/, maxBytes: 64 * 1024, returnMeta: true, proxyTier: tier, timeout: tier === "unblocker" ? 45000 : 15000 });
+          const r = await httpGetRaw("https://ipinfo.io/json", { accept: /json|text|html/, maxBytes: 64 * 1024, returnMeta: true, proxyTier: tier });
           let info = (r.body || "").trim();
           try{ const j = JSON.parse(r.body); info = `${j.ip}   ${j.org || ""}   ${[j.city, j.region, j.country].filter(Boolean).join(", ")}`; }catch{}
           console.log(`  [${r.status}] ${info || "(no response — proxy unreachable / bad credentials?)"}`);
@@ -1183,17 +1239,24 @@ if(require.main === module){
       };
       if(PROXY_URL) await showExitIps("PRIMARY", "primary");
       if(PROXY_FALLBACK_URL) await showExitIps("RESIDENTIAL FALLBACK", "fallback");
-      if(PROXY_UNBLOCKER_URL) await showExitIps("WEBSITE UNBLOCKER", "unblocker");
 
       const target = args.csvPath || "https://www.howardhanna.com/Agent/Detail/Aaron-Foster/72909";
-      console.log(`\nFetching target via liveFetchPage: ${target}`);
+
+      // direct unblocker-API check (isolates it from the proxy chain; ~60-90s)
+      if(UNBLOCKER_API_URL){
+        console.log(`\nUnblocker API (direct POST) for: ${target}`);
+        const t = Date.now();
+        const html = await unblockerFetch(target);
+        console.log(`  bytes: ${html.length}   time: ${Date.now() - t}ms   ${html.length ? (realPage(html) ? "real page ✅" : "returned a block/challenge page ⚠️") : "no response ❌ (check endpoint/credentials)"}`);
+      }
+
+      console.log(`\nFull chain via liveFetchPage: ${target}`);
       resetNetStats();
       const t0 = Date.now();
       const html = await liveFetchPage(target);
-      const blockedSig = /just a moment|access denied|reference #\d|akamai|attention required|verify you are human|enable javascript and cookies/i.test(html.slice(0, 4000));
       console.log(`  bytes: ${html.length}   time: ${Date.now() - t0}ms   net: ${JSON.stringify(_net)}`);
-      console.log(`  result: ${html.length > 5000 && !blockedSig ? "OK — looks like a real page ✅"
-        : html.length ? `got HTML but it looks like a block/challenge page ⚠️${PROXY_UNBLOCKER_URL ? " (even via the unblocker — verify the unblocker endpoint/credentials)" : " — set PROXY_UNBLOCKER_URL (web unblocker) for JS-challenge sites"}`
+      console.log(`  result: ${realPage(html) ? "OK — looks like a real page ✅"
+        : html.length ? `got HTML but it looks like a block/challenge page ⚠️${UNBLOCKER_API_URL ? " (even via the unblocker — verify UNBLOCKER_API_URL)" : " — set UNBLOCKER_API_URL for JS-challenge sites"}`
         : "BLOCKED / empty ❌"}`);
     })().catch(e => { console.error(e); process.exit(1); });
     return;
