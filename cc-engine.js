@@ -940,7 +940,7 @@ async function run(csvPath, opts = {}){
     // ---- WEBPAGE mode: this exact URL only. Common Crawl archive first (bypasses live
     //      blocks like Cloudflare), then live-fetch fallback. No domain crawl. ----
     if(mode === 'webpage'){
-      let kept = 0, wnote = "", fromCC = false;
+      let kept = 0, wnote = "", fromCC = false, fromUrl = false;
       // 1) Common Crawl: read the archived snapshot of this exact URL (unless CC is disabled)
       if(!ccDisabled){
         try{
@@ -968,10 +968,19 @@ async function run(csvPath, opts = {}){
           } else { wnote = "page not reachable"; }
         }catch(e){ wnote = e.message; }
       }
+      // 3) URL-only fallback: the page couldn't be fetched (blocked/404) and isn't in Common
+      //    Crawl, but the URL itself names a person under a known directory (e.g. an agent
+      //    profile behind bot protection). Build a record from the URL alone — name + role +
+      //    gender; the email is modelled later if the company's pattern is known.
+      if(kept === 0){
+        const out = extractRecord("", domain, { wireless, genderMap, directoryRules, source:"URL", timestamp: today, allowNoEmail: true });
+        if(out){ ingest(out); kept++; fromUrl = true; }
+      }
       if(kept > 0){
         if(fromCC) coverage.found++; else coverage.live++;
-        console.log(`◆ ${domain.slice(0,48).padEnd(48)} ${kept} record(s) via ${fromCC ? 'Common Crawl' : 'webpage'}`);
-        onProgress({ status:'domain-done', domain, index: domainNumber, total: domains.length, source: fromCC ? 'Common Crawl' : 'Webpage', kept });
+        const via = fromCC ? 'Common Crawl' : fromUrl ? `URL only${wnote ? ` (${wnote})` : ''}` : 'webpage';
+        console.log(`◆ ${domain.slice(0,48).padEnd(48)} ${kept} record(s) via ${via}`);
+        onProgress({ status:'domain-done', domain, index: domainNumber, total: domains.length, source: fromCC ? 'Common Crawl' : fromUrl ? 'URL' : 'Webpage', kept });
       }else{
         coverage.empty++;
         console.log(`· ${domain.slice(0,48).padEnd(48)} no contacts found${wnote ? `  (${wnote})` : ""}`);
@@ -1161,6 +1170,20 @@ if(require.main === module){
       ok("webpage mode reads an archived URL from Common Crawl",
         wpRecs.some(r => String(r["Email Address"]).toLowerCase() === "jane.smith@blocked.com" && r["Source"] === "Common Crawl"));
       ok("webpage mode live-fetches only the URL CC didn't have", wpLive === 1);
+
+      // 3c) URL-only fallback: page blocked (403) + not in Common Crawl, but the URL itself
+      //     names a person under a known directory (e.g. an agent profile behind bot protection)
+      const urlOnly = await run("", {
+        mode: "webpage",
+        _items: ["https://blocked.com/Agent/Detail/Jane-Smith/71955"],
+        wirelessPath:(__dirname + "/WIRELESS_BLOCKS.TXT"),
+        genderMap:{ jane:"F" }, outPath:`${tmp}/wp-url.csv`,
+        _queryIndexUrl: async () => null,                                                        // not archived
+        _liveFetch: async () => "",                                                              // blocked
+      });
+      ok("URL-only record built when page blocked + not in Common Crawl",
+        urlOnly.length === 1 && urlOnly[0]["First"] === "Jane" && urlOnly[0]["Last"] === "Smith"
+        && urlOnly[0]["Source"] === "URL" && urlOnly[0]["Title"] === "Agent");
 
       const duplicateRows = [
         { "Email Address": "test@xyz.com", "Phone": "", "Email Type": "Role-Based" },
