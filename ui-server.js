@@ -10,6 +10,7 @@ const RESULTS_CSV = path.join(__dirname, 'cc-results.csv');
 const { runDomains, COLUMNS, extractBioUrlsFromSitemaps } = require('./cc-engine');
 const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords, classifyEmail, cleanEmail } = require('./extractor');
 const { modelEmail } = require('./email-pattern');
+const { importSheet } = require('./sheet-import');
 const mailer = require('./mailer');
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
@@ -92,6 +93,33 @@ try { fs.mkdirSync(JOBS_DIR, { recursive: true }); } catch (e) { /* ignore */ }
 const { makeDb } = require('./db');
 const db = makeDb(DATA_DIR);
 const aiEnrich = require('./ai-enrich');
+
+// ---- Google Sheet -> Master DB scheduled sync (one-way, import-only) ----
+// SHEET_SYNC_URL = the sheet to import; SHEET_SYNC_HOURS = interval (default 24).
+const SHEET_SYNC_URL = process.env.SHEET_SYNC_URL || '';
+const SHEET_SYNC_HOURS = Math.max(1, Number(process.env.SHEET_SYNC_HOURS) || 24);
+let sheetSync = { running: false, lastRun: null, lastResult: null, lastError: null, url: SHEET_SYNC_URL };
+
+async function runSheetSync(url) {
+  const target = (url || SHEET_SYNC_URL || '').trim();
+  if (!target) { sheetSync.lastError = 'No sheet URL configured (set SHEET_SYNC_URL).'; return sheetSync; }
+  if (sheetSync.running) return sheetSync;
+  sheetSync.running = true; sheetSync.lastError = null;
+  const t0 = Date.now();
+  try {
+    console.log(`Sheet sync: importing ${target} ...`);
+    const res = await importSheet(db, target, { genderMap: GENDER_MAP });
+    res.elapsedMs = Date.now() - t0;
+    sheetSync.lastResult = res; sheetSync.url = target;
+    console.log(`Sheet sync: ${res.imported} imported (+${res.added} new) from ${res.unique} unique URL(s); DB total ${res.dbTotal} (${res.elapsedMs}ms).`);
+  } catch (e) {
+    sheetSync.lastError = e.message;
+    console.error('Sheet sync failed:', e.message);
+  } finally {
+    sheetSync.running = false; sheetSync.lastRun = new Date().toISOString();
+  }
+  return sheetSync;
+}
 
 // ---- user accounts / roles / sessions ----
 const { makeUsers } = require('./users');
@@ -817,6 +845,24 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ---- Google Sheet -> Master DB sync (one-way import) ----
+  if (url.pathname === '/api/sheet/status' && req.method === 'GET') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    sendJson(res, { ...sheetSync, configuredUrl: SHEET_SYNC_URL, intervalHours: SHEET_SYNC_HOURS });
+    return;
+  }
+  if (url.pathname === '/api/sheet/import' && req.method === 'POST') {
+    if (!isAdmin) { jsonErr(res, 403, 'Forbidden'); return; }
+    readJsonBody(req, (b) => {
+      const u = (b && typeof b.url === 'string' && b.url.trim()) || SHEET_SYNC_URL;
+      if (!u) return jsonErr(res, 400, 'No sheet URL — provide {url} or set SHEET_SYNC_URL.');
+      if (sheetSync.running) return jsonErr(res, 409, 'A sheet import is already running.');
+      runSheetSync(u);                                  // fire-and-forget; poll /api/sheet/status
+      sendJson(res, { ok: true, started: true, url: u });
+    });
+    return;
+  }
+
   // ---- central database (SQLite, server-side paginated) ----
   if (url.pathname === '/api/db/stats' && req.method === 'GET') { sendJson(res, db.stats()); return; }
   if (url.pathname === '/api/db/facets' && req.method === 'GET') { sendJson(res, db.facets()); return; }
@@ -1016,5 +1062,10 @@ server.listen(PORT, () => {
     console.log('⚠️  Access control: OFF — no APP_PASSWORD/AUTH_USERS set. Fine for localhost, NOT for hosting.');
   }
   console.log(`Data dir: ${DATA_DIR}`);
+  if (SHEET_SYNC_URL) {
+    console.log(`Sheet sync: ON for ${SHEET_SYNC_URL} every ${SHEET_SYNC_HOURS}h.`);
+    setTimeout(() => runSheetSync(), 30000);                              // initial import shortly after startup
+    setInterval(() => runSheetSync(), SHEET_SYNC_HOURS * 3600 * 1000);   // then on the interval
+  }
 });
 

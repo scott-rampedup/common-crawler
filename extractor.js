@@ -924,7 +924,8 @@ function loadDirectoryRules(filePath){
 
 module.exports = { extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules,
   cleanEmail, setEmailBlocklist, loadEmailBlocklist, analyzePhones, splitExtension,
-  geocodeRecords, geocodePhone, findPosition };
+  geocodeRecords, geocodePhone, findPosition,
+  toE164, countryCodeFromDomain, pathIdFromUrl, getBaseDomain };   // reused by the Google-Sheet importer
 
 // ---------------------------------------------------------------- self-test
 if(require.main === module){
