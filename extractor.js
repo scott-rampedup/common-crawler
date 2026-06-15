@@ -594,6 +594,13 @@ function extractRecord(html, url, deps = {}){
   const tels = []; const seenT = new Set();
   for(const h of hrefs){ if(/^tel:/i.test(h)){ const t = h.replace(/^tel:/i,"").trim();
     if(t && !seenT.has(t)){ seenT.add(t); tels.push(t); } } }
+  // Fallback: many bio pages PRINT the phone as plain text with no tel: link. On a BIO URL
+  // (where the SAME-PAGE RULE makes a number safe to attach to the person), scan the visible
+  // text for phone-shaped numbers — only when no tel: link was found, so existing pages are
+  // unchanged. extractTextPhones is strict to avoid grabbing years, dates, zips, or IDs.
+  if(isBio && !tels.length){
+    for(const t of extractTextPhones(html)){ if(!seenT.has(t)){ seenT.add(t); tels.push(t); } }
+  }
   let phone="", phoneType="", phoneLocation="", phone2="", phone2Type="";
   if(isBio && tels.length && wireless){
     const cc = countryCodeFromDomain(getBaseDomain(url));   // country from the domain TLD (default US)
@@ -748,8 +755,9 @@ function countryCodeFromDomain(domain){
 // Convert a messy phone string to E.164 (+<cc><number>, digits only). Best-effort.
 function toE164(raw, cc){
   if(!raw) return "";
-  const hasPlus = String(raw).trim().startsWith("+");
-  let digits = String(raw).replace(/\D/g, "");
+  raw = String(raw).replace(/\(\s*0\s*\)/g, "");         // drop a parenthesized trunk prefix, e.g. "+44 (0)1483…" -> "+44 1483…"
+  const hasPlus = raw.trim().startsWith("+");
+  let digits = raw.replace(/\D/g, "");
   if(!digits) return "";
   if(hasPlus) return "+" + digits.slice(0, 15);          // already international
   cc = cc || "1";
@@ -779,6 +787,32 @@ function splitExtension(raw){
 
 // the E.164 base of a phone field, dropping any " ext. NNN" suffix
 function basePhone(p){ return String(p || "").split(/\s*ext\.?\s*/i)[0].trim(); }
+
+// Pull plain-text phone numbers off a page (for bio pages that print a number with no tel:
+// link). STRICT to avoid false positives: a candidate is kept only if it's international
+// (leading + with 8–15 digits) or NANP-shaped (10–11 digits WITH separators). So years
+// ("2026"), dates ("2026-04-30"), year ranges ("2010 - 2026"), zips, and IDs never match.
+// Returns at most the first two distinct numbers, in document order.
+const PHONE_TEXT_RE = /\+?\d[\d\s().\-]{6,18}\d/g;
+function extractTextPhones(html){
+  const text = stripTags(String(html || ""));
+  const out = []; const seen = new Set();
+  let m; PHONE_TEXT_RE.lastIndex = 0;
+  while(out.length < 2 && (m = PHONE_TEXT_RE.exec(text))){
+    const raw = m[0].trim();
+    const hasPlus = raw.startsWith("+");
+    const digits = raw.replace(/\D/g, "");
+    if(hasPlus){
+      if(digits.length < 8 || digits.length > 15) continue;
+    } else {
+      if(digits.length < 10 || digits.length > 11) continue;   // NANP-shaped only
+      if(!/[\s().\-]/.test(raw)) continue;                      // require formatting (not a bare digit run)
+    }
+    const key = (hasPlus ? "+" : "") + digits;
+    if(!seen.has(key)){ seen.add(key); out.push(raw); }
+  }
+  return out;
+}
 
 // Dataset-wide phone analysis (run AFTER all records are collected):
 //  1. clear Phone 2 when it's the same line as Phone
@@ -892,4 +926,37 @@ if(require.main === module){
     `<h1>Catherine S. Owens</h1><a href="mailto:&#099;&#111;wens&#064;lar&#115;&#111;n&#108;&#108;p&#046;com">email</a>`,
     "https://larsonllp.com/people/catherine-s-owens", { wireless, genderMap, source:"Test" });
   console.log("• HTML-entity email decode test:", decodedEmail && decodedEmail["Email Address"] === "cowens@larsonllp.com" ? "PASS" : `FAIL (${decodedEmail && decodedEmail["Email Address"]})`);
+
+  // ---- text-phone extraction + email-less bio (sitemap/webpage) ----
+  let pp = 0, pf = 0;
+  const okp = (label, cond) => { if(cond) pp++; else { pf++; console.log("  FAIL:", label); } };
+
+  okp("toE164 drops (0) trunk prefix", toE164("+44 (0)1483 307090") === "+441483307090");
+  okp("extractTextPhones grabs an intl number", extractTextPhones("<p>+44 (0)1483 307090</p>")[0] === "+44 (0)1483 307090");
+  okp("extractTextPhones grabs a US number", (extractTextPhones("<p>Call (202) 555-0123 today</p>")[0] || "").includes("202"));
+  okp("extractTextPhones ignores a year", extractTextPhones("<li>2026: promoted to Partner</li>").length === 0);
+  okp("extractTextPhones ignores a date", extractTextPhones("<p>2026-04-30</p>").length === 0);
+  okp("extractTextPhones ignores a year range", extractTextPhones("<p>2010 - 2026</p>").length === 0);
+  okp("extractTextPhones ignores a bare digit run", extractTextPhones("<p>10000000000</p>").length === 0);
+
+  // a bio page printing a phone as text (no tel: link) yields the normalized phone, and the
+  // email-less person is kept because Gender is assigned (allowNoEmail = sitemap/webpage mode)
+  const txtPhoneRec = extractRecord(
+    `<title>Adam Gage - our people | RSM UK</title><h1>Adam Gage</h1>` +
+    `<div class="profile-block"><p>Adam Gage</p><p>Partner</p><p>+44 (0)1483 307090</p></div>`,
+    "https://www.rsmuk.com/our-people/adam-gage", { wireless, genderMap: { adam:"M" }, source:"Test", allowNoEmail:true });
+  okp("bio text-phone captured + normalized", txtPhoneRec && txtPhoneRec["Phone"] === "+441483307090");
+  okp("email-less bio kept when gender assigned", txtPhoneRec && txtPhoneRec["First"] === "Adam" && !txtPhoneRec["Email Address"]);
+
+  // without an assigned Gender the email-less bio is still dropped (guards out junk slugs)
+  const noGender = extractRecord(`<h1>Zzyk Vwxp</h1><p>+44 (0)1483 307090</p>`,
+    "https://x.com/our-people/zzyk-vwxp", { wireless, genderMap:{}, source:"Test", allowNoEmail:true });
+  okp("email-less bio dropped when no gender", noGender === null);
+
+  // tel: link still wins (text fallback only runs when there's no tel:) and an emailed record is unaffected
+  okp("tel: link unaffected by text fallback",
+    (extractRecord(`<h1>Nina Novak</h1><a href="mailto:n@acme.com">e</a><a href="tel:+12012012345">c</a>`,
+      "https://acme.com/team/nina-novak", { wireless, genderMap, source:"Test" }) || {})["Phone"] === "+12012012345");
+
+  console.log(`\nphone / email-less self-test: ${pp} passed, ${pf} failed`);
 }
