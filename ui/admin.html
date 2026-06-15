@@ -56,6 +56,16 @@
       </section>
 
       <section class="admin-section">
+        <h2>Email <span id="emailStatus" class="pending-badge"></span></h2>
+        <p class="admin-hint">Send a test message to confirm outbound email (SMTP) is working. Leave the field blank to send to the configured admin address.</p>
+        <form id="testEmailForm" class="admin-create">
+          <input id="t-to" type="email" placeholder="Recipient (optional)" />
+          <button class="primary" type="submit">Send test email</button>
+        </form>
+        <p id="testEmailMsg" class="admin-msg"></p>
+      </section>
+
+      <section class="admin-section">
         <h2>Page content</h2>
         <p class="admin-hint">Edit the public legal pages shown at
           <a href="/privacy" target="_blank" rel="noopener">/privacy</a> and

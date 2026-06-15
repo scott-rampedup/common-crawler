@@ -171,6 +171,11 @@ function makeUsers(dir) {
 
   const norm = (u) => String(u || '').trim().toLowerCase();
   function getByUsername(u) { return db.prepare('SELECT * FROM users WHERE username = ?').get(norm(u)); }
+  function getByEmail(email) {
+    const e = norm(email);
+    if (!e) return null;
+    return db.prepare('SELECT * FROM users WHERE lower(email) = ? ORDER BY active DESC, id ASC LIMIT 1').get(e);
+  }
   function getById(id) { return db.prepare('SELECT * FROM users WHERE id = ?').get(Number(id)); }
   function listUsers() {
     return db.prepare('SELECT * FROM users ORDER BY active ASC, role DESC, username ASC').all().map(pub);
@@ -264,7 +269,7 @@ function makeUsers(dir) {
 
   return {
     ROLES, roleRank, pub,
-    getByUsername, getById, listUsers, count, activeAdminCount,
+    getByUsername, getByEmail, getById, listUsers, count, activeAdminCount,
     createUser, verify, setActive, setRole, setPassword, deleteUser, resetPassword,
     createSession, sessionUser, destroySession, destroyUserSessions, seedDefaultAdmin,
     getSetting, setSetting,

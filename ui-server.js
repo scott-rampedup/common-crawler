@@ -9,6 +9,7 @@ const PUBLIC_DIR = path.join(__dirname, 'ui');
 const RESULTS_CSV = path.join(__dirname, 'cc-results.csv');
 const { runDomains, COLUMNS, extractBioUrlsFromSitemaps } = require('./cc-engine');
 const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords } = require('./extractor');
+const mailer = require('./mailer');
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
 // Email blocklist (addresses to drop). Loaded once; edit email-blocklist.txt to update.
@@ -444,6 +445,25 @@ function handleAdmin(req, res, p) {
       return;
     }
   }
+  if (p === '/api/admin/email-status' && req.method === 'GET') {
+    sendJson(res, { enabled: mailer.mailEnabled(), adminEmail: mailer.adminEmail() });
+    return;
+  }
+  if (p === '/api/admin/test-email' && req.method === 'POST') {
+    readJsonBody(req, async (b) => {
+      const to = (b && typeof b.to === 'string' && b.to.trim()) ? b.to.trim() : mailer.adminEmail();
+      if (!mailer.mailEnabled()) return jsonErr(res, 400, 'SMTP is not configured yet (set the SMTP_* secrets).');
+      if (!to) return jsonErr(res, 400, 'No recipient — enter an address or set ADMIN_EMAIL.');
+      const r = await mailer.sendMail({
+        to, subject: 'Common Crawler SMTP test',
+        text: 'Success — Common Crawler can send email via SMTP.',
+        html: '<p>Success — Common Crawler can send email via SMTP.</p>',
+      });
+      if (r.ok) sendJson(res, { ok: true, to });
+      else jsonErr(res, 502, r.error || 'Send failed (no error detail).');
+    });
+    return;
+  }
   if (p === '/api/admin/users' && req.method === 'GET') { sendJson(res, users.listUsers()); return; }
   if (p === '/api/admin/users' && req.method === 'POST') {
     readJsonBody(req, (b) => {
@@ -463,7 +483,10 @@ function handleAdmin(req, res, p) {
     const t = users.getById(id);
     if (!t) return jsonErr(res, 404, 'User not found');
     const lastAdmin = t.role === 'admin' && t.active && users.activeAdminCount() <= 1;
-    if (action === 'activate') users.setActive(id, true);
+    if (action === 'activate') {
+      users.setActive(id, true);
+      if (t.email) mailer.sendMail({ to: t.email, ...mailer.templates.accountActivated(t) });   // best-effort
+    }
     else if (action === 'deactivate') { if (lastAdmin) return jsonErr(res, 400, 'Cannot deactivate the last active admin.'); users.setActive(id, false); users.destroyUserSessions(id); }
     else if (action === 'promote') users.setRole(id, t.role === 'user' ? 'analyst' : 'admin');
     else if (action === 'demote') { if (lastAdmin) return jsonErr(res, 400, 'Cannot demote the last active admin.'); users.setRole(id, t.role === 'admin' ? 'analyst' : 'user'); }
@@ -487,6 +510,7 @@ const server = http.createServer((req, res) => {
     p === '/home' ||
     p === '/login' || p === '/signup' || p === '/forgot' || p === '/privacy' || p === '/terms' ||
     p === '/api/auth/login' || p === '/api/auth/signup' || p === '/api/auth/logout' || p === '/api/auth/me' ||
+    p === '/api/auth/forgot' ||
     (p.startsWith('/api/pages/') && req.method === 'GET')
   );
   if (!PUBLIC_PATH && !me) {
@@ -542,7 +566,32 @@ const server = http.createServer((req, res) => {
       });
       if (!r.ok) return jsonErr(res, 400, r.error);
       console.log(`New signup pending activation: "${r.user.username}" (${r.user.email || 'no email'})`);
+      // notify admins + confirm to the signer-up (best-effort; never blocks the response)
+      const adminRecipients = [mailer.adminEmail(), ...users.listUsers().filter((u) => u.role === 'admin' && u.active && u.email).map((u) => u.email)]
+        .filter(Boolean).filter((e, i, a) => a.indexOf(e) === i).join(', ');
+      mailer.sendMail({ to: adminRecipients, ...mailer.templates.signupAdminAlert(r.user) });
+      if (r.user.email) mailer.sendMail({ to: r.user.email, ...mailer.templates.signupConfirm(r.user) });
       sendJson(res, { ok: true });
+    });
+    return;
+  }
+
+  // POST /api/auth/forgot  { email }  -> email a temp password if the address matches an active
+  // account. Always responds with the same generic message (no account enumeration).
+  if (p === '/api/auth/forgot' && req.method === 'POST') {
+    readJsonBody(req, (b) => {
+      const generic = { ok: true, message: 'If that email matches an account, we’ve sent password reset instructions.' };
+      const email = b && typeof b.email === 'string' ? b.email.trim() : '';
+      if (!email) return jsonErr(res, 400, 'Email is required.');
+      const row = users.getByEmail(email);
+      if (row && row.active && row.email) {
+        const tempPw = users.resetPassword(row.id);   // also invalidates existing sessions
+        console.log(`Password reset requested for "${row.username}" -> emailing ${row.email}`);
+        mailer.sendMail({ to: row.email, ...mailer.templates.passwordReset(row, tempPw) });
+      } else {
+        console.log(`Password reset requested for ${email} -> no active account (no email sent)`);
+      }
+      sendJson(res, generic);   // identical response whether or not the account exists
     });
     return;
   }

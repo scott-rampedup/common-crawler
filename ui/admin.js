@@ -95,5 +95,25 @@ document.querySelectorAll('button[data-page]').forEach((btn) => {
   });
 });
 
+async function loadEmailStatus() {
+  try {
+    const s = await api('GET', '/api/admin/email-status');
+    const badge = $('emailStatus');
+    badge.textContent = s.enabled ? 'SMTP configured' : 'SMTP not configured';
+    if (s.adminEmail) $('t-to').placeholder = `Recipient (default: ${s.adminEmail})`;
+  } catch (e) { /* ignore */ }
+}
+$('testEmailForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = $('testEmailMsg'); msg.textContent = 'Sending…'; msg.className = 'admin-msg';
+  const btn = e.target.querySelector('button[type="submit"]'); btn.disabled = true;
+  try {
+    const out = await api('POST', '/api/admin/test-email', { to: $('t-to').value.trim() });
+    msg.textContent = `Test email sent to ${out.to}. Check that inbox.`; msg.className = 'admin-msg ok';
+  } catch (err) { msg.textContent = 'Failed: ' + err.message; msg.className = 'admin-msg err'; }
+  btn.disabled = false;
+});
+
 loadUsers();
 loadPages();
+loadEmailStatus();

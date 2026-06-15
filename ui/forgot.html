@@ -11,11 +11,16 @@
   <div class="auth-card">
     <img class="auth-logo" src="/ui/logo.png" alt="Common Crawler" onerror="this.style.display='none'" />
     <h1>Forgot password</h1>
-    <p class="auth-sub">
-      Password resets are handled by an administrator. Please contact your administrator and
-      they can reset your password for you, then share the new temporary password.
-    </p>
+    <p class="auth-sub">Enter your account email and we'll send you a temporary password to sign in with.</p>
+    <form id="forgotForm" class="auth-form" autocomplete="on">
+      <label>Email
+        <input id="email" type="email" autocomplete="email" required />
+      </label>
+      <p id="msg" class="auth-msg"></p>
+      <button class="primary" type="submit">Send reset email</button>
+    </form>
     <div class="auth-links"><a href="/login">Back to sign in</a></div>
   </div>
+  <script src="/ui/forgot.js"></script>
 </body>
 </html>
