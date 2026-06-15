@@ -28,6 +28,9 @@ const INDEX = "https://index.commoncrawl.org";
 const DATA  = "https://data.commoncrawl.org";
 const CRAWL = "CC-MAIN-2026-21";                 // latest monthly crawl; combine several for coverage
 const UA = "RampedUp-CC-Engine/0.1 (https://rampedup.io; contact@rampedup.io)";
+// Browser UA for PROXIED live fetches (bot-protected sites flag the honest crawler UA).
+// Direct fetches + robots.txt keep the honest UA above.
+const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Keep-alive agents so we reuse TCP/TLS connections (esp. when pulling many pages
@@ -35,15 +38,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const keepAliveHttp  = new http.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 16, timeout: 30000 });
 const keepAliveHttps = new https.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 16, timeout: 30000 });
 
-// Optional outbound proxy for LIVE page fetches (e.g. NetNut rotating gateway).
-// Two tiers, used cheapest-first by liveFetchPage:
-//   PROXY_URL           = primary, e.g. a cheap DATACENTER gateway
-//                         (http://USER-dc-any:PASS@gw.netnut.net:5959)
-//   PROXY_FALLBACK_URL  = RESIDENTIAL gateway, used only when the primary is blocked
-//                         (http://USER-res-any:PASS@gw.netnut.net:5959)
+// Optional outbound proxies for LIVE page fetches (e.g. NetNut). THREE tiers, escalated
+// cheapest-first by liveFetchPage — a tier is tried only when the previous one is blocked:
+//   PROXY_URL            = primary, a cheap DATACENTER gateway
+//                          (http://USER-dc-any:PASS@gw.netnut.net:5959)
+//   PROXY_FALLBACK_URL   = RESIDENTIAL gateway, for sites that block datacenter IPs
+//                          (http://USER-res-us:PASS@gw.netnut.net:5959)
+//   PROXY_UNBLOCKER_URL  = WEBSITE UNBLOCKER (runs a real browser, solves JS/TLS challenges),
+//                          for Akamai/Cloudflare-JS sites a raw proxy can't pass. Priciest, so
+//                          it fires last. Unblockers MITM TLS, so this tier skips cert checks.
 // Each request exits a different IP, so we crawl wide without burning one address, and we
-// only spend (pricier) residential bandwidth on sites that block datacenter IPs. Common
-// Crawl traffic is NOT proxied (it's an API, not a blocking target, and saves $).
+// only spend pricier bandwidth on the sites that actually need it. Common Crawl traffic is
+// NOT proxied (it's an API, not a blocking target, and saves $).
 const mask = (s) => String(s || "").replace(/\/\/[^@]*@/, "//***:***@");
 function makeProxyAgents(url){
   if(!url) return { http: null, https: null };
@@ -58,12 +64,16 @@ function makeProxyAgents(url){
 }
 const PROXY_URL = process.env.PROXY_URL || "";
 const PROXY_FALLBACK_URL = process.env.PROXY_FALLBACK_URL || "";
-const _proxyPrimary  = makeProxyAgents(PROXY_URL);
-const _proxyFallback = makeProxyAgents(PROXY_FALLBACK_URL);
+const PROXY_UNBLOCKER_URL = process.env.PROXY_UNBLOCKER_URL || "";
+const _proxyPrimary   = makeProxyAgents(PROXY_URL);
+const _proxyFallback  = makeProxyAgents(PROXY_FALLBACK_URL);
+const _proxyUnblocker = makeProxyAgents(PROXY_UNBLOCKER_URL);
 let proxyAgentHttp = _proxyPrimary.http, proxyAgentHttps = _proxyPrimary.https;
 let proxyAgentHttpFb = _proxyFallback.http, proxyAgentHttpsFb = _proxyFallback.https;
-if(PROXY_URL)          console.log(`Live-crawl proxy (primary): ON via ${mask(PROXY_URL)}`);
-if(PROXY_FALLBACK_URL) console.log(`Live-crawl proxy (residential fallback): ON via ${mask(PROXY_FALLBACK_URL)}`);
+let proxyAgentHttpUb = _proxyUnblocker.http, proxyAgentHttpsUb = _proxyUnblocker.https;
+if(PROXY_URL)           console.log(`Live-crawl proxy (primary): ON via ${mask(PROXY_URL)}`);
+if(PROXY_FALLBACK_URL)  console.log(`Live-crawl proxy (residential fallback): ON via ${mask(PROXY_FALLBACK_URL)}`);
+if(PROXY_UNBLOCKER_URL) console.log(`Live-crawl proxy (website unblocker): ON via ${mask(PROXY_UNBLOCKER_URL)}`);
 
 // Tiny concurrency limiter: run() uses one per "lane" (across-domain pool, the
 // global Common-Crawl lane, the per-site lane) to cap how many requests run at once.
@@ -598,23 +608,29 @@ function httpGetRaw(url, opts = {}){
     try{ u = new URL(url); }catch{ return finish(0, ""); }
     const lib = u.protocol === "http:" ? http : https;
     const isHttp = u.protocol === "http:";
-    // opts.proxyTier: 'fallback' routes via the residential gateway; default is the primary.
-    const agent = (opts.proxyTier === "fallback" && PROXY_FALLBACK_URL)
-      ? (isHttp ? proxyAgentHttpFb : proxyAgentHttpsFb)               // residential fallback
-      : PROXY_URL
-        ? (isHttp ? proxyAgentHttp : proxyAgentHttps)                 // primary rotating proxy
-        : (lib === http ? keepAliveHttp : keepAliveHttps);            // direct
+    // opts.proxyTier: 'unblocker' -> website unblocker; 'fallback' -> residential; else primary/direct.
+    const agent = (opts.proxyTier === "unblocker" && PROXY_UNBLOCKER_URL)
+      ? (isHttp ? proxyAgentHttpUb : proxyAgentHttpsUb)               // website unblocker (browser render)
+      : (opts.proxyTier === "fallback" && PROXY_FALLBACK_URL)
+        ? (isHttp ? proxyAgentHttpFb : proxyAgentHttpsFb)             // residential fallback
+        : PROXY_URL
+          ? (isHttp ? proxyAgentHttp : proxyAgentHttps)              // primary rotating proxy
+          : (lib === http ? keepAliveHttp : keepAliveHttps);         // direct
 
-    const req = lib.request(u, {
+    const reqOpts = {
       method: "GET",
       agent,
       headers: {
-        "User-Agent": UA,
+        "User-Agent": opts.userAgent || UA,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Encoding": "gzip, deflate, br",
       },
-      timeout: 15000,
-    }, (res) => {
+      timeout: opts.timeout || 15000,
+    };
+    // Website Unblockers MITM HTTPS to inject/solve challenges, so their cert won't validate
+    // against the target domain — skip TLS verification for that (configured, trusted) tier only.
+    if(opts.proxyTier === "unblocker") reqOpts.rejectUnauthorized = false;
+    const req = lib.request(u, reqOpts, (res) => {
       const status = res.statusCode || 0;
 
       // follow redirects (propagate returnMeta)
@@ -671,20 +687,24 @@ async function liveFetchPage(url){
       return await res.text();
     }catch{ return ""; }
   }
-  // Try the primary proxy/direct first, then escalate to the residential fallback only if the
-  // page is still blocked — so pricier residential bandwidth is spent only on sites that need
-  // it. With a rotating gateway a 403/429/503 means that exit IP was blocked, so we retry to
-  // roll a fresh IP. Without a proxy, only 429/503 (transient) are retried.
-  const tiers = PROXY_FALLBACK_URL ? ["primary", "fallback"] : ["primary"];
-  for(const tier of tiers){
-    const rotates = tier === "fallback" || PROXY_URL;        // a gateway is in front -> a fresh IP per attempt
-    const maxAttempts = rotates ? 4 : 2;
-    for(let attempt = 0; attempt < maxAttempts; attempt++){
-      const r = await httpGetRaw(url, { accept: /html/, maxBytes: HTML_MAX_BYTES, returnMeta: true, proxyTier: tier });
+  // Escalate cheapest-first: primary (datacenter/direct) -> residential -> website unblocker.
+  // A tier is tried only if the previous one was BLOCKED (403/429/503), never on a 404/network
+  // error. With a rotating gateway a block means that exit IP was flagged, so we retry to roll a
+  // fresh IP. The unblocker is slow (browser render) + self-rotates, so it gets a longer timeout.
+  const TIERS = [
+    { name: "primary",   attempts: PROXY_URL ? 4 : 2, timeout: 15000, proxied: !!PROXY_URL },
+    { name: "fallback",  attempts: 4,                 timeout: 15000, proxied: true, on: !!PROXY_FALLBACK_URL },
+    { name: "unblocker", attempts: 2,                 timeout: 45000, proxied: true, on: !!PROXY_UNBLOCKER_URL },
+  ].filter(t => t.on !== false);
+  for(const tier of TIERS){
+    const rotates = tier.proxied;                            // a gateway is in front -> a fresh IP per attempt
+    for(let attempt = 0; attempt < tier.attempts; attempt++){
+      const r = await httpGetRaw(url, { accept: /html/, maxBytes: HTML_MAX_BYTES, returnMeta: true,
+        proxyTier: tier.name, timeout: tier.timeout, userAgent: tier.proxied ? BROWSER_UA : UA });
       if(r.status === 200){ _net.fetched++; return r.body; }
       if(r.status === 403 || r.status === 429 || r.status === 503){                            // blocked
         _net.blocked++;
-        const canRetry = attempt < maxAttempts - 1 && (rotates || r.status === 429 || r.status === 503);
+        const canRetry = attempt < tier.attempts - 1 && (rotates || r.status === 429 || r.status === 503);
         if(canRetry){ await sleep(rotates ? 400 : 800); continue; }
         break;                                                                                 // tier exhausted -> escalate to next tier
       }
@@ -1148,13 +1168,14 @@ if(require.main === module){
     (async () => {
       console.log(`PROXY_URL (primary):          ${PROXY_URL ? mask(PROXY_URL) : "(not set)"}`);
       console.log(`PROXY_FALLBACK_URL (resi):    ${PROXY_FALLBACK_URL ? mask(PROXY_FALLBACK_URL) : "(not set)"}`);
+      console.log(`PROXY_UNBLOCKER_URL:          ${PROXY_UNBLOCKER_URL ? mask(PROXY_UNBLOCKER_URL) : "(not set)"}`);
       console.log(`HTTPS_PROXY (undici):         ${proxyEnv ? mask(proxyEnv) + (ProxyAgent ? "" : "  — undici NOT installed, this won't work") : "(not set)"}`);
-      if(!PROXY_URL && !PROXY_FALLBACK_URL && !proxyEnv){ console.log("\nNo proxy configured. Set PROXY_URL / PROXY_FALLBACK_URL and re-run."); return; }
+      if(!PROXY_URL && !PROXY_FALLBACK_URL && !PROXY_UNBLOCKER_URL && !proxyEnv){ console.log("\nNo proxy configured. Set PROXY_URL / PROXY_FALLBACK_URL / PROXY_UNBLOCKER_URL and re-run."); return; }
 
       const showExitIps = async (label, tier) => {
         console.log(`\n${label} exit IP (3 samples — should vary on a rotating gateway):`);
         for(let i = 0; i < 3; i++){
-          const r = await httpGetRaw("https://ipinfo.io/json", { accept: /json|text|html/, maxBytes: 64 * 1024, returnMeta: true, proxyTier: tier });
+          const r = await httpGetRaw("https://ipinfo.io/json", { accept: /json|text|html/, maxBytes: 64 * 1024, returnMeta: true, proxyTier: tier, timeout: tier === "unblocker" ? 45000 : 15000 });
           let info = (r.body || "").trim();
           try{ const j = JSON.parse(r.body); info = `${j.ip}   ${j.org || ""}   ${[j.city, j.region, j.country].filter(Boolean).join(", ")}`; }catch{}
           console.log(`  [${r.status}] ${info || "(no response — proxy unreachable / bad credentials?)"}`);
@@ -1162,6 +1183,7 @@ if(require.main === module){
       };
       if(PROXY_URL) await showExitIps("PRIMARY", "primary");
       if(PROXY_FALLBACK_URL) await showExitIps("RESIDENTIAL FALLBACK", "fallback");
+      if(PROXY_UNBLOCKER_URL) await showExitIps("WEBSITE UNBLOCKER", "unblocker");
 
       const target = args.csvPath || "https://www.howardhanna.com/Agent/Detail/Aaron-Foster/72909";
       console.log(`\nFetching target via liveFetchPage: ${target}`);
@@ -1171,7 +1193,7 @@ if(require.main === module){
       const blockedSig = /just a moment|access denied|reference #\d|akamai|attention required|verify you are human|enable javascript and cookies/i.test(html.slice(0, 4000));
       console.log(`  bytes: ${html.length}   time: ${Date.now() - t0}ms   net: ${JSON.stringify(_net)}`);
       console.log(`  result: ${html.length > 5000 && !blockedSig ? "OK — looks like a real page ✅"
-        : html.length ? "got HTML but it looks like a block/challenge page ⚠️ (residential proxy may not be enough — consider a web-unblocker endpoint)"
+        : html.length ? `got HTML but it looks like a block/challenge page ⚠️${PROXY_UNBLOCKER_URL ? " (even via the unblocker — verify the unblocker endpoint/credentials)" : " — set PROXY_UNBLOCKER_URL (web unblocker) for JS-challenge sites"}`
         : "BLOCKED / empty ❌"}`);
     })().catch(e => { console.error(e); process.exit(1); });
     return;

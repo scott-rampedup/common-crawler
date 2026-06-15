@@ -25,8 +25,14 @@ blocked retry. (A datacenter proxy will still be blocked — it must be resident
    (this restarts the machine; no redeploy needed).
 3. Verify: `PROXY_URL='...' node cc-engine.js --proxy-test` (locally) — shows the exit IP
    across 3 calls (should vary) and whether it can fetch a Howard Hanna agent page.
-4. If a plain residential proxy still hits a JS/TLS challenge, switch `PROXY_URL` to the
-   provider's **web-unblocker** endpoint (same URL format) — it solves the challenge.
+4. For Akamai/Cloudflare-JS sites (e.g. `howardhanna.com`) a plain residential proxy still
+   gets a JS/TLS challenge it can't solve. Add a **Website Unblocker** as a third tier:
+   `fly secrets set PROXY_UNBLOCKER_URL='http://user:pass@unblocker-endpoint:port' --app common-crawler`.
+   It runs a real browser, so it fires **last** (priciest) — only when datacenter + residential
+   are both blocked. TLS verification is skipped for this tier (unblockers MITM HTTPS).
+
+Escalation order per live fetch: `PROXY_URL` (datacenter) → `PROXY_FALLBACK_URL` (residential)
+→ `PROXY_UNBLOCKER_URL` (unblocker). `--proxy-test` shows all configured tiers.
 
 The Render guide below is an alternative path if you ever want to move hosts.
 
