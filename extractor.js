@@ -607,13 +607,15 @@ function extractRecord(html, url, deps = {}){
     const a = splitExtension(tels[0]);
     const e164a = toE164(a.main, cc);
     phoneType = classifyLineType(a.main, wireless).type;    // classify on the main number (no ext)…
+    if(phoneType === "Unknown") phoneType = intlLineType(e164a) || phoneType;  // …non-NANP via libphonenumber
     if(intlMobileType(e164a)) phoneType = "Mobile";         // …non-NANP mobile by country prefix
-    phoneLocation = phoneType === "Toll Free" ? "" : geocode(a.main);
+    phoneLocation = phoneType === "Toll Free" ? "" : geocode(a.main);   // intl location filled later by geocodeRecords
     phone = e164a + (a.ext ? ` ext. ${a.ext}` : "");        // …E.164 + standardized extension
     if(tels[1]){
       const b = splitExtension(tels[1]);
       const e164b = toE164(b.main, cc);
       phone2Type = classifyLineType(b.main, wireless).type;
+      if(phone2Type === "Unknown") phone2Type = intlLineType(e164b) || phone2Type;
       if(intlMobileType(e164b)) phone2Type = "Mobile";
       phone2 = e164b + (b.ext ? ` ext. ${b.ext}` : "");
     }
@@ -695,6 +697,31 @@ function loadGeoLibs(){
     _geocoder = require("libphonenumber-geo-carrier").geocoder;
     _regionName = new Intl.DisplayNames(["en"], { type: "region" });
   }catch(e){ _phoneUtil = null; _geocoder = null; }
+}
+
+// Line type for a NON-NANP E.164 number, via libphonenumber's getNumberType. Reliable
+// outside the US/Canada (where number portability makes the type ambiguous — that's why
+// NANP keeps the wireless-block classifier instead). Maps to our vocabulary
+// (Mobile / Direct / Toll Free); "" when unavailable, invalid, or not classifiable.
+function intlLineType(e164){
+  loadGeoLibs();
+  if(!_phoneUtil || !_PNT || !e164) return "";
+  const s = String(e164).trim();
+  if(!s.startsWith("+")) return "";                      // require explicit international form
+  try{
+    const num = _phoneUtil.parse(s);
+    if(!_phoneUtil.isValidNumber(num)) return "";
+    switch(_phoneUtil.getNumberType(num)){
+      case _PNT.MOBILE: return "Mobile";
+      case _PNT.TOLL_FREE: return "Toll Free";
+      case _PNT.FIXED_LINE:
+      case _PNT.FIXED_LINE_OR_MOBILE:
+      case _PNT.VOIP:
+      case _PNT.PERSONAL_NUMBER:
+      case _PNT.UAN: return "Direct";
+      default: return "";
+    }
+  }catch{ return ""; }
 }
 
 // "+19169291481" -> "Sacramento, CA, United States". Normalizes non-E.164 input first, and
@@ -947,6 +974,21 @@ if(require.main === module){
     "https://www.rsmuk.com/our-people/adam-gage", { wireless, genderMap: { adam:"M" }, source:"Test", allowNoEmail:true });
   okp("bio text-phone captured + normalized", txtPhoneRec && txtPhoneRec["Phone"] === "+441483307090");
   okp("email-less bio kept when gender assigned", txtPhoneRec && txtPhoneRec["First"] === "Adam" && !txtPhoneRec["Email Address"]);
+
+  // non-NANP line type via libphonenumber (skipped if the lib isn't installed)
+  if(intlLineType("+441483307090")){
+    okp("intlLineType: UK landline -> Direct", intlLineType("+441483307090") === "Direct");
+    okp("intlLineType: UK mobile -> Mobile", intlLineType("+447525281159") === "Mobile");
+    okp("intlLineType: UK toll-free -> Toll Free", intlLineType("+448001234567") === "Toll Free");
+    okp("intlLineType: invalid -> ''", intlLineType("+44123") === "");
+    okp("UK landline bio classified Direct (not Unknown)", txtPhoneRec && txtPhoneRec["Phone Type"] === "Direct");
+    const ukMobileRec = extractRecord(
+      `<h1>Alessandra Raja</h1><div class="profile-block"><p>+44 7525 281159</p></div>`,
+      "https://www.rsmuk.com/our-people/alessandra-raja", { wireless, genderMap: { alessandra:"F" }, source:"Test", allowNoEmail:true });
+    okp("UK mobile bio classified Mobile", ukMobileRec && ukMobileRec["Phone Type"] === "Mobile");
+  } else {
+    console.log("  (skipped intlLineType tests — google-libphonenumber not available)");
+  }
 
   // without an assigned Gender the email-less bio is still dropped (guards out junk slugs)
   const noGender = extractRecord(`<h1>Zzyk Vwxp</h1><p>+44 (0)1483 307090</p>`,
