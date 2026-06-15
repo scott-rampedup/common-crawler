@@ -197,6 +197,20 @@ function lastPathSeg(url){
     return decodeURIComponent(seg).replace(/\.(html?|php|aspx?)$/i,"");
   }catch{ return ""; }
 }
+// A bare record-id path segment, e.g. the "71955" in /Agent/Detail/Aarin-Burt/71955.
+function isIdSegment(seg){ return /^\d{2,}$/.test(String(seg || "").replace(/\.(html?|php|aspx?)$/i,"")); }
+// The path segment that holds a person's name: usually the last segment, but for profile
+// URLs that end in a record id (".../First-Last/71955") it's the segment BEFORE the id.
+function nameSlugFromUrl(url){
+  try{
+    const segs = new URL(url).pathname.replace(/\/+$/,"").split("/").filter(Boolean)
+      .map((s) => decodeURIComponent(s).replace(/\.(html?|php|aspx?)$/i,""));
+    if(!segs.length) return "";
+    let i = segs.length - 1;
+    if(i >= 1 && isIdSegment(segs[i])) i -= 1;                    // skip a trailing id; the name is its parent
+    return segs[i] || "";
+  }catch{ return ""; }
+}
 function pathSegments(url){ try{ return new URL(url).pathname.toLowerCase().split("/").filter(Boolean); }catch{ return []; } }
 function normalizeForMatching(text){
   return String(text||"")
@@ -364,8 +378,11 @@ function looksLikePersonSlug(slug, genderMap = {}){
 // ---------------------------------------------------------------- classification
 function classifyDirectory(url, html = "", rules = {}, genderMap = {}){
   const segs = pathSegments(url);
-  const last = normalizeForMatching(lastPathSeg(url));
-  const parent = segs.length >= 2 ? normalizeForMatching(segs[segs.length-2]) : "";
+  let nIdx = segs.length - 1;                                   // index of the name-bearing segment…
+  if(nIdx >= 1 && isIdSegment(segs[nIdx])) nIdx -= 1;          // …skip a trailing record id (/First-Last/71955)
+  const nameRaw = nameSlugFromUrl(url);                         // raw name seg (decoded, ext-stripped)
+  const last = normalizeForMatching(nameRaw);
+  const parent = nIdx >= 1 ? normalizeForMatching(segs[nIdx-1]) : "";
   const pageText = normalizeForMatching(stripTags(html));
   const extraDirs = rules.names || new Set();
   const extraTerms = rules.terms || new Set();
@@ -388,6 +405,10 @@ function classifyDirectory(url, html = "", rules = {}, genderMap = {}){
     return "People";
   }
   if(personSlug && (isKnownDir(parent, BIO_DIRS) || isKnownDir(parent, extraDirs) || /^[a-z]+[-_.][a-z]+$/i.test(last))) return "BIO URL";
+  // Profile pages like /Agent/Detail/First-Last/<id>: the directory term ("Agent") sits
+  // earlier in the path (not adjacent to the name), and the name has its own segment.
+  // Recognise via a whole-path directory scan paired with a clean first-last name segment.
+  if(personSlug && /^[a-z]+[-_.][a-z]+$/i.test(nameRaw) && pathIdFromUrl(url)) return "BIO URL";
   if(isKnownDir(last, BIO_DIRS)) return "People";
   if([...extraTerms].some(term => pageText.includes(term))) return "BIO URL";
   return "Company";
@@ -563,7 +584,8 @@ function extractRecord(html, url, deps = {}){
   const pathHit = pathIdFromUrl(url);                  // {id, role} for the directory segment, or null
   const outDirectory = pathHit ? "Team" : directory;   // matched directory term -> Directory Type "Team"
   const last = lastPathSeg(url);
-  const { first, last: lastName } = isBio ? inferNameFromSlug(last, deps.genderMap) : { first:"", last:"" };
+  const nameSlug = nameSlugFromUrl(url);               // name seg (skips a trailing record id, e.g. /First-Last/71955)
+  const { first, last: lastName } = isBio ? inferNameFromSlug(nameSlug, deps.genderMap) : { first:"", last:"" };
 
   const hrefs = anchors(html);
 
@@ -639,7 +661,7 @@ function extractRecord(html, url, deps = {}){
   // Guarded tightly to real people: a BIO URL with first+last+gender AND a 2–3 token slug
   // (e.g. /our-people/adam-gage) — this drops news headlines like /news/jane-doe-joins-as-... .
   if(!email){
-    const slugTokens = isBio ? pathNameTokens(last).length : 0;
+    const slugTokens = isBio ? pathNameTokens(nameSlug).length : 0;
     const keepForModelling = deps.allowNoEmail && isBio && first && lastName && gender
       && slugTokens >= 2 && slugTokens <= 3;
     if(!keepForModelling) return null;         // require a valid email address for every other record
@@ -989,6 +1011,15 @@ if(require.main === module){
   } else {
     console.log("  (skipped intlLineType tests — google-libphonenumber not available)");
   }
+
+  // profile URLs with a trailing record id: /Agent/Detail/First-Last/<id> (name in the parent seg)
+  okp("nameSlugFromUrl skips a trailing id", nameSlugFromUrl("https://x.com/Agent/Detail/Aarin-Burt/71955") === "Aarin-Burt");
+  okp("classify /Agent/Detail/Name/id -> BIO URL", classifyDirectory("https://x.com/Agent/Detail/Aarin-Burt/71955") === "BIO URL");
+  const agentRec = extractRecord(`<h1>x</h1>`, "https://x.com/Agent/Detail/Aaron-Foster/72909",
+    { wireless, genderMap: { aaron:"M" }, source:"Test", allowNoEmail:true });
+  okp("agent-detail name pulled from parent seg", agentRec && agentRec["First"] === "Aaron" && agentRec["Last"] === "Foster");
+  okp("agent-detail role -> Title Agent / Directory Team", agentRec && agentRec["Title"] === "Agent" && agentRec["Directory"] === "Team");
+  okp("no false BIO for /blog/2024/12345 (ids, no dir, no name)", classifyDirectory("https://x.com/blog/2024/12345") !== "BIO URL");
 
   // without an assigned Gender the email-less bio is still dropped (guards out junk slugs)
   const noGender = extractRecord(`<h1>Zzyk Vwxp</h1><p>+44 (0)1483 307090</p>`,
