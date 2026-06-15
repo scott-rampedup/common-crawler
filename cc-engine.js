@@ -50,8 +50,10 @@ function makeProxyAgents(url){
   try{
     const { HttpProxyAgent }  = require("http-proxy-agent");
     const { HttpsProxyAgent } = require("https-proxy-agent");
-    return { http:  new HttpProxyAgent(url,  { keepAlive: true, maxSockets: 128 }),
-             https: new HttpsProxyAgent(url, { keepAlive: true, maxSockets: 128 }) };
+    // keepAlive:false -> a fresh connection (and thus a fresh rotating exit IP) per request.
+    // Reusing a socket would pin one IP, defeating rotation + the retry-rolls-a-new-IP logic.
+    return { http:  new HttpProxyAgent(url,  { keepAlive: false, maxSockets: 64 }),
+             https: new HttpsProxyAgent(url, { keepAlive: false, maxSockets: 64 }) };
   }catch(e){ console.warn("proxy agent unavailable:", e.message); return { http: null, https: null }; }
 }
 const PROXY_URL = process.env.PROXY_URL || "";
