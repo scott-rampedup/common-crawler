@@ -304,14 +304,18 @@ function makeDb(dir) {
     } catch (e) { /* none */ }
   }
 
-  // Bulk relabel: set Position = newValue for every record whose Position starts with `prefix`
-  // (rebuilding each matched row's search index). Returns { matched, samples } (samples are the
-  // PRE-change email/position pairs, for an audit trail).
-  function updatePositionByPrefix(prefix, newValue) {
-    const like = String(prefix).replace(/([%_\\])/g, '\\$1') + '%';
-    const matchRows = db.prepare("SELECT email FROM contacts WHERE position LIKE ? ESCAPE '\\'").all(like);
-    const samples = db.prepare("SELECT email, position FROM contacts WHERE position LIKE ? ESCAPE '\\' LIMIT 8").all(like)
-      .map((r) => ({ email: r.email, position: r.position }));
+  // Bulk relabel: set Position = newValue for every record matching { domain } and/or a Position
+  // { prefix }, rebuilding each matched row's search index. Returns { matched, samples } (samples
+  // are the PRE-change email/domain/position rows, for an audit trail).
+  function bulkSetPosition({ domain = '', prefix = '' } = {}, newValue) {
+    const where = []; const params = [];
+    if (domain) { where.push('domain = ?'); params.push(String(domain).toLowerCase().replace(/^www\./, '')); }
+    if (prefix) { where.push("position LIKE ? ESCAPE '\\'"); params.push(String(prefix).replace(/([%_\\])/g, '\\$1') + '%'); }
+    if (!where.length) return { matched: 0, updated: 0, samples: [] };
+    const w = where.join(' AND ');
+    const matchRows = db.prepare(`SELECT email FROM contacts WHERE ${w}`).all(...params);
+    const samples = db.prepare(`SELECT email, domain, position FROM contacts WHERE ${w} LIMIT 8`).all(...params)
+      .map((r) => ({ email: r.email, domain: r.domain, position: r.position }));
     const sel = db.prepare('SELECT * FROM contacts WHERE email = ?');
     const upd = db.prepare('UPDATE contacts SET position = ?, search = ?, updated_at = ? WHERE email = ?');
     const now = new Date().toISOString();
@@ -328,6 +332,7 @@ function makeDb(dir) {
     } catch (e) { db.exec('ROLLBACK'); throw e; }
     return { matched: matchRows.length, updated: matchRows.length, samples };
   }
+  const updatePositionByPrefix = (prefix, newValue) => bulkSetPosition({ prefix }, newValue);   // back-compat
 
   importLegacyJson();
   const cleanedEmails = cleanStoredEmails();
@@ -335,7 +340,7 @@ function makeDb(dir) {
   const typedRows = backfillTypes();
   if (typedRows) console.log(`Central DB: set Type (from domain TLD) on ${typedRows} record(s).`);
   console.log(`Central DB (SQLite): ${count().toLocaleString()} contact(s) at ${file}`);
-  return { upsertMany, query, each, stats, count, facets, getByEmail, updateRecord, deleteByEmail, backfillLocations, updatePositionByPrefix };
+  return { upsertMany, query, each, stats, count, facets, getByEmail, updateRecord, deleteByEmail, backfillLocations, updatePositionByPrefix, bulkSetPosition };
 }
 
 module.exports = { makeDb };

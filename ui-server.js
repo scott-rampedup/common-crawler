@@ -1177,12 +1177,14 @@ server.listen(PORT, () => {
     setTimeout(() => runSheetSync(), 30000);                              // initial import shortly after startup
     setInterval(() => runSheetSync(), SHEET_SYNC_HOURS * 3600 * 1000);   // then on the interval
   }
-  // One-off bulk Position relabel: set Position=POSITION_FIX_VALUE for every record whose Position
-  // starts with POSITION_FIX_PREFIX. Idempotent (re-runs match nothing). Unset the secrets after.
-  if (process.env.POSITION_FIX_PREFIX && process.env.POSITION_FIX_VALUE) {
+  // One-off bulk Position relabel: set Position=POSITION_FIX_VALUE for records matching
+  // POSITION_FIX_DOMAIN (exact domain) and/or POSITION_FIX_PREFIX (Position starts-with).
+  // Idempotent (re-runs are harmless). Unset the secrets after use.
+  if (process.env.POSITION_FIX_VALUE && (process.env.POSITION_FIX_DOMAIN || process.env.POSITION_FIX_PREFIX)) {
     try {
-      const r = db.updatePositionByPrefix(process.env.POSITION_FIX_PREFIX, process.env.POSITION_FIX_VALUE);
-      console.log(`Position fix: ${r.matched} record(s) with Position starting "${process.env.POSITION_FIX_PREFIX}" -> "${process.env.POSITION_FIX_VALUE}". Was: ${JSON.stringify(r.samples)}`);
+      const match = { domain: process.env.POSITION_FIX_DOMAIN || '', prefix: process.env.POSITION_FIX_PREFIX || '' };
+      const r = db.bulkSetPosition(match, process.env.POSITION_FIX_VALUE);
+      console.log(`Position fix: ${r.matched} record(s) matching ${JSON.stringify(match)} -> "${process.env.POSITION_FIX_VALUE}". Was: ${JSON.stringify(r.samples)}`);
     } catch (e) { console.error('Position fix failed:', e.message); }
   }
 });
