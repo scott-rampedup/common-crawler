@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Site Search · Common Crawler</title>
+  <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+  <link rel="apple-touch-icon" href="/ui/logo.png" />
+  <link rel="stylesheet" href="/ui/styles.css" />
+  <style>
+    .ss-wrap { max-width: 1200px; margin: 0 auto; padding: 16px 24px 48px; }
+    .ss-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin: 12px 0 6px; }
+    .ss-form label { display: flex; flex-direction: column; font-size: 13px; gap: 4px; flex: 1 1 520px; }
+    .ss-form input[type="text"] { padding: 9px 11px; font-size: 14px; }
+    .ss-hint { color: #6b7280; font-size: 12.5px; margin: 2px 0 14px; }
+    .ss-status { font-size: 13.5px; margin: 10px 0; padding: 10px 12px; background: #f3f4f6; border-radius: 8px; }
+    .ss-status.err { background: #fde8e8; color: #9b1c1c; }
+    .ss-stats { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; margin: 6px 0 12px; color: #374151; }
+    .ss-stats b { color: #111827; }
+    table.ss-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.ss-table th, table.ss-table td { text-align: left; padding: 7px 9px; border-bottom: 1px solid #eceef1; vertical-align: top; }
+    table.ss-table th { position: sticky; top: 0; background: #fafbfc; font-weight: 600; }
+    table.ss-table td.url a { word-break: break-all; }
+    .ss-desc { color: #4b5563; max-width: 420px; }
+    .ss-tablewrap { max-height: 62vh; overflow: auto; border: 1px solid #eceef1; border-radius: 8px; }
+    .ss-empty { color: #6b7280; padding: 20px; text-align: center; }
+    .ss-pill { display: inline-block; padding: 1px 7px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: 11.5px; }
+  </style>
+</head>
+<body class="search-page">
+  <div class="search-shell">
+    <header class="search-header">
+      <div class="brand">
+        <img class="app-logo" src="/ui/logo.png" alt="Common Crawler logo"
+             onerror="this.onerror=null;this.src='/ui/favicon.svg';" />
+        <h1>Common Crawler</h1>
+      </div>
+      <nav class="nav-actions">
+        <a class="nav-link" href="/">⌂ Crawler</a>
+        <a class="nav-link" href="/?view=db">Master database</a>
+        <a class="nav-link green" href="/search">🔍 Search Database</a>
+        <a class="nav-link green active" href="/site-search" aria-current="page">🌐 Site Search</a>
+      </nav>
+    </header>
+
+    <div class="ss-wrap">
+      <h2>Site Search</h2>
+      <p class="ss-hint">Enter a website or a specific section path. We run a Google <code>site:</code> search,
+        paginate the results to find bio pages, pull any position / email / phone from the snippets, then crawl
+        those bio URLs and push the contacts into the Master Database. One search at a time.</p>
+
+      <div class="ss-form">
+        <label>
+          Webpage or section path
+          <input id="ssInput" type="text" placeholder="e.g. https://www.jll.com/en-us/people/bio-broker/  or  evrealestate.com/en/our-advisors" />
+        </label>
+        <button id="ssStart" type="button" class="primary">Start search</button>
+      </div>
+      <p class="ss-hint" id="ssConfigHint"></p>
+
+      <div id="ssStatus" class="ss-status">Ready.</div>
+      <div id="ssStats" class="ss-stats"></div>
+
+      <div class="ss-tablewrap">
+        <table class="ss-table">
+          <thead>
+            <tr><th>Bio URL</th><th>Position</th><th>Email(s)</th><th>Phone(s)</th><th>Description</th></tr>
+          </thead>
+          <tbody id="ssBody">
+            <tr><td colspan="5" class="ss-empty">No results yet — start a search above.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    let pollTimer = null;
+
+    async function start() {
+      const url = $('ssInput').value.trim();
+      if (!url) { setStatus('Enter a webpage or domain.', true); return; }
+      $('ssStart').disabled = true;
+      try {
+        const res = await fetch('/api/site-search/start', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { setStatus(data.error || ('HTTP ' + res.status), true); $('ssStart').disabled = false; return; }
+        setStatus('Searching…');
+        poll();
+      } catch (e) { setStatus('Could not start: ' + e.message, true); $('ssStart').disabled = false; }
+    }
+
+    function setStatus(msg, isErr) {
+      const el = $('ssStatus'); el.textContent = msg; el.classList.toggle('err', !!isErr);
+    }
+
+    function render(d) {
+      const running = d.status === 'searching' || d.status === 'processing';
+      $('ssStart').disabled = running;
+      // status line
+      let msg = '';
+      if (d.status === 'idle') msg = 'Ready.';
+      else if (d.status === 'searching') msg = `Searching site:${d.target || d.input} — page ${d.pages}, ${d.totalResults} results so far…`;
+      else if (d.status === 'processing') msg = `Found ${d.bioCount} bio URL(s); crawling them → Master Database` + (d.job ? ` (job ${d.job.done}/${d.job.total}, ${d.job.recordCount} contacts so far)` : '') + '…';
+      else if (d.status === 'done') msg = `Done. ${d.bioCount} bio URL(s) from ${d.totalResults} results` + (d.job ? `; ${d.job.recordCount} contact(s) pushed to the Master Database (job ${d.job.status}).` : '.');
+      else if (d.status === 'failed') { setStatus(d.error || 'Failed.', true); }
+      if (d.status !== 'failed') setStatus(msg, false);
+
+      // stats
+      $('ssStats').innerHTML = [
+        d.target ? `Query: <b>site:${esc(d.target)}</b>` : '',
+        `Pages: <b>${d.pages || 0}</b>`,
+        `Results: <b>${d.totalResults || 0}</b>`,
+        `Bio URLs: <b>${d.bioCount || 0}</b>`,
+        `Serper credits: <b>${d.credits || 0}</b>`,
+        d.job ? `Job: <b>${esc(d.job.status)}</b> (${d.job.done}/${d.job.total}) → <a href="/?view=db">DB ${d.job.recordCount}</a>` : '',
+      ].filter(Boolean).map((s) => `<span>${s}</span>`).join('');
+
+      // table
+      const rows = d.results || [];
+      $('ssBody').innerHTML = rows.length ? rows.map((r) => `
+        <tr>
+          <td class="url"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url)}</a></td>
+          <td>${r.position ? `<span class="ss-pill">${esc(r.position)}</span>` : '—'}</td>
+          <td>${(r.emails || []).map(esc).join('<br>') || '—'}</td>
+          <td>${(r.phones || []).map(esc).join('<br>') || '—'}</td>
+          <td class="ss-desc">${esc(r.description || '')}</td>
+        </tr>`).join('')
+        : `<tr><td colspan="5" class="ss-empty">${running ? 'Searching…' : 'No bio URLs found.'}</td></tr>`;
+    }
+
+    async function poll() {
+      try {
+        const res = await fetch('/api/site-search/status');
+        if (res.ok) { const d = await res.json(); render(d);
+          if (d.status === 'searching' || d.status === 'processing') { clearTimeout(pollTimer); pollTimer = setTimeout(poll, 2000); return; }
+        }
+      } catch (e) { /* keep last */ }
+    }
+
+    $('ssStart').addEventListener('click', start);
+    $('ssInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); });
+    // initial: show config + any in-flight/last search
+    fetch('/api/site-search/status').then((r) => r.json()).then((d) => {
+      if (!d.configured) $('ssConfigHint').textContent = '⚠ SERPER_API_KEY is not set on the server — searches will fail until it is configured.';
+      render(d);
+      if (d.status === 'searching' || d.status === 'processing') poll();
+    }).catch(() => {});
+  </script>
+</body>
+</html>

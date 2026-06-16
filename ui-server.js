@@ -7,10 +7,11 @@ const zlib = require('zlib');
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'ui');
 const RESULTS_CSV = path.join(__dirname, 'cc-results.csv');
-const { runDomains, COLUMNS, extractBioUrlsFromSitemaps } = require('./cc-engine');
-const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords, classifyEmail, cleanEmail } = require('./extractor');
+const { runDomains, COLUMNS, extractBioUrlsFromSitemaps, isBioOrContactUrl } = require('./cc-engine');
+const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords, classifyEmail, cleanEmail, findPosition } = require('./extractor');
 const { modelEmail } = require('./email-pattern');
 const { importSheet } = require('./sheet-import');
+const { siteSearch } = require('./serper');
 const mailer = require('./mailer');
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
@@ -119,6 +120,63 @@ async function runSheetSync(url) {
     sheetSync.running = false; sheetSync.lastRun = new Date().toISOString();
   }
   return sheetSync;
+}
+
+// ---- Site Search (serper.dev): discover bio URLs on a site -> webpage job -> Master DB ----
+// One search at a time. SERPER_API_KEY required; SERPER_MAX_PAGES caps pagination (1 credit/page).
+const SERPER_API_KEY = process.env.SERPER_API_KEY || '';
+const SERPER_MAX_PAGES = Math.max(1, Number(process.env.SERPER_MAX_PAGES) || 20);
+let siteSearchState = { running: false, status: 'idle', input: '', target: '', startedAt: null,
+  finishedAt: null, pages: 0, totalResults: 0, bioCount: 0, credits: 0, results: [], jobId: null, error: null };
+const SS_EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+const SS_PHONE_RE = /\+?\d[\d\s().-]{7,}\d/g;
+
+async function runSiteSearch(input) {
+  if (siteSearchState.running) return siteSearchState;
+  siteSearchState = { running: true, status: 'searching', input, target: '', startedAt: new Date().toISOString(),
+    finishedAt: null, pages: 0, totalResults: 0, bioCount: 0, credits: 0, results: [], jobId: null, error: null };
+  try {
+    if (!SERPER_API_KEY) throw new Error('SERPER_API_KEY is not set.');
+    const sr = await siteSearch(input, { apiKey: SERPER_API_KEY, maxPages: SERPER_MAX_PAGES,
+      onPage: ({ page, total }) => { siteSearchState.pages = page; siteSearchState.totalResults = total; } });
+    siteSearchState.target = sr.target; siteSearchState.credits = sr.credits; siteSearchState.totalResults = sr.results.length;
+    if (sr.error && !sr.results.length) throw new Error('serper: ' + sr.error);
+
+    const bio = [];
+    for (const r of sr.results) {
+      if (!isBioOrContactUrl(r.link)) continue;
+      const text = `${r.title}\n${r.snippet}`;
+      const emails = [...new Set((text.match(SS_EMAIL_RE) || []).map((e) => cleanEmail(e)).filter(Boolean))];
+      const phones = [...new Set((text.match(SS_PHONE_RE) || []).map((p) => p.trim()).filter((p) => p.replace(/\D/g, '').length >= 10))].slice(0, 2);
+      bio.push({ url: r.link, title: r.title, description: r.snippet, emails, phones, position: findPosition(r.title, r.snippet) || '' });
+    }
+    siteSearchState.results = bio; siteSearchState.bioCount = bio.length;
+
+    if (bio.length) {
+      const job = startJob(bio.map((b) => b.url), '', false, 'webpage');   // process the bio URLs -> Master DB
+      siteSearchState.jobId = job.id;
+      siteSearchState.status = 'processing';
+      console.log(`Site Search: ${bio.length} bio URL(s) from ${sr.results.length} results (${sr.credits} credits) -> job ${job.id}.`);
+    } else {
+      siteSearchState.status = 'done';
+      console.log(`Site Search: 0 bio URLs from ${sr.results.length} results for site:${sr.target}.`);
+    }
+  } catch (e) {
+    siteSearchState.status = 'failed'; siteSearchState.error = e.message;
+    console.error('Site Search failed:', e.message);
+  } finally {
+    siteSearchState.running = false; siteSearchState.finishedAt = new Date().toISOString();
+  }
+  return siteSearchState;
+}
+
+// Status incl. the processing job's progress so the UI shows the full picture.
+function siteSearchStatus() {
+  const job = siteSearchState.jobId ? jobs.get(siteSearchState.jobId) : null;
+  let status = siteSearchState.status;
+  if (status === 'processing' && job && job.status !== 'running') status = 'done';
+  return { ...siteSearchState, configured: !!SERPER_API_KEY, maxPages: SERPER_MAX_PAGES, status,
+    job: job ? { id: job.id, status: job.status, total: job.domains.length, done: job.doneDomains.length, recordCount: job.recordsByEmail.size } : null };
 }
 
 // ---- user accounts / roles / sessions ----
@@ -696,6 +754,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (url.pathname === '/site-search' || url.pathname === '/site-search.html') {
+    if (!isAnalyst) { res.writeHead(302, { Location: '/search' }); res.end(); return; }   // analyst+ (runs crawls + serper credits)
+    serveStaticFile(res, path.join(PUBLIC_DIR, 'site-search.html'));
+    return;
+  }
+
   if (url.pathname.startsWith('/ui/')) {
     const filePath = path.join(PUBLIC_DIR, url.pathname.replace(/^\/ui\//, ''));
     serveStaticFile(res, filePath);
@@ -859,6 +923,25 @@ const server = http.createServer((req, res) => {
       if (sheetSync.running) return jsonErr(res, 409, 'A sheet import is already running.');
       runSheetSync(u);                                  // fire-and-forget; poll /api/sheet/status
       sendJson(res, { ok: true, started: true, url: u });
+    });
+    return;
+  }
+
+  // ---- Site Search (serper.dev -> bio URLs -> webpage job -> Master DB) ----
+  if (url.pathname === '/api/site-search/status' && req.method === 'GET') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    sendJson(res, siteSearchStatus());
+    return;
+  }
+  if (url.pathname === '/api/site-search/start' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    readJsonBody(req, (b) => {
+      const input = (b && typeof b.url === 'string' && b.url.trim()) || '';
+      if (!input) return jsonErr(res, 400, 'Enter a webpage or domain to search.');
+      if (!SERPER_API_KEY) return jsonErr(res, 400, 'SERPER_API_KEY is not configured on the server.');
+      if (siteSearchState.running) return jsonErr(res, 409, 'A site search is already running — only one at a time.');
+      runSiteSearch(input);                             // fire-and-forget; poll /api/site-search/status
+      sendJson(res, { ok: true, started: true, input });
     });
     return;
   }
