@@ -197,17 +197,24 @@ function lastPathSeg(url){
     return decodeURIComponent(seg).replace(/\.(html?|php|aspx?)$/i,"");
   }catch{ return ""; }
 }
-// A bare record-id path segment, e.g. the "71955" in /Agent/Detail/Aarin-Burt/71955.
-function isIdSegment(seg){ return /^\d{2,}$/.test(String(seg || "").replace(/\.(html?|php|aspx?)$/i,"")); }
-// The path segment that holds a person's name: usually the last segment, but for profile
-// URLs that end in a record id (".../First-Last/71955") it's the segment BEFORE the id.
+// A bare record-id path segment: a number ("71955"), a UUID, or a long hex blob — the kind of
+// thing that trails a name on profile URLs (e.g. /First-Last/<uuid>/<uuid> on evrealestate.com).
+function isIdSegment(seg){
+  const s = String(seg || "").replace(/\.(html?|php|aspx?)$/i,"");
+  return /^\d{2,}$/.test(s)                                                              // numeric id
+      || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)        // uuid
+      || /^[0-9a-f]{16,}$/i.test(s);                                                     // long hex id
+}
+// The path segment that holds a person's name: usually the last segment, but for profile URLs
+// that END in one or more record ids (".../First-Last/71955" or ".../First-Last/<uuid>/<uuid>")
+// it's the last NON-id segment.
 function nameSlugFromUrl(url){
   try{
     const segs = new URL(url).pathname.replace(/\/+$/,"").split("/").filter(Boolean)
       .map((s) => decodeURIComponent(s).replace(/\.(html?|php|aspx?)$/i,""));
     if(!segs.length) return "";
     let i = segs.length - 1;
-    if(i >= 1 && isIdSegment(segs[i])) i -= 1;                    // skip a trailing id; the name is its parent
+    while(i >= 1 && isIdSegment(segs[i])) i -= 1;                 // skip trailing id(s); the name is before them
     return segs[i] || "";
   }catch{ return ""; }
 }
@@ -379,7 +386,7 @@ function looksLikePersonSlug(slug, genderMap = {}){
 function classifyDirectory(url, html = "", rules = {}, genderMap = {}){
   const segs = pathSegments(url);
   let nIdx = segs.length - 1;                                   // index of the name-bearing segment…
-  if(nIdx >= 1 && isIdSegment(segs[nIdx])) nIdx -= 1;          // …skip a trailing record id (/First-Last/71955)
+  while(nIdx >= 1 && isIdSegment(segs[nIdx])) nIdx -= 1;       // …skip trailing record id(s) (/First-Last/71955 or /Name/<uuid>/<uuid>)
   const nameRaw = nameSlugFromUrl(url);                         // raw name seg (decoded, ext-stripped)
   const last = normalizeForMatching(nameRaw);
   const parent = nIdx >= 1 ? normalizeForMatching(segs[nIdx-1]) : "";
@@ -1021,6 +1028,13 @@ if(require.main === module){
   okp("agent-detail name pulled from parent seg", agentRec && agentRec["First"] === "Aaron" && agentRec["Last"] === "Foster");
   okp("agent-detail role -> Title Agent / Directory Team", agentRec && agentRec["Title"] === "Agent" && agentRec["Directory"] === "Team");
   okp("no false BIO for /blog/2024/12345 (ids, no dir, no name)", classifyDirectory("https://x.com/blog/2024/12345") !== "BIO URL");
+
+  // trailing UUID id(s): /our-advisors/First-Last/<uuid>/<uuid> (e.g. evrealestate.com)
+  okp("isIdSegment matches a UUID", isIdSegment("cc2bac91-8a1a-49cf-80fb-8b0db880183e"));
+  okp("nameSlugFromUrl skips two trailing UUIDs",
+    nameSlugFromUrl("https://x.com/en/our-advisors/aaron-allred/cc2bac91-8a1a-49cf-80fb-8b0db880183e/cc2bac91-8a1a-49cf-80fb-8b0db880183e") === "aaron-allred");
+  okp("classify /our-advisors/Name/<uuid>/<uuid> -> BIO URL",
+    classifyDirectory("https://x.com/en/our-advisors/aaron-allred/cc2bac91-8a1a-49cf-80fb-8b0db880183e/cc2bac91-8a1a-49cf-80fb-8b0db880183e") === "BIO URL");
 
   // without an assigned Gender the email-less bio is still dropped (guards out junk slugs)
   const noGender = extractRecord(`<h1>Zzyk Vwxp</h1><p>+44 (0)1483 307090</p>`,
