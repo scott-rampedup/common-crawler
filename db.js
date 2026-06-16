@@ -304,9 +304,9 @@ function makeDb(dir) {
     } catch (e) { /* none */ }
   }
 
-  // Bulk relabel: set Position = newValue for every record matching { domain } and/or a Position
-  // { prefix }, rebuilding each matched row's search index. Returns { matched, samples } (samples
-  // are the PRE-change email/domain/position rows, for an audit trail).
+  // Bulk relabel: set BOTH Position and Title = newValue for every record matching { domain }
+  // and/or a Position { prefix }, rebuilding each matched row's search index. Returns
+  // { matched, samples } (samples are the PRE-change email/domain/position/title rows, for audit).
   function bulkSetPosition({ domain = '', prefix = '' } = {}, newValue) {
     const where = []; const params = [];
     if (domain) { where.push('domain = ?'); params.push(String(domain).toLowerCase().replace(/^www\./, '')); }
@@ -314,19 +314,19 @@ function makeDb(dir) {
     if (!where.length) return { matched: 0, updated: 0, samples: [] };
     const w = where.join(' AND ');
     const matchRows = db.prepare(`SELECT email FROM contacts WHERE ${w}`).all(...params);
-    const samples = db.prepare(`SELECT email, domain, position FROM contacts WHERE ${w} LIMIT 8`).all(...params)
-      .map((r) => ({ email: r.email, domain: r.domain, position: r.position }));
+    const samples = db.prepare(`SELECT email, domain, position, title FROM contacts WHERE ${w} LIMIT 8`).all(...params)
+      .map((r) => ({ email: r.email, domain: r.domain, position: r.position, title: r.title }));
     const sel = db.prepare('SELECT * FROM contacts WHERE email = ?');
-    const upd = db.prepare('UPDATE contacts SET position = ?, search = ?, updated_at = ? WHERE email = ?');
+    const upd = db.prepare('UPDATE contacts SET position = ?, title = ?, search = ?, updated_at = ? WHERE email = ?');
     const now = new Date().toISOString();
     db.exec('BEGIN');
     try {
       for (const { email } of matchRows) {
         const row = sel.get(email); if (!row) continue;
-        const rec = rowToRecord(row); rec['Position'] = newValue;
+        const rec = rowToRecord(row); rec['Position'] = newValue; rec['Title'] = newValue;
         const search = [rec['First'], rec['Last'], rec['Email Address'], rec['Title'], rec['Position'], rec['Domain'], rec['Phone'], rec['Phone 2'], rec['Description']]
           .map((v) => String(v || '')).join(' ').toLowerCase();
-        upd.run(newValue, search, now, email);
+        upd.run(newValue, newValue, search, now, email);
       }
       db.exec('COMMIT');
     } catch (e) { db.exec('ROLLBACK'); throw e; }
