@@ -64,10 +64,10 @@
       <div class="ss-tablewrap">
         <table class="ss-table">
           <thead>
-            <tr><th>Bio URL</th><th>Position</th><th>Email(s)</th><th>Phone(s)</th><th>Description</th></tr>
+            <tr><th>Name</th><th>Bio URL</th><th>Position</th><th>Email</th><th>Phone(s)</th><th>Description</th></tr>
           </thead>
           <tbody id="ssBody">
-            <tr><td colspan="5" class="ss-empty">No results yet — start a search above.</td></tr>
+            <tr><td colspan="6" class="ss-empty">No results yet — start a search above.</td></tr>
           </tbody>
         </table>
       </div>
@@ -117,20 +117,27 @@
         `Results: <b>${d.totalResults || 0}</b>`,
         `Bio URLs: <b>${d.bioCount || 0}</b>`,
         `Serper credits: <b>${d.credits || 0}</b>`,
-        d.job ? `Job: <b>${esc(d.job.status)}</b> (${d.job.done}/${d.job.total}) → <a href="/?view=db">DB ${d.job.recordCount}</a>` : '',
+        d.snippetUpserted ? `From results → DB: <b>${d.snippetUpserted}</b> (+${d.snippetAdded || 0} new, ${d.modelled || 0} modelled)` : '',
+        d.job ? `Crawl job: <b>${esc(d.job.status)}</b> (${d.job.done}/${d.job.total}) → <a href="/?view=db">DB ${d.job.recordCount}</a>` : '',
       ].filter(Boolean).map((s) => `<span>${s}</span>`).join('');
 
       // table
       const rows = d.results || [];
+      const emailCell = (r) => {
+        if (r.email) return `${esc(r.email)}${r.emailType === 'Modelled' ? ' <span class="ss-pill" style="background:#fef3c7;color:#92400e">modelled</span>' : ''}`;
+        if ((r.emails || []).length) return r.emails.map(esc).join('<br>');
+        return '—';
+      };
       $('ssBody').innerHTML = rows.length ? rows.map((r) => `
         <tr>
+          <td>${esc(r.name || '—')}</td>
           <td class="url"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url)}</a></td>
           <td>${r.position ? `<span class="ss-pill">${esc(r.position)}</span>` : '—'}</td>
-          <td>${(r.emails || []).map(esc).join('<br>') || '—'}</td>
+          <td>${emailCell(r)}</td>
           <td>${(r.phones || []).map(esc).join('<br>') || '—'}</td>
           <td class="ss-desc">${esc(r.description || '')}</td>
         </tr>`).join('')
-        : `<tr><td colspan="5" class="ss-empty">${running ? 'Searching…' : 'No bio URLs found.'}</td></tr>`;
+        : `<tr><td colspan="6" class="ss-empty">${running ? 'Searching…' : 'No bio URLs found.'}</td></tr>`;
     }
 
     async function poll() {

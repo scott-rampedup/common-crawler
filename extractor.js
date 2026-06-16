@@ -932,7 +932,7 @@ function loadDirectoryRules(filePath){
 module.exports = { extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules,
   cleanEmail, setEmailBlocklist, loadEmailBlocklist, analyzePhones, splitExtension,
   geocodeRecords, geocodePhone, findPosition,
-  toE164, countryCodeFromDomain, pathIdFromUrl, getBaseDomain };   // reused by the Google-Sheet importer
+  toE164, countryCodeFromDomain, pathIdFromUrl, getBaseDomain, nameSlugFromUrl };   // reused by the Sheet importer + Site Search
 
 // ---------------------------------------------------------------- self-test
 if(require.main === module){

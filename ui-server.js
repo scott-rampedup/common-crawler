@@ -11,7 +11,7 @@ const { runDomains, COLUMNS, extractBioUrlsFromSitemaps, isBioOrContactUrl } = r
 const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords, classifyEmail, cleanEmail, findPosition } = require('./extractor');
 const { modelEmail } = require('./email-pattern');
 const { importSheet } = require('./sheet-import');
-const { siteSearch } = require('./serper');
+const { siteSearch, bioRowsToRecords } = require('./serper');
 const mailer = require('./mailer');
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
@@ -134,7 +134,8 @@ const SS_PHONE_RE = /\+?\d[\d\s().-]{7,}\d/g;
 async function runSiteSearch(input) {
   if (siteSearchState.running) return siteSearchState;
   siteSearchState = { running: true, status: 'searching', input, target: '', startedAt: new Date().toISOString(),
-    finishedAt: null, pages: 0, totalResults: 0, bioCount: 0, credits: 0, results: [], jobId: null, error: null };
+    finishedAt: null, pages: 0, totalResults: 0, bioCount: 0, credits: 0, results: [], jobId: null, error: null,
+    snippetUpserted: 0, snippetAdded: 0, modelled: 0 };
   try {
     if (!SERPER_API_KEY) throw new Error('SERPER_API_KEY is not set.');
     const sr = await siteSearch(input, { apiKey: SERPER_API_KEY, maxPages: SERPER_MAX_PAGES,
@@ -153,7 +154,26 @@ async function runSiteSearch(input) {
     siteSearchState.results = bio; siteSearchState.bioCount = bio.length;
 
     if (bio.length) {
-      const job = startJob(bio.map((b) => b.url), '', false, 'webpage');   // process the bio URLs -> Master DB
+      // 1) push what the search itself found (position / email / phone + URL-derived name) into the
+      //    Master DB, modelling an email for the email-less ones from the company's known pattern.
+      const today = new Date().toISOString().slice(0, 10);
+      const serperRecords = bioRowsToRecords(bio, GENDER_MAP, today);
+      const modelled = modelMissingEmailsForRecords(serperRecords);
+      const merged = db.upsertMany(serperRecords);
+      siteSearchState.snippetAdded = merged.added; siteSearchState.snippetUpserted = merged.processed; siteSearchState.modelled = modelled;
+      // reflect each row's final email (found-in-snippet or modelled) + name/position back to the UI rows
+      const recByUrl = new Map(serperRecords.map((r) => [r['Web Source URL'], r]));
+      for (const b of bio) {
+        const rec = recByUrl.get(String(b.url).split('?')[0].split('#')[0]);
+        if (!rec) continue;
+        b.name = [rec['First'], rec['Last']].filter(Boolean).join(' ');
+        if (rec['Email Address']) { b.email = rec['Email Address']; b.emailType = rec['Email Type']; }
+        if (!b.position && rec['Position']) b.position = rec['Position'];
+      }
+      console.log(`Site Search: search-result records -> ${merged.processed} upserted (+${merged.added} new), ${modelled} modelled email(s).`);
+
+      // 2) also crawl the bio URLs to enrich further (merges into the same DB by email)
+      const job = startJob(bio.map((b) => b.url), '', false, 'webpage');
       siteSearchState.jobId = job.id;
       siteSearchState.status = 'processing';
       console.log(`Site Search: ${bio.length} bio URL(s) from ${sr.results.length} results (${sr.credits} credits) -> job ${job.id}.`);
@@ -313,9 +333,10 @@ function loadJobs() {
 // Email Type "Modelled" so a guess is never mistaken for a verified address. If the company
 // publishes no parseable emails at all (e.g. rsmuk.com), nothing is modelled and the people
 // are still kept with their name + phone + LinkedIn. Mutates job records in place.
-function modelMissingEmails(job) {
-  if ((job.mode || 'domain') !== 'webpage') return 0;          // sitemap/webpage only
-  const records = [...job.recordsByEmail.values()];
+// Core: model an email for each email-less record that has a name + Gender, learning the format
+// from that company's Professional emails (the given records + the central DB). Result is
+// labelled Email Type "Modelled". Mutates records in place; returns how many were modelled.
+function modelMissingEmailsForRecords(records) {
   const missing = records.filter((r) =>
     !cleanEmail(r['Email Address']) && r['First'] && r['Last'] && r['Gender']);
   if (!missing.length) return 0;
@@ -331,7 +352,7 @@ function modelMissingEmails(job) {
 
   let modelled = 0;
   for (const [domain, people] of byDomain) {
-    // pattern seed: Professional emails for THIS domain — from this job + the central DB
+    // pattern seed: Professional emails for THIS domain — from these records + the central DB
     const samples = [];
     const addSample = (r) => {
       const email = cleanEmail(r['Email Address']);
@@ -351,8 +372,14 @@ function modelMissingEmails(job) {
       if (email) { r['Email Address'] = email; r['Email Type'] = 'Modelled'; modelled++; }
     }
   }
-  if (modelled) console.log(`Job ${job.id}: modelled ${modelled} email(s) from company pattern(s).`);
   return modelled;
+}
+
+function modelMissingEmails(job) {
+  if ((job.mode || 'domain') !== 'webpage') return 0;          // sitemap/webpage only
+  const n = modelMissingEmailsForRecords([...job.recordsByEmail.values()]);
+  if (n) console.log(`Job ${job.id}: modelled ${n} email(s) from company pattern(s).`);
+  return n;
 }
 
 // run a set of domains for a job, accumulating records + coverage, persisting per domain

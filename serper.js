@@ -65,7 +65,54 @@ async function siteSearch(input, { apiKey, maxPages = 20, perPage = 100, onPage 
   return { target, results, pages, credits, error };
 }
 
-module.exports = { serperSearch, siteSearch, siteTarget };
+// Turn a discovered bio row { url, title, description, emails[], phones[], position } into a
+// Master DB record — name/gender/directory derived from the URL (like a crawled record), with
+// the position / email / phone / description that Site Search read from the search snippet.
+const _ex = require("./extractor");
+function bioRowToRecord(r, genderMap = {}, today){
+  const url = String(r.url || "").split("?")[0].split("#")[0];
+  if(!/^https?:\/\//i.test(url)) return null;
+  const nm = _ex.nameFromSlug(_ex.nameSlugFromUrl(url));
+  const first = nm.first || "", last = nm.last || "";
+  const gender = first ? (genderMap[first.toLowerCase()] || "") : "";
+  const domain = _ex.getBaseDomain(url);
+  const cc = _ex.countryCodeFromDomain(domain);
+  const pathHit = _ex.pathIdFromUrl(url);
+  const directory = pathHit ? "Team" : _ex.classifyDirectory(url, "", {}, genderMap);
+  const email = _ex.cleanEmail((r.emails && r.emails[0]) || "");
+  return {
+    "Time Stamp": today || new Date().toISOString().slice(0, 10),
+    "Source": "Site Search",
+    "Web Source URL": url,
+    "Directory": directory,
+    "Path ID": pathHit ? pathHit.id : "",
+    "Domain": domain,
+    "Last Path": "",
+    "Bio Check": directory === "BIO URL" ? "Y" : "",
+    "First": first,
+    "Last": last,
+    "Gender": gender,
+    "Title": (r.position || String(r.title || "").split("|")[0].trim()).slice(0, 160),
+    "Position": r.position || "",
+    "Description": String(r.description || "").slice(0, 600),
+    "Image URL": "",
+    "Email Address": email,
+    "Email Type": _ex.classifyEmail(email),
+    "LinkedIn URL": "",
+    "Google Maps": "",
+    "Phone": _ex.toE164((r.phones && r.phones[0]) || "", cc),
+    "Phone Type": "",
+    "Phone Location": "",
+    "Phone 2": _ex.toE164((r.phones && r.phones[1]) || "", cc),
+    "Phone 2 Type": "",
+    "Phone 2 Location": "",
+  };
+}
+function bioRowsToRecords(rows, genderMap, today){
+  return (rows || []).map((r) => bioRowToRecord(r, genderMap, today)).filter(Boolean);
+}
+
+module.exports = { serperSearch, siteSearch, siteTarget, bioRowToRecord, bioRowsToRecords };
 
 // ---- CLI: dry-run a site search (no DB). SERPER_API_KEY=... node serper.js <urlOrDomain> ----
 if(require.main === module){
