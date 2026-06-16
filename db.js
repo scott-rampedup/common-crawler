@@ -307,13 +307,15 @@ function makeDb(dir) {
   // Bulk relabel: set BOTH Position and Title = newValue for every record matching { domain }
   // and/or a Position { prefix }, rebuilding each matched row's search index. Returns
   // { matched, samples } (samples are the PRE-change email/domain/position/title rows, for audit).
-  function bulkSetPosition({ domain = '', prefix = '' } = {}, newValue) {
+  function bulkSetPosition({ domain = '', emailDomain = '', prefix = '' } = {}, newValue) {
     const where = []; const params = [];
     if (domain) { where.push('domain = ?'); params.push(String(domain).toLowerCase().replace(/^www\./, '')); }
+    if (emailDomain) { where.push('email LIKE ?'); params.push('%@' + String(emailDomain).toLowerCase().replace(/^@/, '')); }
     if (prefix) { where.push("position LIKE ? ESCAPE '\\'"); params.push(String(prefix).replace(/([%_\\])/g, '\\$1') + '%'); }
-    if (!where.length) return { matched: 0, updated: 0, samples: [] };
+    if (!where.length) return { matched: 0, updated: 0, samples: [], domains: [] };
     const w = where.join(' AND ');
     const matchRows = db.prepare(`SELECT email FROM contacts WHERE ${w}`).all(...params);
+    const domains = db.prepare(`SELECT domain, COUNT(*) c FROM contacts WHERE ${w} GROUP BY domain ORDER BY c DESC LIMIT 15`).all(...params);
     const samples = db.prepare(`SELECT email, domain, position, title FROM contacts WHERE ${w} LIMIT 8`).all(...params)
       .map((r) => ({ email: r.email, domain: r.domain, position: r.position, title: r.title }));
     const sel = db.prepare('SELECT * FROM contacts WHERE email = ?');
@@ -330,7 +332,7 @@ function makeDb(dir) {
       }
       db.exec('COMMIT');
     } catch (e) { db.exec('ROLLBACK'); throw e; }
-    return { matched: matchRows.length, updated: matchRows.length, samples };
+    return { matched: matchRows.length, updated: matchRows.length, samples, domains };
   }
   const updatePositionByPrefix = (prefix, newValue) => bulkSetPosition({ prefix }, newValue);   // back-compat
 
