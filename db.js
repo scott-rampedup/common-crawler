@@ -304,13 +304,38 @@ function makeDb(dir) {
     } catch (e) { /* none */ }
   }
 
+  // Bulk relabel: set Position = newValue for every record whose Position starts with `prefix`
+  // (rebuilding each matched row's search index). Returns { matched, samples } (samples are the
+  // PRE-change email/position pairs, for an audit trail).
+  function updatePositionByPrefix(prefix, newValue) {
+    const like = String(prefix).replace(/([%_\\])/g, '\\$1') + '%';
+    const matchRows = db.prepare("SELECT email FROM contacts WHERE position LIKE ? ESCAPE '\\'").all(like);
+    const samples = db.prepare("SELECT email, position FROM contacts WHERE position LIKE ? ESCAPE '\\' LIMIT 8").all(like)
+      .map((r) => ({ email: r.email, position: r.position }));
+    const sel = db.prepare('SELECT * FROM contacts WHERE email = ?');
+    const upd = db.prepare('UPDATE contacts SET position = ?, search = ?, updated_at = ? WHERE email = ?');
+    const now = new Date().toISOString();
+    db.exec('BEGIN');
+    try {
+      for (const { email } of matchRows) {
+        const row = sel.get(email); if (!row) continue;
+        const rec = rowToRecord(row); rec['Position'] = newValue;
+        const search = [rec['First'], rec['Last'], rec['Email Address'], rec['Title'], rec['Position'], rec['Domain'], rec['Phone'], rec['Phone 2'], rec['Description']]
+          .map((v) => String(v || '')).join(' ').toLowerCase();
+        upd.run(newValue, search, now, email);
+      }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    return { matched: matchRows.length, updated: matchRows.length, samples };
+  }
+
   importLegacyJson();
   const cleanedEmails = cleanStoredEmails();
   if (cleanedEmails) console.log(`Central DB: removed encoded spaces from ${cleanedEmails} email(s).`);
   const typedRows = backfillTypes();
   if (typedRows) console.log(`Central DB: set Type (from domain TLD) on ${typedRows} record(s).`);
   console.log(`Central DB (SQLite): ${count().toLocaleString()} contact(s) at ${file}`);
-  return { upsertMany, query, each, stats, count, facets, getByEmail, updateRecord, deleteByEmail, backfillLocations };
+  return { upsertMany, query, each, stats, count, facets, getByEmail, updateRecord, deleteByEmail, backfillLocations, updatePositionByPrefix };
 }
 
 module.exports = { makeDb };
