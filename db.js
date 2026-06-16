@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 const { typeForDomain } = require('./tld-lookup');
+const { normalizeContact } = require('./normalize');
 
 // Record fields we persist (incl. Image URL for the thumbnail; CSV export drops it).
 const FIELDS = ['Time Stamp', 'Source', 'Web Source URL', 'Directory', 'Path ID', 'Last Path',
@@ -99,6 +100,7 @@ function makeDb(dir) {
     db.exec('BEGIN');
     try {
       for (const r of (records || [])) {
+        normalizeContact(r);                 // force known-bad fields (e.g. Bankers Life Position/Title) on every write
         const v = rowValues(r);
         if (!v) continue;
         upsertStmt.run(...v);
