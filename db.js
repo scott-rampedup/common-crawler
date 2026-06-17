@@ -345,13 +345,43 @@ function makeDb(dir) {
   }
   const updatePositionByPrefix = (prefix, newValue) => bulkSetPosition({ prefix }, newValue);   // back-compat
 
+  // One-off correction for a bad crawl that mislabelled UK records as Angola: rewrite leading
+  // +244 -> +44 in Phone/Phone 2, and "Angola" -> "United Kingdom" in the location fields.
+  // Rebuilds search. Returns the affected rows [{email, phone, phone_2, domain}] so the caller
+  // can re-geocode the corrected numbers.
+  function fixAngola() {
+    const cond = "phone LIKE '+244%' OR phone_2 LIKE '+244%' OR lower(phone_location) LIKE '%angola%' OR lower(phone_2_location) LIKE '%angola%'";
+    const emails = db.prepare(`SELECT email FROM contacts WHERE ${cond}`).all();
+    const sel = db.prepare('SELECT * FROM contacts WHERE email = ?');
+    const upd = db.prepare('UPDATE contacts SET phone = ?, phone_2 = ?, phone_location = ?, phone_2_location = ?, search = ?, updated_at = ? WHERE email = ?');
+    const now = new Date().toISOString();
+    const fixPhone = (p) => /^\+244/.test(String(p || '')) ? '+44' + String(p).slice(4) : String(p || '');
+    const fixLoc = (l) => /angola/i.test(String(l || '')) ? 'United Kingdom' : String(l || '');
+    const affected = [];
+    db.exec('BEGIN');
+    try {
+      for (const { email } of emails) {
+        const row = sel.get(email); if (!row) continue;
+        const phone = fixPhone(row.phone), phone2 = fixPhone(row.phone_2);
+        const loc1 = fixLoc(row.phone_location), loc2 = fixLoc(row.phone_2_location);
+        const rec = rowToRecord(row); rec['Phone'] = phone; rec['Phone 2'] = phone2;
+        const search = [rec['First'], rec['Last'], rec['Email Address'], rec['Title'], rec['Position'], rec['Domain'], phone, phone2, rec['Description']]
+          .map((v) => String(v || '')).join(' ').toLowerCase();
+        upd.run(phone, phone2, loc1, loc2, search, now, email);
+        affected.push({ email, phone, phone_2: phone2, domain: row.domain });
+      }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    return affected;
+  }
+
   importLegacyJson();
   const cleanedEmails = cleanStoredEmails();
   if (cleanedEmails) console.log(`Central DB: removed encoded spaces from ${cleanedEmails} email(s).`);
   const typedRows = backfillTypes();
   if (typedRows) console.log(`Central DB: set Type (from domain TLD) on ${typedRows} record(s).`);
   console.log(`Central DB (SQLite): ${count().toLocaleString()} contact(s) at ${file}`);
-  return { upsertMany, query, each, stats, count, facets, getByEmail, updateRecord, deleteByEmail, backfillLocations, updatePositionByPrefix, bulkSetPosition };
+  return { upsertMany, query, each, stats, count, facets, getByEmail, updateRecord, deleteByEmail, backfillLocations, updatePositionByPrefix, bulkSetPosition, fixAngola };
 }
 
 module.exports = { makeDb };

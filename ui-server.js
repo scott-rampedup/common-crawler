@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'ui');
 const RESULTS_CSV = path.join(__dirname, 'cc-results.csv');
 const { runDomains, COLUMNS, extractBioUrlsFromSitemaps, isBioOrContactUrl } = require('./cc-engine');
-const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords, classifyEmail, cleanEmail, findPosition } = require('./extractor');
+const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords, geocodePhone, classifyEmail, cleanEmail, findPosition } = require('./extractor');
 const { modelEmail } = require('./email-pattern');
 const { importSheet } = require('./sheet-import');
 const { siteSearch, bioRowsToRecords } = require('./serper');
@@ -1189,5 +1189,38 @@ server.listen(PORT, () => {
       console.log(`  was: ${JSON.stringify(r.samples)}`);
     } catch (e) { console.error('Position/Title fix failed:', e.message); }
   }
+
+  // Maintenance chain: (1) one-off Angola->UK correction + re-geocode of the corrected numbers
+  // (gated by ANGOLA_MAINT=1), then (2) resume any interrupted jobs (always — survives restarts).
+  (async () => {
+    if (process.env.ANGOLA_MAINT === '1') {
+      try {
+        const affected = db.fixAngola();
+        console.log(`Angola fix: ${affected.length} record(s) -> +44 / United Kingdom.`);
+        const keep = (l) => (l && !/angola/i.test(l)) ? l : '';        // never re-write an Angola value
+        const items = [];
+        for (const a of affected) {
+          const loc1 = keep(a.phone ? await geocodePhone(a.phone) : '');
+          const loc2 = keep(a.phone_2 ? await geocodePhone(a.phone_2) : '');
+          if (loc1 || loc2) items.push({ email: a.email, loc1, loc2 });
+        }
+        const wrote = db.backfillLocations(items);
+        console.log(`Angola fix: re-geocoded ${affected.length} corrected number set(s); refined ${wrote} location field(s).`);
+      } catch (e) { console.error('Angola maint failed:', e.message); }
+    }
+    // resume interrupted jobs (a job that was running when the server restarted) so long crawls finish
+    try {
+      let resumed = 0;
+      for (const job of jobs.values()) {
+        if (job.status === 'interrupted') {
+          const remaining = job.domains.filter((d) => !job.doneDomains.includes(d)).length;
+          resumeJob(job.id);
+          resumed++;
+          console.log(`Resumed interrupted job ${job.id}: ${remaining}/${job.domains.length} domain(s) remaining.`);
+        }
+      }
+      if (resumed) console.log(`Auto-resumed ${resumed} interrupted job(s).`);
+    } catch (e) { console.error('Resume interrupted jobs failed:', e.message); }
+  })();
 });
 
