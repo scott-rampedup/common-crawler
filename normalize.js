@@ -7,6 +7,7 @@
  * so re-imports, crawls, and Site Search all produce the corrected value. Add rules to RULES.
  */
 const { lastPathFromUrl } = require('./extractor');
+const { countryForDomain } = require('./tld-lookup');
 
 const RULES = [
   {
@@ -23,6 +24,14 @@ const RULES = [
     name: 'last-path-from-url',
     match: (r) => !String(r['Last Path'] || '').trim() && /^https?:\/\//i.test(String(r['Web Source URL'] || '')),
     apply: (r) => { const lp = lastPathFromUrl(r['Web Source URL']); if (lp) r['Last Path'] = lp; },
+  },
+  {
+    // Location = Phone Location + TLD lookup: when there's no geocoded Phone Location, fall back
+    // to the domain's TLD-lookup country (e.g. a .ao domain -> "Angola") so the Location field is
+    // consistently populated + searchable. (Crawled records already get this via geocodeRecords.)
+    name: 'phone-location-tld-country',
+    match: (r) => !String(r['Phone Location'] || '').trim(),
+    apply: (r) => { const c = countryForDomain(r['Domain'] || r['Web Source URL'] || ''); if (c) r['Phone Location'] = c; },
   },
 ];
 
