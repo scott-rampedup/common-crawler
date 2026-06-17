@@ -97,11 +97,19 @@ function makeLimiter(maxConcurrent){
 // Common Crawl is a shared public service — keep our total CC requests serialized
 // (configurable) even when many domains run in parallel, so we never hammer it.
 const ccLimit = makeLimiter(Number(process.env.CC_CONCURRENCY) || 1);
+// The CC index server is rate-sensitive (keep it serial via ccLimit), but the WARC DATA store
+// (data.commoncrawl.org, S3/CloudFront) scales — fetch archived pages massively in parallel.
+const warcLimit = makeLimiter(Number(process.env.WARC_CONCURRENCY) || 32);
 
 // GLOBAL crawl-concurrency cap, shared across ALL jobs in this process. Per-job pools
 // each respect this, so running several big jobs at once can't multiply the in-flight
 // load (two 48-concurrency jobs once = ~96 fetches -> heap OOM / SIGABRT).
 const globalCrawlLimit = makeLimiter(Math.max(1, Number(process.env.DOMAIN_CONCURRENCY) || 6));
+// Webpage/sitemap units are MUCH lighter than a whole-domain crawl: one (cached) index
+// lookup + one WARC fetch, no per-domain page-walking. They get their own higher global
+// cap so a big sitemap finishes fast without competing for the 6 heavy domain-crawl slots.
+// Actual network is still bounded by warcLimit (CC) + the per-host gate (live).
+const globalWebpageLimit = makeLimiter(Math.max(1, Number(process.env.WEBPAGE_GLOBAL_CONCURRENCY) || 32));
 
 // Per-key (per-host) concurrency limiter: lets total concurrency be high while
 // keeping the number of simultaneous requests to ANY single host small (polite +
@@ -127,6 +135,12 @@ function makeKeyedLimiter(maxPerKey){
   });
 }
 function hostOf(u){ try{ return new URL(u).hostname.replace(/^www\./, "").toLowerCase(); }catch{ return String(u); } }
+// Canonical key for matching a sitemap/job URL to a Common-Crawl capture: host (no www, lc) +
+// path (no trailing slash), ignoring scheme/query/fragment. Used by the bulk domain index cache.
+function ccUrlKey(u){
+  try{ const x = new URL(u); return x.hostname.toLowerCase().replace(/^www\./, "") + (x.pathname.replace(/\/+$/, "") || "/"); }
+  catch{ return String(u || "").toLowerCase(); }
+}
 
 // HTML pages are capped smaller than data files — bios are tiny; this cuts download
 // + parse time and protects the event loop at high concurrency.
@@ -328,8 +342,57 @@ async function queryIndex(domain, { crawl = CRAWL, maxPages = 3, demoMode = fals
 // 200/text-html capture record { url, filename, offset, length, timestamp }, or null if the URL
 // isn't archived. Lets webpage mode read a page from the archive when the live site blocks us
 // (e.g. Cloudflare). Throws only when the index itself is unreachable, so callers can trip a breaker.
-async function queryIndexUrl(url, { crawl = CRAWL, demoMode = false } = {}){
+// Bulk-load EVERY 200/text-html capture for a domain (+ subdomains) from the CC index in ONE
+// paginated query, returned as a Map(ccUrlKey -> latest record). Lets webpage/sitemap jobs do a
+// single index query per domain instead of one per URL. Holds the (serial) index lane.
+async function loadDomainIndex(domain, { crawl = CRAWL, maxPages = 100 } = {}){
+  return ccLimit(async () => {
+    const base = `${INDEX}/${crawl}-index`;
+    let pages = 0;
+    try{
+      const np = new URLSearchParams({ url: domain, matchType:"domain", output:"json", showNumPages:"true" });
+      const r = await fetchWithRetries(`${base}?${np}`, { headers:{ "User-Agent":UA } }, { retries:1, delay:500 });
+      if(r.status === 404) return new Map();                    // domain not in this crawl
+      const txt = (await r.text()).trim();
+      try{ pages = JSON.parse(txt).pages ?? 0; }catch{ pages = parseInt(txt, 10) || 0; }
+    }catch(e){
+      if(/\b404\b/.test(String(e && e.message))) return new Map();
+      throw e;
+    }
+    const m = new Map();
+    for(let page = 0; page < Math.min(pages, maxPages); page++){
+      const p = new URLSearchParams({ url: domain, matchType:"domain", output:"json",
+        fl:"url,filename,offset,length,timestamp", page:String(page) });
+      p.append("filter","=status:200");
+      p.append("filter","=mime-detected:text/html");
+      let res; try{ res = await fetchWithRetries(`${base}?${p}`, { headers:{ "User-Agent":UA } }); }catch{ break; }
+      if(!res.ok) break;
+      for(const line of (await res.text()).split("\n")){
+        if(!line.trim()) continue;
+        let rec; try{ rec = JSON.parse(line); }catch{ continue; }
+        const k = ccUrlKey(rec.url); const prev = m.get(k);
+        if(!prev || (rec.timestamp||"") > (prev.timestamp||"")) m.set(k, rec);   // keep latest capture
+      }
+      await sleep(400);                                         // polite between index pages
+    }
+    return m;
+  });
+}
+
+async function queryIndexUrl(url, opts = {}){
+  const { crawl = CRAWL, demoMode = false } = opts;
   if(demoMode){ const recs = generateMockRecords(url, 1); return recs[0] || null; }
+  // BULK PATH: when a per-run domain cache is supplied (webpage/sitemap jobs), load the whole
+  // domain's index once and answer every URL from memory — turns N index queries into ~1/domain.
+  const cache = opts._domainIndexCache;
+  if(cache){
+    const host = hostOf(url);
+    // Store the PROMISE synchronously (before any await) so the ~24 concurrent workers hitting
+    // the same host all share ONE index load instead of each kicking off its own.
+    if(!cache.has(host)) cache.set(host, loadDomainIndex(host, { crawl, maxPages: opts.bulkIndexPages || 100 }));
+    const m = await cache.get(host);
+    return m.get(ccUrlKey(url)) || null;
+  }
   return ccLimit(async () => {
     const p = new URLSearchParams({ url, output:"json", fl:"url,filename,offset,length,timestamp" });
     p.append("filter","=status:200");
@@ -931,8 +994,8 @@ async function fetchWarc(rec, { demoMode = false } = {}){
   if(proxyEnv && ProxyAgent && undiciFetch){
     opts.dispatcher = getProxyDispatcher(url);
   }
-  // CC data server is shared infra too — go through the global CC lane.
-  return ccLimit(async () => {
+  // WARC data store scales (S3/CloudFront) — fetch in parallel via its own pool, NOT the index lane.
+  return warcLimit(async () => {
     const res = await fetchImpl(url, opts);
     if(!res.ok && res.status !== 206) throw new Error(`warc ${res.status} for ${rec.url}`);
     const gz = Buffer.from(await res.arrayBuffer());
@@ -1002,6 +1065,9 @@ async function run(csvPath, opts = {}){
 
   // mode: 'domain' (crawl whole domain, default) | 'webpage' (only the exact URLs given)
   const mode = opts.mode === 'webpage' ? 'webpage' : 'domain';
+  // Webpage/sitemap jobs: bulk-load each domain's CC index once + serve every URL from memory
+  // (one index query per domain instead of one per URL). WARC fetches then run in parallel.
+  if(mode === 'webpage' && !opts._domainIndexCache) opts._domainIndexCache = new Map();
   const fetchPage = opts._liveFetch || liveFetchPage;
   const today = new Date().toISOString().slice(0, 10);
   resetNetStats();
@@ -1032,7 +1098,11 @@ async function run(csvPath, opts = {}){
   };
 
   const liveOnly = opts.liveOnly === true || process.env.LIVE_ONLY === 'true';
-  const domainConcurrency = Math.max(1, opts.concurrency || Number(process.env.DOMAIN_CONCURRENCY) || 6);
+  // webpage/sitemap URLs are cheap (cached CC lookup + parallel WARC), so run many at once;
+  // whole-site domain crawls are heavier, so keep those modest.
+  const domainConcurrency = Math.max(1, opts.concurrency
+    || Number(process.env.DOMAIN_CONCURRENCY)
+    || (mode === 'webpage' ? (Number(process.env.WEBPAGE_CONCURRENCY) || 24) : 6));
   let ccFailStreak = 0, ccDisabled = liveOnly;   // circuit breaker; liveOnly skips CC entirely
   if(liveOnly) console.log("(live-only mode: skipping Common Crawl)");
   console.log(`Crawling up to ${domainConcurrency} domain(s) at once...\n`);
@@ -1162,6 +1232,9 @@ async function run(csvPath, opts = {}){
 
   // worker pool: crawl several DIFFERENT domains at once (each domain stays polite
   // internally; Common Crawl stays globally rate-limited via ccLimit).
+  // Webpage/sitemap work uses the lighter, higher webpage cap; whole-domain crawls
+  // use the modest heavy cap so they can't OOM the box.
+  const crawlLimit = mode === 'webpage' ? globalWebpageLimit : globalCrawlLimit;
   let cursor = 0;
   let stopped = false;
   const worker = async () => {
@@ -1171,7 +1244,7 @@ async function run(csvPath, opts = {}){
       if(index >= domains.length) return;
       // run the actual work through the GLOBAL limiter so total concurrency is bounded
       // across every job in the process (not just within this one).
-      try{ await globalCrawlLimit(() => processDomain(domains[index], index)); }
+      try{ await crawlLimit(() => processDomain(domains[index], index)); }
       catch(e){ coverage.empty++; console.log(`! ${domains[index].padEnd(28)} ${e.message}`); }
     }
   };
@@ -1348,6 +1421,14 @@ if(require.main === module){
       const uniqueRows = uniqueByEmail(duplicateRows);
       ok("uniqueByEmail dedupes by lowercase email", uniqueRows.length === 2 && uniqueRows.some(r => r["Email Address"].toLowerCase() === "test@xyz.com") && uniqueRows.some(r => r["Email Address"] === "other@xyz.com"));
       ok("uniqueByEmail keeps the richer record for duplicate emails", uniqueRows.find(r => r["Email Address"].toLowerCase() === "test@xyz.com").Phone === "+12025550123");
+
+      // 3b) ccUrlKey: a sitemap URL and its CC capture must collapse to the SAME key
+      //     (ignore scheme/www/trailing-slash/query) or the bulk-index cache silently misses.
+      ok("ccUrlKey strips scheme, www and query, normalizes trailing slash",
+        ccUrlKey("https://www.Acme.com/Team/Jane/?ref=x") === ccUrlKey("http://acme.com/Team/Jane")
+        && ccUrlKey("https://acme.com/team/jane/") === "acme.com/team/jane");
+      ok("ccUrlKey maps a bare host to root path",
+        ccUrlKey("https://www.acme.com") === "acme.com/" && ccUrlKey("https://www.acme.com/") === "acme.com/");
 
       // 4) live-crawl helpers (offline)
       const linkHtml = `<a href="/attorneys/">Attorneys</a><a href="/attorneys/jane-doe/">Jane</a>`

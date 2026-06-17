@@ -305,6 +305,15 @@ function jobSummary(job) {
   };
 }
 
+// Persisting rewrites the whole job file (all records), so doing it every domain is O(n^2) on a
+// big crawl. Throttle the per-domain saves; the final save (after the run) is always unthrottled.
+function persistJobThrottled(job, ms = 5000) {
+  const now = Date.now();
+  if (job._lastPersistMs && now - job._lastPersistMs < ms) return;
+  job._lastPersistMs = now;
+  persistJob(job);
+}
+
 function persistJob(job) {
   if (job.deleted) return;                 // don't resurrect a job that was deleted
   const out = {
@@ -438,7 +447,7 @@ async function runJobDomains(job, domainsToRun) {
           if (p.status === 'domain-done' && p.source === 'Common Crawl') job.coverage.found += 1;
           else if (p.status === 'domain-done') job.coverage.live += 1;
           else job.coverage.empty += 1;
-          persistJob(job);
+          persistJobThrottled(job);        // throttled: final unthrottled save happens after the run
         }
       },
     });
