@@ -189,7 +189,7 @@ function parseUrlList(text) {
 function getSearchMode() {
   const checked = document.querySelector('input[name="searchMode"]:checked');
   const v = checked ? checked.value : 'domain';
-  return v === 'webpage' || v === 'sitemap' ? v : 'domain';
+  return v === 'webpage' || v === 'sitemap' || v === 'ccdiscover' ? v : 'domain';
 }
 
 function updateModeHint() {
@@ -201,6 +201,10 @@ function updateModeHint() {
     if (elements.domainInput) {
       elements.domainInput.placeholder = 'Paste sitemap XML, or one sitemap URL per line (e.g. https://example.com/sitemap.xml)';
     }
+  } else if (mode === 'ccdiscover') {
+    elements.modeHint.textContent =
+      'Common Crawl: auto-finds Bio/Contact pages for each domain straight from the Common Crawl archive (no sitemap needed), then processes them. Fast and bypasses live blocks.';
+    if (elements.domainInput) elements.domainInput.placeholder = 'Enter one domain per line (e.g. example.com)';
   } else if (mode === 'webpage') {
     elements.modeHint.textContent = 'Webpage: pulls contacts only from the exact URLs you provide (one per line).';
     if (elements.domainInput) elements.domainInput.placeholder = 'Enter one full webpage URL per line';
@@ -562,6 +566,52 @@ async function extractSitemapAndRun(body, contentType) {
   }
 }
 
+// Common Crawl discovery mode: ask the server to find Bio/Contact URLs for the given domains
+// straight from the Common Crawl index (one query per domain, no sitemap), then run those URLs
+// as a normal 'webpage' job (tagged 'CC Discovery').
+async function discoverFromCCAndRun(domains) {
+  try {
+    setSearchStatus(`Searching Common Crawl for Bio URLs across ${domains.length} domain${domains.length === 1 ? '' : 's'}…`);
+    const res = await fetch('/api/cc-discover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domains }),
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      throw new Error(payload.error || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    const bioUrls = Array.isArray(data.bioUrls) ? data.bioUrls : [];
+    const scanned = data.totalUrls || 0;
+    if (bioUrls.length === 0) {
+      setSearchStatus(scanned === 0
+        ? 'None of those domains are in Common Crawl (or have no archived pages). Try Domain or Sitemap mode instead.'
+        : `Scanned ${scanned} archived URL${scanned === 1 ? '' : 's'} but none looked like Bio/Contact pages.`);
+      return;
+    }
+    setSearchStatus(`Found ${bioUrls.length} Bio URL${bioUrls.length === 1 ? '' : 's'} in Common Crawl from ${scanned} archived URL${scanned === 1 ? '' : 's'}. Starting job…`);
+
+    const directoryFilter = elements.directoryFilter.value.trim();
+    const liveOnly = !!(elements.liveOnlyCheckbox && elements.liveOnlyCheckbox.checked);
+    const jobRes = await fetch('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domains: bioUrls, mode: 'webpage', directoryFilter, liveOnly, type: 'CC Discovery' }),
+    });
+    if (!jobRes.ok) {
+      const payload = await jobRes.json().catch(() => ({}));
+      throw new Error(payload.error || `HTTP ${jobRes.status}`);
+    }
+    const job = await jobRes.json();
+    setSearchStatus(`Job started for ${bioUrls.length} Bio URL${bioUrls.length === 1 ? '' : 's'} discovered in Common Crawl. It runs on the server — you can leave this page.`);
+    await fetchJobs();
+    viewJob(job.id);
+  } catch (error) {
+    setSearchStatus(`Could not discover from Common Crawl: ${error.message}`);
+  }
+}
+
 // Start a search as a server-side background job, then watch it via polling.
 async function searchContacts() {
   const mode = getSearchMode();
@@ -572,6 +622,15 @@ async function searchContacts() {
       return;
     }
     await extractSitemapAndRun(text, 'text/plain; charset=utf-8');
+    return;
+  }
+  if (mode === 'ccdiscover') {
+    const domains = parseDomainList(elements.domainInput.value);
+    if (domains.length === 0) {
+      setSearchStatus('Enter one or more domains to discover Bio URLs from Common Crawl.');
+      return;
+    }
+    await discoverFromCCAndRun(domains);
     return;
   }
   const domains = mode === 'webpage'

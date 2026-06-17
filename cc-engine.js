@@ -656,6 +656,43 @@ async function extractBioUrlsFromSitemaps(opts = {}){
   return { bioUrls: [...bio], totalUrls, sitemapsFetched: fetched, sitemapsOk: fetchedOk };
 }
 
+// Discover bio/contact page URLs for one or more DOMAINS straight from the Common Crawl index —
+// no sitemap needed. For each domain it does ONE paginated CDX query (loadDomainIndex) to list
+// every archived 200/text-html capture, then keeps the URLs that pass isBioOrContactUrl. Lets a
+// user paste bare domains and have the system auto-find archived people-pages in the background.
+// Returns { bioUrls, totalUrls, domainsScanned, perDomain } — bioUrls run as a normal 'webpage'
+// job (which then reads each from CC via the bulk index cache). (offline-testable via opts._loadDomainIndex)
+async function discoverBioUrlsFromCC(opts = {}){
+  const { domains = [], directoryRules = {}, genderMap = {}, crawl = CRAWL,
+          maxPages = 100, maxBioPerDomain = 5000, _loadDomainIndex = loadDomainIndex,
+          onProgress = () => {} } = opts;
+  const hosts = [...new Set(domains.map(d => hostOf(String(d || "").trim())).filter(Boolean))];
+  const bio = new Set();
+  const perDomain = {};
+  let totalUrls = 0, scanned = 0;
+  for(const host of hosts){
+    let m;
+    try{ m = await _loadDomainIndex(host, { crawl, maxPages }); }
+    catch(e){ perDomain[host] = { error: e.message, bio: 0, urls: 0 }; scanned++; onProgress({ host, scanned, total: hosts.length, error: e.message }); continue; }
+    let kept = 0;
+    for(const rec of m.values()){
+      totalUrls++;
+      const u = rec && rec.url; if(!u) continue;
+      let abs; try{ abs = new URL(u); }catch{ continue; }
+      if(abs.protocol !== "http:" && abs.protocol !== "https:") continue;
+      if(LINK_SKIP_EXT.test(abs.pathname)) continue;
+      if(!isBioOrContactUrl(abs.toString(), directoryRules, genderMap)) continue;
+      if(kept >= maxBioPerDomain) break;
+      abs.hash = ""; abs.search = "";
+      if(!bio.has(abs.toString())){ bio.add(abs.toString()); kept++; }
+    }
+    perDomain[host] = { bio: kept, urls: m.size };
+    scanned++;
+    onProgress({ host, scanned, total: hosts.length, bio: kept, urls: m.size });
+  }
+  return { bioUrls: [...bio], totalUrls, domainsScanned: scanned, perDomain };
+}
+
 // Fetch a page over plain HTTP/1.1 using Node's built-in http(s). We deliberately
 // avoid global fetch here: live crawling hits thousands of arbitrary servers, and
 // fetch's HTTP/2 path can emit an UNCATCHABLE socket 'error' event when a server
@@ -1268,7 +1305,7 @@ async function run(csvPath, opts = {}){
 
 module.exports = { run, runDomains, readDomains, selectCandidates, warcToHtml, queryIndex, queryIndexUrl, fetchWarc,
   liveCrawl, extractSameDomainLinks, isBioOrContactUrl, COLUMNS,
-  parseRobots, robotsAllows, extractSitemapLocs, extractBioUrlsFromSitemaps };
+  parseRobots, robotsAllows, extractSitemapLocs, extractBioUrlsFromSitemaps, discoverBioUrlsFromCC };
 
 // ---------------------------------------------------------------- offline self-tests
 if(require.main === module){
@@ -1493,6 +1530,24 @@ if(require.main === module){
       });
       ok("extractBioUrlsFromSitemaps works from a fetched sitemap URL too",
         smOut2.bioUrls.length === 1 && smOut2.sitemapsFetched === 1);
+
+      // 7c) discoverBioUrlsFromCC: a domain's CC index -> keep only bio-looking captures
+      const ccHost = "ccfirm.com";
+      const fakeIndex = new Map([
+        ["a", { url: `https://${ccHost}/attorneys/jane-doe/`, timestamp: "20260101" }],
+        ["b", { url: `https://www.${ccHost}/attorneys/john-roe?ref=x`, timestamp: "20260101" }],
+        ["c", { url: `https://${ccHost}/blog/hello/`, timestamp: "20260101" }],
+        ["d", { url: `https://${ccHost}/team/jane.pdf`, timestamp: "20260101" }],
+      ]);
+      const ccOut = await discoverBioUrlsFromCC({
+        domains: [`https://www.${ccHost}/`],
+        _loadDomainIndex: async () => fakeIndex,
+      });
+      ok("discoverBioUrlsFromCC keeps bio captures, drops blog/file, strips query",
+        ccOut.bioUrls.length === 2
+        && ccOut.bioUrls.includes(`https://${ccHost}/attorneys/jane-doe/`)
+        && ccOut.bioUrls.includes(`https://www.${ccHost}/attorneys/john-roe`)
+        && !ccOut.bioUrls.some(u => /blog|\.pdf/.test(u)));
 
       // 8) liveCrawl discovers bios from a sitemap (not linked on the homepage), offline
       const smDomain = "smfirm.com";

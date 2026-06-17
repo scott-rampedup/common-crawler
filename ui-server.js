@@ -7,7 +7,7 @@ const zlib = require('zlib');
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'ui');
 const RESULTS_CSV = path.join(__dirname, 'cc-results.csv');
-const { runDomains, COLUMNS, extractBioUrlsFromSitemaps, isBioOrContactUrl } = require('./cc-engine');
+const { runDomains, COLUMNS, extractBioUrlsFromSitemaps, isBioOrContactUrl, discoverBioUrlsFromCC } = require('./cc-engine');
 const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords, geocodePhone, classifyEmail, cleanEmail, findPosition } = require('./extractor');
 const { modelEmail } = require('./email-pattern');
 const { importSheet } = require('./sheet-import');
@@ -471,7 +471,7 @@ async function runJobDomains(job, domainsToRun) {
   console.log(`Job ${job.id} ${job.status} — ${job.recordsByEmail.size} record(s)`);
 }
 
-const JOB_TYPES = ['Domains', 'Webpages', 'Sitemaps', 'Site Search Results', 'Google Sheet'];
+const JOB_TYPES = ['Domains', 'Webpages', 'Sitemaps', 'Site Search Results', 'Google Sheet', 'CC Discovery'];
 const jobTypeFromMode = (mode) => (mode === 'webpage' ? 'Webpages' : 'Domains');
 const normalizeJobType = (t, mode) => (JOB_TYPES.includes(t) ? t : jobTypeFromMode(mode));
 
@@ -977,6 +977,31 @@ const server = http.createServer((req, res) => {
         sendJson(res, { ok: true, ...out });
       } catch (e) {
         jsonErr(res, 500, e.message || 'Failed to parse sitemap.');
+      }
+    });
+    return;
+  }
+
+  // POST /api/cc-discover  { domains: [...] } -> { ok, bioUrls, totalUrls, domainsScanned, perDomain }.
+  // Auto-discovers bio/contact pages for bare domains straight from the Common Crawl index (one
+  // CDX query per domain, no sitemap needed). The client then runs bioUrls as a normal 'webpage'
+  // job (type 'CC Discovery'), which reads each page from CC via the bulk index cache.
+  if (url.pathname === '/api/cc-discover' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    readJsonBody(req, async (b) => {
+      try {
+        if (!b) return jsonErr(res, 400, 'Bad JSON body.');
+        const domains = Array.isArray(b.domains)
+          ? b.domains.map((d) => String(d || '').trim()).filter(Boolean)
+          : String(b.domains || '').split(/[\r\n,]+/).map((s) => s.trim()).filter(Boolean);
+        if (!domains.length) return jsonErr(res, 400, 'No domains provided.');
+        if (domains.length > 500) return jsonErr(res, 400, 'Too many domains (max 500 per discovery).');
+        // directoryRules stays {} on the server by design (see project notes); genderMap aids bio detection
+        const out = await discoverBioUrlsFromCC({ domains, genderMap: GENDER_MAP });
+        console.log(`CC discover: ${out.bioUrls.length} bio URL(s) from ${out.totalUrls} archived URL(s) across ${out.domainsScanned} domain(s)`);
+        sendJson(res, { ok: true, ...out });
+      } catch (e) {
+        jsonErr(res, 500, e.message || 'Failed to discover from Common Crawl.');
       }
     });
     return;
