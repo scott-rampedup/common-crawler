@@ -6,6 +6,8 @@
  * next import). Encoding the rule here makes it durable: it runs at the single write chokepoint,
  * so re-imports, crawls, and Site Search all produce the corrected value. Add rules to RULES.
  */
+const { lastPathFromUrl } = require('./extractor');
+
 const RULES = [
   {
     // Bankers Life agent bios put office hours in Position/Title — force the role. Matches by
@@ -15,6 +17,12 @@ const RULES = [
       /[@.]bankerslife\.com$/i.test(String(r['Email Address'] || '').trim()) ||
       /(?:^|\.)bankerslife\.com$/i.test(String(r['Domain'] || '').trim().toLowerCase()),
     apply: (r) => { r['Position'] = 'Bankers Life Agent'; r['Title'] = 'Bankers Life Agent'; },
+  },
+  {
+    // Backfill a blank Last Path from the Web Source URL using the extractor's own logic.
+    name: 'last-path-from-url',
+    match: (r) => !String(r['Last Path'] || '').trim() && /^https?:\/\//i.test(String(r['Web Source URL'] || '')),
+    apply: (r) => { const lp = lastPathFromUrl(r['Web Source URL']); if (lp) r['Last Path'] = lp; },
   },
 ];
 

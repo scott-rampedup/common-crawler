@@ -197,6 +197,9 @@ function lastPathSeg(url){
     return decodeURIComponent(seg).replace(/\.(html?|php|aspx?)$/i,"");
   }catch{ return ""; }
 }
+// The "Last Path" field value for a URL — the cleaned last path segment, EXACTLY as
+// extractRecord computes it. Exported so the DB normalizer can backfill a blank Last Path.
+function lastPathFromUrl(url){ return cleanLastPath(lastPathSeg(url)); }
 // A bare record-id path segment: a number ("71955"), a UUID, or a long hex blob — the kind of
 // thing that trails a name on profile URLs (e.g. /First-Last/<uuid>/<uuid> on evrealestate.com).
 function isIdSegment(seg){
@@ -932,7 +935,7 @@ function loadDirectoryRules(filePath){
 module.exports = { extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules,
   cleanEmail, setEmailBlocklist, loadEmailBlocklist, analyzePhones, splitExtension,
   geocodeRecords, geocodePhone, findPosition,
-  toE164, countryCodeFromDomain, pathIdFromUrl, getBaseDomain, nameSlugFromUrl };   // reused by the Sheet importer + Site Search
+  toE164, countryCodeFromDomain, pathIdFromUrl, getBaseDomain, nameSlugFromUrl, lastPathFromUrl };   // reused by the Sheet importer + Site Search + DB normalizer
 
 // ---------------------------------------------------------------- self-test
 if(require.main === module){
