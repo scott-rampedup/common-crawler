@@ -368,16 +368,26 @@ function renderTable() {
     photoCell.className = 'photo-cell';
     const src = record['Image URL'];
     const pageUrl = record['Web Source URL'];
+    const domain = record['Domain'] || parseHostname(pageUrl);
+    // when there's no image (or it fails to load), fall back to the site's favicon by domain,
+    // then to a link glyph. The thumbnail stays hyperlinked to the Web Source URL below.
+    const favicon = domain ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128` : '';
+    const sources = [src, favicon].filter(Boolean);
 
     let inner = null;
-    if (src) {
+    if (sources.length) {
       const img = document.createElement('img');
       img.className = 'row-photo';
-      img.src = src;
       img.alt = '';
       img.loading = 'lazy';
       img.referrerPolicy = 'no-referrer';
-      img.addEventListener('error', () => { img.replaceWith(makeLinkFallback(!!pageUrl)); });
+      let si = 0;
+      img.src = sources[0];
+      img.addEventListener('error', () => {
+        si += 1;
+        if (si < sources.length) img.src = sources[si];
+        else img.replaceWith(makeLinkFallback(!!pageUrl));
+      });
       inner = img;
     } else if (pageUrl) {
       inner = makeLinkFallback(true);

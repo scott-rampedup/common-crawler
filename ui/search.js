@@ -104,6 +104,7 @@ function initElements() {
   el.fDomains = $('f-domains');
   el.fPosition = $('f-position');
   el.fEmailType = $('f-emailType');
+  el.fPhoneType = $('f-phoneType');
   el.fType = $('f-type');
   el.fGender = $('f-gender');
   el.fLinkedin = $('f-linkedin');
@@ -218,20 +219,38 @@ function renderRows() {
       const value = record[col.key];
 
       if (col.type === 'image') {
-        // thumbnail from Image URL (not a link). Hover shows Description, else Title, else nothing.
+        // thumbnail: Image URL, else the site's favicon (by domain), hyperlinked to the Web
+        // Source URL. Hover shows Description, else Title. Falls through to nothing if all fail.
         cell.className = 'photo-cell';
         const src = record['Image URL'];
+        const pageUrl = record['Web Source URL'];
+        const domain = record['Domain'] || String(pageUrl || '').replace(/^https?:\/\//i, '').split('/')[0].replace(/^www\./i, '');
+        const favicon = domain ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128` : '';
         const tip = record['Description'] || record['Title'] || '';
-        if (src) {
+        const sources = [src, favicon].filter(Boolean);
+        if (sources.length) {
           const img = document.createElement('img');
           img.className = 'row-photo';
-          img.src = src;
           img.alt = '';
           img.loading = 'lazy';
           img.referrerPolicy = 'no-referrer';
           if (tip) img.title = tip;
-          img.addEventListener('error', () => { img.remove(); });
-          cell.appendChild(img);
+          let si = 0;
+          img.src = sources[0];
+          img.addEventListener('error', () => {
+            si += 1;
+            if (si < sources.length) img.src = sources[si];
+            else { const w = img.closest('a') || img; w.remove(); }
+          });
+          if (pageUrl) {
+            const a = document.createElement('a');
+            a.href = pageUrl; a.target = '_blank'; a.rel = 'noopener noreferrer';
+            a.className = 'photo-link'; a.title = 'Open source page';
+            a.appendChild(img);
+            cell.appendChild(a);
+          } else {
+            cell.appendChild(img);
+          }
         }
       } else if (col.type === 'lastpath') {
         // Last Path text, hyperlinked to the Web Source URL
@@ -338,6 +357,7 @@ function buildParams(extra) {
   const pos = el.fPosition.value.trim();
   if (pos) p.set('position', pos);
   if (el.fEmailType.value) p.set('emailType', el.fEmailType.value);
+  if (el.fPhoneType.value) p.set('phoneType', el.fPhoneType.value);
   if (el.fType.value) p.set('type', el.fType.value);
   const g = el.fGender.value;
   if (g && g !== 'na') p.set('gender', g);
@@ -406,6 +426,7 @@ async function loadFacets() {
     };
     fill(el.fDirectory, f.directory, 'directories');
     fill(el.fEmailType, f.emailType, 'email types');
+    fill(el.fPhoneType, f.phoneType, 'phone types');
     fill(el.fType, f.type, 'types');
   } catch (e) { /* ignore */ }
 }
@@ -647,6 +668,7 @@ function clearFilters() {
   el.fDomains.value = '';
   el.fPosition.value = '';
   el.fEmailType.value = '';
+  el.fPhoneType.value = '';
   el.fType.value = '';
   el.fGender.value = 'na';
   el.fLinkedin.checked = false;
@@ -666,6 +688,7 @@ function attachEvents() {
   el.fDomains.addEventListener('input', debouncedSearch);
   el.fDirectory.addEventListener('change', runSearch);
   el.fEmailType.addEventListener('change', runSearch);
+  el.fPhoneType.addEventListener('change', runSearch);
   el.fType.addEventListener('change', runSearch);
   el.fGender.addEventListener('change', runSearch);
   el.fLinkedin.addEventListener('change', runSearch);
