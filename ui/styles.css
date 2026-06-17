@@ -360,6 +360,32 @@ input[type='search']:focus, select:focus {
 .badge.interrupted { background: #fef3c7; color: #92400e; }
 .badge.stopped { background: #fee2e2; color: #9a3412; }
 
+/* job Type chip + rename pencil in the Search jobs panel */
+.job-type {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  background: #eef2ff;
+  color: #3730a3;
+  white-space: nowrap;
+}
+.job-rename {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: #6b7280;
+  border-radius: 6px;
+}
+.job-rename:hover { background: #eef2ff; color: #3730a3; }
+
 .badge.running::before {
   content: '';
   width: 8px;

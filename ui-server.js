@@ -101,6 +101,26 @@ const SHEET_SYNC_URL = process.env.SHEET_SYNC_URL || '';
 const SHEET_SYNC_HOURS = Math.max(1, Number(process.env.SHEET_SYNC_HOURS) || 24);
 let sheetSync = { running: false, lastRun: null, lastResult: null, lastError: null, url: SHEET_SYNC_URL };
 
+// Mirror the Google Sheet sync as a single persistent 'Google Sheet' job so it shows in the panel
+// with the right Type. Uses override counters (its contacts live in the Master DB, not the job).
+const SHEET_JOB_ID = 'job_google_sheet';
+function upsertSheetJob(res) {
+  let sj = jobs.get(SHEET_JOB_ID);
+  if (!sj) {
+    sj = { id: SHEET_JOB_ID, createdAt: new Date().toISOString(), name: '', type: 'Google Sheet',
+      domains: [], doneDomains: [], coverage: { found: 0, live: 0, empty: 0, errored: 0 },
+      directoryFilter: '', liveOnly: false, mode: 'webpage', error: null, recordsByEmail: new Map(), lastProgress: null };
+    jobs.set(SHEET_JOB_ID, sj);
+  }
+  sj.type = 'Google Sheet';
+  sj.status = 'completed';
+  sj.finishedAt = new Date().toISOString();
+  sj.totalOverride = res.unique;       // unique bio URLs in the sheet
+  sj.doneOverride = res.imported;      // rows imported this run
+  sj.recordCount = res.imported;       // contacts (live in the Master DB)
+  try { persistJob(sj); } catch (e) { /* best-effort */ }
+}
+
 async function runSheetSync(url) {
   const target = (url || SHEET_SYNC_URL || '').trim();
   if (!target) { sheetSync.lastError = 'No sheet URL configured (set SHEET_SYNC_URL).'; return sheetSync; }
@@ -112,6 +132,7 @@ async function runSheetSync(url) {
     const res = await importSheet(db, target, { genderMap: GENDER_MAP });
     res.elapsedMs = Date.now() - t0;
     sheetSync.lastResult = res; sheetSync.url = target;
+    upsertSheetJob(res);                       // mirror the sync as a 'Google Sheet' job in the panel
     console.log(`Sheet sync: ${res.imported} imported (+${res.added} new) from ${res.unique} unique URL(s); DB total ${res.dbTotal} (${res.elapsedMs}ms).`);
   } catch (e) {
     sheetSync.lastError = e.message;
@@ -173,7 +194,7 @@ async function runSiteSearch(input) {
       console.log(`Site Search: search-result records -> ${merged.processed} upserted (+${merged.added} new), ${modelled} modelled email(s).`);
 
       // 2) also crawl the bio URLs to enrich further (merges into the same DB by email)
-      const job = startJob(bio.map((b) => b.url), '', false, 'webpage');
+      const job = startJob(bio.map((b) => b.url), '', false, 'webpage', 'Site Search Results', `Site Search: ${siteSearchState.target || input}`);
       siteSearchState.jobId = job.id;
       siteSearchState.status = 'processing';
       console.log(`Site Search: ${bio.length} bio URL(s) from ${sr.results.length} results (${sr.credits} credits) -> job ${job.id}.`);
@@ -270,9 +291,11 @@ function jobSummary(job) {
     createdAt: job.createdAt,
     finishedAt: job.finishedAt || null,
     status: job.status,                       // running | completed | failed | interrupted
-    total: job.domains.length,
-    done: job.doneDomains.length,
-    recordCount: job.recordsByEmail.size,
+    name: job.name || '',
+    type: job.type || jobTypeFromMode(job.mode),
+    total: job.totalOverride != null ? job.totalOverride : job.domains.length,
+    done: job.doneOverride != null ? job.doneOverride : job.doneDomains.length,
+    recordCount: job.recordCount != null ? job.recordCount : job.recordsByEmail.size,
     coverage: job.coverage,
     directoryFilter: job.directoryFilter || '',
     liveOnly: !!job.liveOnly,
@@ -289,6 +312,8 @@ function persistJob(job) {
     createdAt: job.createdAt,
     finishedAt: job.finishedAt || null,
     status: job.status,
+    name: job.name || '',
+    type: job.type || jobTypeFromMode(job.mode),
     domains: job.domains,
     doneDomains: job.doneDomains,
     coverage: job.coverage,
@@ -296,6 +321,7 @@ function persistJob(job) {
     liveOnly: !!job.liveOnly,
     mode: job.mode || 'domain',
     error: job.error || null,
+    totalOverride: job.totalOverride, doneOverride: job.doneOverride, recordCount: job.recordCount,   // for the Google Sheet job
     records: jobRawRecords(job),
   };
   try { fs.writeFileSync(path.join(JOBS_DIR, `${job.id}.json`), JSON.stringify(out)); }
@@ -317,9 +343,11 @@ function loadJobs() {
       const status = j.status === 'running' ? 'interrupted' : j.status;
       jobs.set(j.id, {
         id: j.id, createdAt: j.createdAt, finishedAt: j.finishedAt || null, status,
+        name: j.name || '', type: j.type || (j.mode === 'webpage' ? 'Webpages' : 'Domains'),
         domains: j.domains || [], doneDomains: j.doneDomains || [],
         coverage: j.coverage || { found: 0, live: 0, empty: 0, errored: 0 },
         directoryFilter: j.directoryFilter || '', liveOnly: !!j.liveOnly, mode: j.mode || 'domain',
+        totalOverride: j.totalOverride, doneOverride: j.doneOverride, recordCount: j.recordCount,
         error: j.error || null, recordsByEmail, lastProgress: null,
       });
     } catch (e) { console.error(`Failed to load job file ${f}:`, e.message); }
@@ -434,18 +462,25 @@ async function runJobDomains(job, domainsToRun) {
   console.log(`Job ${job.id} ${job.status} — ${job.recordsByEmail.size} record(s)`);
 }
 
-function startJob(domains, directoryFilter, liveOnly, mode) {
+const JOB_TYPES = ['Domains', 'Webpages', 'Sitemaps', 'Site Search Results', 'Google Sheet'];
+const jobTypeFromMode = (mode) => (mode === 'webpage' ? 'Webpages' : 'Domains');
+const normalizeJobType = (t, mode) => (JOB_TYPES.includes(t) ? t : jobTypeFromMode(mode));
+
+function startJob(domains, directoryFilter, liveOnly, mode, type, name) {
+  const m = mode === 'webpage' ? 'webpage' : 'domain';
   const job = {
     id: newJobId(),
     createdAt: new Date().toISOString(),
     finishedAt: null,
     status: 'running',
+    name: typeof name === 'string' ? name.trim().slice(0, 120) : '',
+    type: normalizeJobType(type, m),
     domains,
     doneDomains: [],
     coverage: { found: 0, live: 0, empty: 0, errored: 0 },
     directoryFilter: directoryFilter || '',
     liveOnly: !!liveOnly,
-    mode: mode === 'webpage' ? 'webpage' : 'domain',
+    mode: m,
     stopRequested: false,
     error: null,
     recordsByEmail: new Map(),
@@ -881,12 +916,14 @@ const server = http.createServer((req, res) => {
         const directoryFilter = typeof payload.directoryFilter === 'string' ? payload.directoryFilter.trim() : '';
         const liveOnly = payload.liveOnly === true;
         const mode = payload.mode === 'webpage' ? 'webpage' : 'domain';
+        const type = typeof payload.type === 'string' ? payload.type : '';
+        const name = typeof payload.name === 'string' ? payload.name : '';
         if (domains.length === 0) {
           res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({ error: 'No domains provided' }));
           return;
         }
-        const job = startJob(domains, directoryFilter, liveOnly, mode);
+        const job = startJob(domains, directoryFilter, liveOnly, mode, type, name);
         console.log(`Started job ${job.id} for ${domains.length} domain(s)`);
         sendJson(res, jobSummary(job));
       } catch (e) {
@@ -1112,7 +1149,7 @@ const server = http.createServer((req, res) => {
   }
 
   // routes that target a single job: /api/jobs/:id , /api/jobs/:id/records , /api/jobs/:id/results.csv , /api/jobs/:id/resume
-  const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)(\/records|\/results\.csv|\/resume|\/stop)?$/);
+  const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)(\/records|\/results\.csv|\/resume|\/stop|\/name)?$/);
   if (jobMatch) {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     const id = jobMatch[1];
@@ -1149,6 +1186,16 @@ const server = http.createServer((req, res) => {
     if (sub === '/stop' && req.method === 'POST') {
       if (job.status === 'running') { job.stopRequested = true; console.log(`Stop requested for job ${id}`); }
       sendJson(res, jobSummary(job));
+      return;
+    }
+
+    if (sub === '/name' && req.method === 'POST') {
+      readJsonBody(req, (b) => {
+        if (!b) return jsonErr(res, 400, 'Bad request');
+        job.name = String(b.name || '').trim().slice(0, 120);
+        persistJob(job);
+        sendJson(res, jobSummary(job));
+      });
       return;
     }
   }

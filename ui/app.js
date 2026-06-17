@@ -547,7 +547,7 @@ async function extractSitemapAndRun(body, contentType) {
     const jobRes = await fetch('/api/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ domains: bioUrls, mode: 'webpage', directoryFilter, liveOnly }),
+      body: JSON.stringify({ domains: bioUrls, mode: 'webpage', directoryFilter, liveOnly, type: 'Sitemaps' }),
     });
     if (!jobRes.ok) {
       const payload = await jobRes.json().catch(() => ({}));
@@ -590,7 +590,7 @@ async function searchContacts() {
     const response = await fetch('/api/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ domains, directoryFilter, liveOnly, mode }),
+      body: JSON.stringify({ domains, directoryFilter, liveOnly, mode, type: mode === 'webpage' ? 'Webpages' : 'Domains' }),
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
@@ -647,10 +647,11 @@ function renderJobs() {
     const card = document.createElement('div');
     card.className = `job-card${isViewing ? ' viewing' : ''}`;
 
+    const unit = job.type === 'Domains' ? 'domain' : job.type === 'Google Sheet' ? 'row' : 'URL';
     const progressBit = job.status === 'running'
       ? `<div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
-         <span class="job-meta">${job.done}/${job.total} domains</span>`
-      : `<span class="job-meta">${job.done}/${job.total} domains</span>`;
+         <span class="job-meta">${job.done}/${job.total} ${unit}s</span>`
+      : `<span class="job-meta">${job.done}/${job.total} ${unit}s</span>`;
 
     const liveOnlyBit = job.liveOnly ? ' <span class="job-meta">· live-only</span>' : '';
     const errorBit = job.error ? `<span class="job-meta" style="color:#b91c1c">${escapeHtml(job.error)}</span>` : '';
@@ -659,7 +660,9 @@ function renderJobs() {
       <div class="job-main">
         <div class="job-line">
           <span class="badge ${job.status}">${job.status}</span>
-          <strong>${escapeHtml(shortJobLabel(job))}</strong>${liveOnlyBit}
+          <span class="job-type">${escapeHtml(job.type || '')}</span>
+          <strong class="job-name">${escapeHtml(job.name || shortJobLabel(job))}</strong>
+          <button class="job-rename" type="button" title="Rename job" aria-label="Rename job">✎</button>${liveOnlyBit}
         </div>
         <div class="job-line">
           ${progressBit}
@@ -675,42 +678,49 @@ function renderJobs() {
       <div class="job-actions"></div>
     `;
 
+    const renameBtn = card.querySelector('.job-rename');
+    if (renameBtn) renameBtn.addEventListener('click', () => renameJobUI(job.id, job.name || ''));
+
     const actions = card.querySelector('.job-actions');
 
-    const viewBtn = document.createElement('button');
-    viewBtn.textContent = isViewing ? 'Viewing' : 'View';
-    if (isViewing) viewBtn.classList.add('primary');
-    viewBtn.addEventListener('click', () => viewJob(job.id));
-    actions.appendChild(viewBtn);
+    // The Google Sheet job is a managed sync mirror (its contacts live in the Master DB), so it
+    // shows status only — no View/Download/Resume/Stop/Delete.
+    if (job.type !== 'Google Sheet') {
+      const viewBtn = document.createElement('button');
+      viewBtn.textContent = isViewing ? 'Viewing' : 'View';
+      if (isViewing) viewBtn.classList.add('primary');
+      viewBtn.addEventListener('click', () => viewJob(job.id));
+      actions.appendChild(viewBtn);
 
-    if (job.status === 'running') {
-      const stopBtn = document.createElement('button');
-      stopBtn.textContent = 'Stop';
-      stopBtn.classList.add('danger');
-      stopBtn.addEventListener('click', () => stopJobUI(job.id));
-      actions.appendChild(stopBtn);
+      if (job.status === 'running') {
+        const stopBtn = document.createElement('button');
+        stopBtn.textContent = 'Stop';
+        stopBtn.classList.add('danger');
+        stopBtn.addEventListener('click', () => stopJobUI(job.id));
+        actions.appendChild(stopBtn);
+      }
+
+      if (job.recordCount > 0) {
+        const dlBtn = document.createElement('button');
+        dlBtn.textContent = 'Download CSV';
+        dlBtn.addEventListener('click', () => { window.location.href = `/api/jobs/${job.id}/results.csv`; });
+        actions.appendChild(dlBtn);
+      }
+
+      if (job.status === 'interrupted' || job.status === 'failed' || job.status === 'stopped') {
+        const resumeBtn = document.createElement('button');
+        resumeBtn.textContent = 'Resume';
+        resumeBtn.classList.add('primary');
+        resumeBtn.addEventListener('click', () => resumeJobUI(job.id));
+        actions.appendChild(resumeBtn);
+      }
+
+      const delBtn = document.createElement('button');
+      delBtn.textContent = 'Delete';
+      delBtn.classList.add('danger');
+      delBtn.addEventListener('click', () => deleteJobUI(job.id));
+      actions.appendChild(delBtn);
     }
-
-    if (job.recordCount > 0) {
-      const dlBtn = document.createElement('button');
-      dlBtn.textContent = 'Download CSV';
-      dlBtn.addEventListener('click', () => { window.location.href = `/api/jobs/${job.id}/results.csv`; });
-      actions.appendChild(dlBtn);
-    }
-
-    if (job.status === 'interrupted' || job.status === 'failed' || job.status === 'stopped') {
-      const resumeBtn = document.createElement('button');
-      resumeBtn.textContent = 'Resume';
-      resumeBtn.classList.add('primary');
-      resumeBtn.addEventListener('click', () => resumeJobUI(job.id));
-      actions.appendChild(resumeBtn);
-    }
-
-    const delBtn = document.createElement('button');
-    delBtn.textContent = 'Delete';
-    delBtn.classList.add('danger');
-    delBtn.addEventListener('click', () => deleteJobUI(job.id));
-    actions.appendChild(delBtn);
 
     list.appendChild(card);
   }
@@ -759,6 +769,18 @@ async function stopJobUI(id) {
   } catch (error) {
     setSearchStatus(`Could not stop: ${error.message}`);
   }
+}
+
+async function renameJobUI(id, currentName) {
+  const name = window.prompt('Job name:', currentName || '');
+  if (name === null) return;                         // cancelled
+  try {
+    const res = await fetch(`/api/jobs/${id}/name`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+    });
+    if (!res.ok) { const p = await res.json().catch(() => ({})); throw new Error(p.error || `HTTP ${res.status}`); }
+    await fetchJobs();
+  } catch (e) { setSearchStatus(`Could not rename job: ${e.message}`); }
 }
 
 async function deleteJobUI(id) {
