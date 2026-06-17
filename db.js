@@ -130,12 +130,13 @@ function makeDb(dir) {
     if (opts.domain) { where.push('domain = ?'); params.push(String(opts.domain).toLowerCase()); }
     // Position keyword: substring match on the Position field.
     if (opts.position) { where.push(`lower("position") LIKE ?`); params.push('%' + String(opts.position).toLowerCase() + '%'); }
-    // Location keyword: substring match across the location-bearing fields (geocoded Phone
-    // Location / Phone 2 Location, plus the Description where a city/region is often mentioned).
+    // Location keyword: substring match across every field a place name shows up in — the
+    // geocoded Phone Location / Phone 2 Location, the Description and Title (often "… in City, ST"),
+    // and the Web Source URL whose path usually encodes the city (e.g. /tx/lubbock/…, /in/angola/…).
     if (opts.location) {
       const t = '%' + String(opts.location).toLowerCase() + '%';
-      where.push(`(lower("phone_location") LIKE ? OR lower("phone_2_location") LIKE ? OR lower("description") LIKE ?)`);
-      params.push(t, t, t);
+      where.push(`(lower("phone_location") LIKE ? OR lower("phone_2_location") LIKE ? OR lower("description") LIKE ? OR lower("title") LIKE ? OR lower("web_source_url") LIKE ?)`);
+      params.push(t, t, t, t, t);
     }
     // Pasted domain list: match any (root domain or a subdomain of it).
     if (Array.isArray(opts.domains) && opts.domains.length) {
