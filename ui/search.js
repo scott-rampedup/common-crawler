@@ -103,6 +103,7 @@ function initElements() {
   el.fDirectory = $('f-directory');
   el.fDomains = $('f-domains');
   el.fPosition = $('f-position');
+  el.fLocation = $('f-location');
   el.fEmailType = $('f-emailType');
   el.fPhoneType = $('f-phoneType');
   el.fType = $('f-type');
@@ -356,6 +357,8 @@ function buildParams(extra) {
   if (doms.length) p.set('domains', doms.join(','));
   const pos = el.fPosition.value.trim();
   if (pos) p.set('position', pos);
+  const loc = el.fLocation.value.trim();
+  if (loc) p.set('location', loc);
   if (el.fEmailType.value) p.set('emailType', el.fEmailType.value);
   if (el.fPhoneType.value) p.set('phoneType', el.fPhoneType.value);
   if (el.fType.value) p.set('type', el.fType.value);
@@ -667,6 +670,7 @@ function clearFilters() {
   el.fDirectory.value = '';
   el.fDomains.value = '';
   el.fPosition.value = '';
+  el.fLocation.value = '';
   el.fEmailType.value = '';
   el.fPhoneType.value = '';
   el.fType.value = '';
@@ -685,6 +689,7 @@ function debouncedSearch() {
 function attachEvents() {
   el.fSearch.addEventListener('input', debouncedSearch);
   el.fPosition.addEventListener('input', debouncedSearch);
+  el.fLocation.addEventListener('input', debouncedSearch);
   el.fDomains.addEventListener('input', debouncedSearch);
   el.fDirectory.addEventListener('change', runSearch);
   el.fEmailType.addEventListener('change', runSearch);

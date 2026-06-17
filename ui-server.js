@@ -983,7 +983,7 @@ const server = http.createServer((req, res) => {
       search: q.get('search') || '', directory: q.get('directory') || '',
       emailType: q.get('emailType') || '', phoneType: q.get('phoneType') || '',
       gender: q.get('gender') || 'na', domain: q.get('domain') || '',
-      domains: parseDomainsParam(q.get('domains')), position: q.get('position') || '',
+      domains: parseDomainsParam(q.get('domains')), position: q.get('position') || '', location: q.get('location') || '',
       type: q.get('type') || '',
       linkedin: q.get('linkedin') === '1', sort: q.get('sort') || '', dir: q.get('dir'),
     }));
@@ -995,7 +995,7 @@ const server = http.createServer((req, res) => {
       search: q.get('search') || '', directory: q.get('directory') || '',
       emailType: q.get('emailType') || '', phoneType: q.get('phoneType') || '',
       gender: q.get('gender') || 'na', domain: q.get('domain') || '',
-      domains: parseDomainsParam(q.get('domains')), position: q.get('position') || '',
+      domains: parseDomainsParam(q.get('domains')), position: q.get('position') || '', location: q.get('location') || '',
       type: q.get('type') || '',
       linkedin: q.get('linkedin') === '1',
     };
