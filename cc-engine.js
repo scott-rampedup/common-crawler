@@ -1491,6 +1491,12 @@ if(require.main === module){
         && isBioOrContactUrl("https://agent.travelers.com/john-smith"));
       ok("isBioOrContactUrl ignores a bio-dir subdomain root (no person leaf)",
         !isBioOrContactUrl("https://agent.travelers.com/"));
+      // team-page terms must work whether in the SUBDOMAIN or the PATH (with a person leaf)
+      const teamTerms = ["insurance-agents","staff","bio","contacts","advisor","advisors","broker","brokers","realtor","realtors"];
+      ok("team-page terms classify as bio in both subdomain and path positions",
+        teamTerms.every((t) =>
+          isBioOrContactUrl(`https://example.com/${t}/john-smith`)
+          && isBioOrContactUrl(`https://${t}.example.com/john-smith`)));
 
       // 5) liveCrawl follows bio links and extracts via the real extractor (mocked network)
       const livePages = {
