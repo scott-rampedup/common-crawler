@@ -1485,6 +1485,12 @@ if(require.main === module){
         isBioOrContactUrl("https://agents.farmers.com/ca/calabasas/alex-sayeri"));
       ok("isBioOrContactUrl ignores a bio-dir subdomain listing page (no person leaf)",
         !isBioOrContactUrl("https://agents.farmers.com/ca/calabasas"));
+      // singular "agent." subdomain too (agent.travelers.com); bare root is not a bio
+      ok("isBioOrContactUrl flags a person under the singular agent. subdomain",
+        isBioOrContactUrl("https://agent.travelers.com/ca/los-angeles/john-smith")
+        && isBioOrContactUrl("https://agent.travelers.com/john-smith"));
+      ok("isBioOrContactUrl ignores a bio-dir subdomain root (no person leaf)",
+        !isBioOrContactUrl("https://agent.travelers.com/"));
 
       // 5) liveCrawl follows bio links and extracts via the real extractor (mocked network)
       const livePages = {
