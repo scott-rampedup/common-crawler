@@ -399,6 +399,10 @@ function classifyDirectory(url, html = "", rules = {}, genderMap = {}){
   const termMap = rules.termMap || new Map();
   const personSlug = looksLikePersonSlug(last, genderMap);
   const urlPath = normalizeForMatching(new URL(url).pathname);
+  // A directory term can live in the SUBDOMAIN, not the path (e.g. agents.farmers.com,
+  // agents.bankerslife.com, team.example.com). Treat the host's subdomain labels as dir context.
+  const hostLabels = (() => { try { return new URL(url).hostname.toLowerCase().replace(/^www\./, "").split(".").slice(0, -2); } catch { return []; } })();
+  const hostIsBioDir = hostLabels.some((l) => { const n = normalizeForMatching(l); return isKnownDir(n, BIO_DIRS) || isKnownDir(n, extraDirs); });
 
   for(const [term, name] of termMap.entries()){
     if(!term) continue;
@@ -419,6 +423,9 @@ function classifyDirectory(url, html = "", rules = {}, genderMap = {}){
   // earlier in the path (not adjacent to the name), and the name has its own segment.
   // Recognise via a whole-path directory scan paired with a clean first-last name segment.
   if(personSlug && /^[a-z]+[-_.][a-z]+$/i.test(nameRaw) && pathIdFromUrl(url)) return "BIO URL";
+  // Directory term in the SUBDOMAIN + a person-name leaf (agents.farmers.com/ca/calabasas/alex-sayeri):
+  // the host says "agents" and the last segment is clearly a person, so it's an agent profile page.
+  if(personSlug && hostIsBioDir) return "BIO URL";
   if(isKnownDir(last, BIO_DIRS)) return "People";
   if([...extraTerms].some(term => pageText.includes(term))) return "BIO URL";
   return "Company";

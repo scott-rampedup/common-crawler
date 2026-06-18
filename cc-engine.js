@@ -1480,6 +1480,11 @@ if(require.main === module){
         !links.some(u => /other\.com|\.pdf|mailto:|#top/.test(u)));
       ok("isBioOrContactUrl flags a staff/bio path", isBioOrContactUrl("https://demo-firm.com/attorneys/jane-doe/"));
       ok("isBioOrContactUrl ignores a blog path", !isBioOrContactUrl("https://demo-firm.com/blog/hello/"));
+      // dir term in the SUBDOMAIN + a person leaf (agents.farmers.com/ca/calabasas/alex-sayeri)
+      ok("isBioOrContactUrl flags a person under a bio-dir subdomain",
+        isBioOrContactUrl("https://agents.farmers.com/ca/calabasas/alex-sayeri"));
+      ok("isBioOrContactUrl ignores a bio-dir subdomain listing page (no person leaf)",
+        !isBioOrContactUrl("https://agents.farmers.com/ca/calabasas"));
 
       // 5) liveCrawl follows bio links and extracts via the real extractor (mocked network)
       const livePages = {
