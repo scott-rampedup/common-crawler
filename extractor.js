@@ -200,14 +200,21 @@ function lastPathSeg(url){
 }
 // The "Last Path" field value for a URL — the cleaned last path segment, EXACTLY as
 // extractRecord computes it. Exported so the DB normalizer can backfill a blank Last Path.
-function lastPathFromUrl(url){ return cleanLastPath(lastPathSeg(url)); }
+function lastPathFromUrl(url){ return cleanLastPath(nameSlugFromUrl(url) || lastPathSeg(url)); }
 // A bare record-id path segment: a number ("71955"), a UUID, or a long hex blob — the kind of
 // thing that trails a name on profile URLs (e.g. /First-Last/<uuid>/<uuid> on evrealestate.com).
 function isIdSegment(seg){
   const s = String(seg || "").replace(/\.(html?|php|aspx?)$/i,"");
-  return /^\d{2,}$/.test(s)                                                              // numeric id
-      || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)        // uuid
-      || /^[0-9a-f]{16,}$/i.test(s);                                                     // long hex id
+  if(/^\d{2,}$/.test(s)) return true;                                                    // numeric id
+  if(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) return true;  // uuid
+  if(/^[0-9a-f]{16,}$/i.test(s)) return true;                                            // long hex id
+  // Opaque alphanumeric id, optionally tagged — e.g. century21's
+  // "aid-P00200000000033dyujCKdEsXQx08N4pMQLeFT62" (trails the name on /agent/detail/.../First-Last/aid-…).
+  // After an optional short letter tag + hyphen, the rest is one >=16-char run of letters+digits that
+  // MIXES IN at least one digit — which a real person-name slug never does, so this won't eat names.
+  const blob = s.replace(/^[a-z]{1,6}-/i, "");
+  if(/^[0-9a-z]{16,}$/i.test(blob) && /\d/.test(blob)) return true;
+  return false;
 }
 // The path segment that holds a person's name: usually the last segment, but for profile URLs
 // that END in one or more record ids (".../First-Last/71955" or ".../First-Last/<uuid>/<uuid>")
@@ -586,6 +593,61 @@ function findPosition(title, description){
 }
 
 // ---------------------------------------------------------------- main
+const EMPTY_SD = { person:false, name:"", email:"", phone:"", image:"", locality:"", region:"", country:"", sameAs:[] };
+// First Facebook / Twitter-X / WhatsApp PROFILE link from a list of URLs. Skips share/intent
+// endpoints and the site's OWN brand handle (e.g. facebook.com/remax on a remax page) so we keep
+// the PERSON's profile, not the company's. Facebook/Twitter strip the query; WhatsApp keeps it
+// (the number lives in wa.me/<num> or ?phone=).
+function findSocials(urls, brand){
+  const out = { facebook:"", twitter:"", whatsapp:"" };
+  const b = String(brand || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const isBrand = (h) => b && String(h).toLowerCase().replace(/[^a-z0-9]/g, "") === b;
+  const FB_SKIP = /^(sharer|share|share\.php|dialog|plugins|tr|profile\.php|pages|groups|events|hashtag|story\.php|permalink\.php|login|help|policies)$/i;
+  const TW_SKIP = /^(intent|share|home|hashtag|search|i|explore|messages|notifications|privacy|tos|login)$/i;
+  for(const raw of (urls || [])){
+    const u = String(raw || "").split("#")[0].trim();
+    if(!out.facebook){
+      const m = u.match(/^https?:\/\/(?:[a-z0-9-]+\.)?facebook\.com\/([^/?#]+)/i) || u.match(/^https?:\/\/fb\.com\/([^/?#]+)/i);
+      if(m && !FB_SKIP.test(m[1]) && !isBrand(m[1])) out.facebook = u.split("?")[0];
+    }
+    if(!out.twitter){
+      const m = u.match(/^https?:\/\/(?:www\.)?(?:twitter|x)\.com\/([^/?#]+)/i);
+      if(m && !TW_SKIP.test(m[1]) && !isBrand(m[1])) out.twitter = u.split("?")[0];
+    }
+    if(!out.whatsapp){
+      if(/^https?:\/\/(?:wa\.me|(?:api|web|chat)\.whatsapp\.com)\//i.test(u) || /^whatsapp:\/\//i.test(u)) out.whatsapp = u;
+    }
+  }
+  return out;
+}
+// Pull contact fields from a page's schema.org JSON-LD (Person / RealEstateAgent / LocalBusiness /
+// Organization). A FREE, automatic fallback for sites that publish structured data but hide the
+// email/phone from mailto:/tel: links, or use a name-polluting URL slug (e.g. remax's
+// first-last-city-state). Name is taken ONLY from a Person-type object so a company name never
+// lands in First/Last. Returns EMPTY_SD's shape.
+function structuredFromHtml(html){
+  const out = { person:false, name:"", email:"", phone:"", image:"", locality:"", region:"", country:"", sameAs:[] };
+  const re = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m;
+  while((m = re.exec(html))){
+    let j; try{ j = JSON.parse(m[1].trim()); }catch{ continue; }
+    const list = Array.isArray(j) ? j : (j && Array.isArray(j["@graph"]) ? j["@graph"] : [j]);
+    for(const o of list){
+      if(!o || typeof o !== "object") continue;
+      const t = Array.isArray(o["@type"]) ? o["@type"].join(",") : String(o["@type"] || "");
+      const isPerson = /\b(Person|RealEstateAgent|Agent|Attorney|Physician)\b/i.test(t);
+      if(!isPerson && !/\b(LocalBusiness|Organization|RealEstate)/i.test(t)) continue;
+      if(isPerson && !out.name && o.name){ out.name = String(o.name); out.person = true; }
+      if(!out.email && o.email) out.email = String(o.email).replace(/^mailto:/i, "").trim();
+      if(!out.phone && o.telephone) out.phone = String(o.telephone).trim();
+      if(!out.image && o.image) out.image = typeof o.image === "string" ? o.image : ((o.image && (o.image.url || o.image["@id"])) || "");
+      const a = (o.address && typeof o.address === "object") ? o.address : null;
+      if(a && !out.locality){ out.locality = a.addressLocality || ""; out.region = a.addressRegion || ""; out.country = a.addressCountry || ""; }
+      if(o.sameAs){ for(const s of (Array.isArray(o.sameAs) ? o.sameAs : [o.sameAs])) if(s) out.sameAs.push(String(s)); }
+    }
+  }
+  return out;
+}
 /**
  * @param {string} html
  * @param {string} url
@@ -603,9 +665,16 @@ function extractRecord(html, url, deps = {}){
   const outDirectory = pathHit ? "Team" : directory;   // matched directory term -> Directory Type "Team"
   const last = lastPathSeg(url);
   const nameSlug = nameSlugFromUrl(url);               // name seg (skips a trailing record id, e.g. /First-Last/71955)
-  const { first, last: lastName } = isBio ? inferNameFromSlug(nameSlug, deps.genderMap) : { first:"", last:"" };
+  let { first, last: lastName } = isBio ? inferNameFromSlug(nameSlug, deps.genderMap) : { first:"", last:"" };
 
   const hrefs = anchors(html);
+
+  // FREE structured-data (schema.org JSON-LD) fallback — fills any gaps the normal extraction leaves.
+  const sd = html.indexOf("ld+json") >= 0 ? structuredFromHtml(html) : EMPTY_SD;
+  if(isBio && sd.person && sd.name){            // JSON-LD name beats a slug polluted with city/state
+    const nm = nameFromSlug(String(sd.name).replace(/\s+/g, "-"));
+    if(nm.first && nm.last && (!first || !lastName || lastName.length <= 2)){ first = nm.first; lastName = nm.last; }
+  }
 
   // email(s): mailto first (precise), then a text scan. Every candidate runs through
   // cleanEmail (de-obfuscate, strip phone prefixes / echoed domain / trailing dots,
@@ -619,6 +688,7 @@ function extractRecord(html, url, deps = {}){
   if(!emails.length){
     for(const e of extractEmailsFromText(html)) addEmail(e);
   }
+  if(!emails.length && sd.email) addEmail(sd.email);     // JSON-LD email when none in mailto/text
   const email = emails[0] || "";
 
   // linkedin(s): /in/ only, not /company/
@@ -627,28 +697,47 @@ function extractRecord(html, url, deps = {}){
     const li = h.split("#")[0].split("?")[0]; if(!seenL.has(li)){ seenL.add(li); lis.push(li); } } }
   const linkedin = lis[0] || "";
 
+  // social profiles (facebook / twitter-x / whatsapp) from the page links + JSON-LD sameAs
+  const socials = findSocials(hrefs.concat(sd.sameAs || []), getBaseDomain(url).split(".")[0] || "");
+
   // google maps (first)
   const maps = hrefs.find(h => /google\.[^/]+\/maps/i.test(h)) || "";
 
-  // phones from tel: links. SAME-PAGE RULE: only attach to a person on a BIO URL page.
-  const tels = []; const seenT = new Set();
-  for(const h of hrefs){ if(/^tel:/i.test(h)){ const t = h.replace(/^tel:/i,"").trim();
-    if(t && !seenT.has(t)){ seenT.add(t); tels.push(t); } } }
+  // vCard: a downloadable .vcf contact card link (often carries the person's direct/cell number).
+  // Store the absolute URL now; vcard.js reads + merges the card's fields on ingestion.
+  const vcardHref = hrefs.find(h => /\.vcf($|[?#])/i.test(String(h))) || "";
+  const vcard = vcardHref ? toAbs(vcardHref, url) : "";
+
+  // phones from tel: AND sms: links. A number behind an sms: link is textable => it's a Mobile
+  // number (important: many bio pages, e.g. century21, expose a "Call" tel: + a "Text" sms: for
+  // the same cell). SAME-PAGE RULE: only attach to a person on a BIO URL page.
+  const tels = []; const seenT = new Set(); const smsRaw = [];
+  for(const h of hrefs){
+    if(!/^(tel|sms):/i.test(h)) continue;
+    const t = h.replace(/^(tel|sms):/i, "").trim();
+    if(!t) continue;
+    if(/^sms:/i.test(h)) smsRaw.push(t);
+    const key = t.replace(/\D/g, "");                       // de-dupe tel:/sms: of the SAME number
+    if(key && !seenT.has(key)){ seenT.add(key); tels.push(t); }
+  }
   // Fallback: many bio pages PRINT the phone as plain text with no tel: link. On a BIO URL
   // (where the SAME-PAGE RULE makes a number safe to attach to the person), scan the visible
-  // text for phone-shaped numbers — only when no tel: link was found, so existing pages are
+  // text for phone-shaped numbers — only when no tel:/sms: link was found, so existing pages are
   // unchanged. extractTextPhones is strict to avoid grabbing years, dates, zips, or IDs.
   if(isBio && !tels.length){
-    for(const t of extractTextPhones(html)){ if(!seenT.has(t)){ seenT.add(t); tels.push(t); } }
+    for(const t of extractTextPhones(html)){ const key = t.replace(/\D/g,""); if(key && !seenT.has(key)){ seenT.add(key); tels.push(t); } }
   }
+  if(isBio && !tels.length && sd.phone){ const k = String(sd.phone).replace(/\D/g,""); if(k){ seenT.add(k); tels.push(sd.phone); } }  // JSON-LD telephone
   let phone="", phoneType="", phoneLocation="", phone2="", phone2Type="";
   if(isBio && tels.length && wireless){
     const cc = countryCodeFromDomain(getBaseDomain(url));   // country from the domain TLD (default US)
+    const smsSet = new Set(smsRaw.map((s) => toE164(splitExtension(s).main, cc)).filter(Boolean));  // textable (Mobile) numbers
     const a = splitExtension(tels[0]);
     const e164a = toE164(a.main, cc);
     phoneType = classifyLineType(a.main, wireless).type;    // classify on the main number (no ext)…
     if(phoneType === "Unknown") phoneType = intlLineType(e164a) || phoneType;  // …non-NANP via libphonenumber
     if(intlMobileType(e164a)) phoneType = "Mobile";         // …non-NANP mobile by country prefix
+    if(smsSet.has(e164a)) phoneType = "Mobile";             // …an sms: link means it's textable => Mobile
     phoneLocation = phoneType === "Toll Free" ? "" : geocode(a.main);   // intl location filled later by geocodeRecords
     phone = e164a + (a.ext ? ` ext. ${a.ext}` : "");        // …E.164 + standardized extension
     if(tels[1]){
@@ -657,8 +746,14 @@ function extractRecord(html, url, deps = {}){
       phone2Type = classifyLineType(b.main, wireless).type;
       if(phone2Type === "Unknown") phone2Type = intlLineType(e164b) || phone2Type;
       if(intlMobileType(e164b)) phone2Type = "Mobile";
+      if(smsSet.has(e164b)) phone2Type = "Mobile";
       phone2 = e164b + (b.ext ? ` ext. ${b.ext}` : "");
     }
+  }
+
+  if(sd.locality || sd.region){                          // structured postal address beats the phone area code
+    const sdLoc = [sd.locality, sd.region, sd.country].filter(Boolean).join(", ");
+    if(sdLoc) phoneLocation = sdLoc;
   }
 
   const description = (metaContent(html,"og:description") || metaContent(html,"description")).slice(0,300);
@@ -668,7 +763,8 @@ function extractRecord(html, url, deps = {}){
   const role = (pathHit && pathHit.role) ? pathHit.role : "";
   const title = role || pageTtl;
   const position = role || findPosition(pageTtl, description);
-  const image = findImage(html, url);
+  let image = findImage(html, url);
+  if(!image && sd.image) image = toAbs(sd.image, url);
   const gender = first ? (genderMap[first.toLowerCase()] || "") : "";
 
   // ---- QUALITY GATE ----
@@ -681,7 +777,7 @@ function extractRecord(html, url, deps = {}){
   if(!email){
     const slugTokens = isBio ? pathNameTokens(nameSlug).length : 0;
     const keepForModelling = deps.allowNoEmail && isBio && first && lastName && gender
-      && slugTokens >= 2 && slugTokens <= 3;
+      && (sd.person || (slugTokens >= 2 && slugTokens <= 3));   // JSON-LD confirming a person also clears the junk-slug guard
     if(!keepForModelling) return null;         // require a valid email address for every other record
   }
 
@@ -692,7 +788,7 @@ function extractRecord(html, url, deps = {}){
     "Directory": outDirectory,
     "Path ID": pathHit ? pathHit.id : "",
     "Domain": getBaseDomain(url),
-    "Last Path": cleanLastPath(last),
+    "Last Path": cleanLastPath(nameSlug || last),   // the segment the NAME came from, not a trailing id
     "Bio Check": isBio ? "Y" : "",
     "First": first,
     "Last": lastName,
@@ -704,7 +800,11 @@ function extractRecord(html, url, deps = {}){
     "Email Address": email,
     "Email Type": classifyEmail(email),
     "LinkedIn URL": linkedin,
+    "Facebook": socials.facebook,
+    "Twitter": socials.twitter,
+    "WhatsApp": socials.whatsapp,
     "Google Maps": maps,
+    "vCard": vcard,
     "Phone": phone,
     "Phone Type": phoneType,
     "Phone Location": phoneLocation,
@@ -796,12 +896,18 @@ async function geocodeRecords(records){
   const lookup = async (raw, cc) => { const k = cc + "|" + raw; if(!cache.has(k)) cache.set(k, await geocodePhone(raw, cc)); return cache.get(k); };
   for(const r of records){
     const cc = countryCodeFromDomain(r["Domain"]);   // default calling code for non-E.164 numbers
-    const base = basePhone(r["Phone"]);
-    let loc = base ? await lookup(base, cc) : "";
-    if(!loc) loc = countryForDomain(r["Domain"]);    // fall back to the domain's TLD country
-    if(loc) r["Phone Location"] = loc;
-    const base2 = basePhone(r["Phone 2"]);
-    if(base2){ const loc2 = await lookup(base2, cc); if(loc2) r["Phone 2 Location"] = loc2; }
+    // Fill ONLY when blank — an address-derived location (from a JSON API or a vCard) is more
+    // accurate than the phone's area code, so it wins.
+    if(!String(r["Phone Location"] || "").trim()){
+      const base = basePhone(r["Phone"]);
+      let loc = base ? await lookup(base, cc) : "";
+      if(!loc) loc = countryForDomain(r["Domain"]);  // fall back to the domain's TLD country
+      if(loc) r["Phone Location"] = loc;
+    }
+    if(!String(r["Phone 2 Location"] || "").trim()){
+      const base2 = basePhone(r["Phone 2"]);
+      if(base2){ const loc2 = await lookup(base2, cc); if(loc2) r["Phone 2 Location"] = loc2; }
+    }
   }
   return records;
 }
@@ -943,7 +1049,7 @@ function loadDirectoryRules(filePath){
 module.exports = { extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules,
   cleanEmail, setEmailBlocklist, loadEmailBlocklist, analyzePhones, splitExtension,
   geocodeRecords, geocodePhone, findPosition,
-  toE164, countryCodeFromDomain, pathIdFromUrl, getBaseDomain, nameSlugFromUrl, lastPathFromUrl };   // reused by the Sheet importer + Site Search + DB normalizer
+  toE164, countryCodeFromDomain, pathIdFromUrl, getBaseDomain, nameSlugFromUrl, lastPathSeg, lastPathFromUrl, structuredFromHtml, findSocials };   // reused by the Sheet importer + Site Search + DB normalizer
 
 // ---------------------------------------------------------------- self-test
 if(require.main === module){
@@ -1056,6 +1162,33 @@ if(require.main === module){
   okp("tel: link unaffected by text fallback",
     (extractRecord(`<h1>Nina Novak</h1><a href="mailto:n@acme.com">e</a><a href="tel:+12012012345">c</a>`,
       "https://acme.com/team/nina-novak", { wireless, genderMap, source:"Test" }) || {})["Phone"] === "+12012012345");
+
+  // sms: link => the number is textable => Phone Type "Mobile" (key for this project). A "Call"
+  // tel: + "Text" sms: for the SAME number de-dupe to one Phone, and the trailing aid- id is NOT
+  // used as the Last Path (the name segment is) — both century21 behaviours.
+  const smsRec = extractRecord(
+    `<h1>Agnes Aaron</h1><a href="mailto:a@c21.com">e</a><a href="tel:+16091234567">call</a><a href="sms:+16091234567">text</a>`,
+    "https://www.century21.com/agent/detail/nj/medford/agents/agnes-aaron/aid-P00200000FZGd1opBBuOqLprx9TUD7AZamyzZbCg",
+    { wireless, genderMap: { agnes:"F" }, source:"Test" });
+  okp("sms: link classifies the number as Mobile", smsRec && smsRec["Phone"] === "+16091234567" && smsRec["Phone Type"] === "Mobile");
+  okp("tel:+sms: of one number -> no duplicate Phone 2", smsRec && !smsRec["Phone 2"]);
+  okp("Last Path = name segment, not the trailing aid- id", smsRec && smsRec["Last Path"] === "Agnes Aaron");
+
+  // structured-data (schema.org JSON-LD) fallback: email/phone/location pulled from a Person block
+  // even though the page has NO mailto:/tel: links (the free AI-Assist layer)
+  const ldHtml = `<html><head><script type="application/ld+json">${JSON.stringify({
+    "@type":"Person", name:"Jane Doe", email:"jane@firm.com", telephone:"(512) 555-0143",
+    address:{ "@type":"PostalAddress", addressLocality:"Austin", addressRegion:"TX", addressCountry:"US" },
+  })}</script></head><body><h1>Jane Doe</h1></body></html>`;
+  const sdRec = extractRecord(ldHtml, "https://firm.com/our-people/jane-doe", { wireless, genderMap:{ jane:"F" }, source:"Test", allowNoEmail:true });
+  okp("JSON-LD email extracted when no mailto on the page", sdRec && sdRec["Email Address"] === "jane@firm.com");
+  okp("JSON-LD telephone extracted when no tel: link", sdRec && sdRec["Phone"] === "+15125550143");
+  okp("JSON-LD postal address -> Phone Location", sdRec && sdRec["Phone Location"] === "Austin, TX, US");
+  okp("structuredFromHtml ignores a page with no JSON-LD", structuredFromHtml("<html><body>nope</body></html>").email === "");
+
+  // social profiles: keep the PERSON's, drop the site's own brand handle + share/intent endpoints
+  const soc = findSocials(["https://www.facebook.com/remax", "https://facebook.com/janeagent", "https://twitter.com/intent/tweet", "https://x.com/janeagent", "https://wa.me/15551234567"], "remax");
+  okp("findSocials keeps person's FB/Twitter/WhatsApp, drops brand + intent", soc.facebook === "https://facebook.com/janeagent" && soc.twitter === "https://x.com/janeagent" && soc.whatsapp === "https://wa.me/15551234567");
 
   console.log(`\nphone / email-less self-test: ${pp} passed, ${pf} failed`);
 }

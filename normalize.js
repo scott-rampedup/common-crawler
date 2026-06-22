@@ -6,7 +6,7 @@
  * next import). Encoding the rule here makes it durable: it runs at the single write chokepoint,
  * so re-imports, crawls, and Site Search all produce the corrected value. Add rules to RULES.
  */
-const { lastPathFromUrl } = require('./extractor');
+const { lastPathFromUrl, nameSlugFromUrl, lastPathSeg } = require('./extractor');
 const { countryForDomain } = require('./tld-lookup');
 
 const RULES = [
@@ -20,9 +20,21 @@ const RULES = [
     apply: (r) => { r['Position'] = 'Bankers Life Agent'; r['Title'] = 'Bankers Life Agent'; },
   },
   {
-    // Backfill a blank Last Path from the Web Source URL using the extractor's own logic.
+    // Last Path should be the segment the NAME came from, not a trailing record id. Backfill when
+    // blank, AND correct it when the stored value is the trailing id (e.g. century21
+    // /agent/detail/.../agnes-aaron/aid-… stored "aid-…" -> "Agnes Aaron"). Only overwrites when the
+    // URL actually has a trailing id (name-bearing segment differs from the raw last segment), so
+    // ordinary Last Paths are untouched.
     name: 'last-path-from-url',
-    match: (r) => !String(r['Last Path'] || '').trim() && /^https?:\/\//i.test(String(r['Web Source URL'] || '')),
+    match: (r) => {
+      const url = String(r['Web Source URL'] || '');
+      if (!/^https?:\/\//i.test(url)) return false;
+      const want = lastPathFromUrl(url);
+      if (!want) return false;
+      const cur = String(r['Last Path'] || '').trim();
+      if (!cur) return true;                                            // blank -> backfill
+      return cur !== want && nameSlugFromUrl(url) !== lastPathSeg(url); // stored a trailing id -> correct it
+    },
     apply: (r) => { const lp = lastPathFromUrl(r['Web Source URL']); if (lp) r['Last Path'] = lp; },
   },
   {

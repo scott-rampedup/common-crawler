@@ -7,11 +7,12 @@ const zlib = require('zlib');
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'ui');
 const RESULTS_CSV = path.join(__dirname, 'cc-results.csv');
-const { runDomains, COLUMNS, extractBioUrlsFromSitemaps, isBioOrContactUrl, discoverBioUrlsFromCC } = require('./cc-engine');
+const { runDomains, COLUMNS, extractBioUrlsFromSitemaps, extractBioUrlGroups, isBioOrContactUrl, discoverBioUrlsFromCC } = require('./cc-engine');
 const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords, geocodePhone, classifyEmail, cleanEmail, findPosition } = require('./extractor');
 const { modelEmail } = require('./email-pattern');
 const { importSheet } = require('./sheet-import');
 const { siteSearch, bioRowsToRecords } = require('./serper');
+const vcard = require('./vcard');
 const mailer = require('./mailer');
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
@@ -457,6 +458,12 @@ async function runJobDomains(job, domainsToRun) {
     job.error = e.message;
   }
   job.stopRequested = false;
+  // read any linked .vcf vCards and merge their fields (name/email/title + cell => Mobile phone)
+  // BEFORE email modelling, so a real vCard email wins over a modelled one.
+  try {
+    const v = await vcard.enrichRecords([...job.recordsByEmail.values()], { genderMap: GENDER_MAP });
+    if (v.fetched) console.log(`Job ${job.id}: read ${v.fetched} vCard(s), enriched ${v.applied} record(s).`);
+  } catch (e) { console.error('vCard enrichment failed:', e.message); }
   try { modelMissingEmails(job); }                                  // model emails for email-less bios (sitemap/webpage)
   catch (e) { console.error('email modelling failed:', e.message); }
   try { await geocodeRecords([...job.recordsByEmail.values()]); }   // City, Region, Country
@@ -638,6 +645,43 @@ function readJsonBody(req, cb) {
   req.on('end', () => { try { cb(JSON.parse(body || '{}')); } catch (e) { cb(null); } });
 }
 function jsonErr(res, code, msg) { res.writeHead(code, jsonHdr); res.end(JSON.stringify({ error: msg })); }
+
+// Read a raw sitemap upload (sitemap XML, a gzipped sitemap, or a newline/comma list of sitemap
+// URLs) and hand back { content, urls } (or { error }). Shared by /api/sitemap/extract and
+// /api/sitemap/run. Reads bytes so .xml.gz uploads work; caps the upload at 64MB.
+function readSitemapInput(req, cb) {
+  const chunks = []; let size = 0; let aborted = false;
+  req.on('data', (c) => {
+    size += c.length;
+    if (size > 64 * 1024 * 1024) { aborted = true; req.destroy(); return; }   // 64MB cap
+    chunks.push(c);
+  });
+  req.on('end', () => {
+    if (aborted) return cb({ error: 'Sitemap upload too large (64MB max).' });
+    try {
+      let buf = Buffer.concat(chunks);
+      // gunzip an uploaded .gz (magic 1f 8b); a fetched .gz is handled inside the engine's fetchDoc
+      if (buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b) { try { buf = zlib.gunzipSync(buf); } catch { /* keep raw */ } }
+      const text = buf.toString('utf8').trim();
+      if (!text) return cb({ error: 'Empty sitemap input.' });
+      const looksXml = /<\?xml|<urlset[\s>]|<sitemapindex[\s>]/i.test(text);
+      if (looksXml) return cb({ content: text, urls: [] });
+      const urls = text.split(/[\r\n,]+/).map((s) => s.trim()).filter((s) => /^https?:\/\//i.test(s));
+      if (!urls.length) return cb({ error: 'No sitemap XML or sitemap URL(s) found in the input.' });
+      cb({ content: '', urls });
+    } catch (e) {
+      cb({ error: e.message || 'Failed to parse sitemap.' });
+    }
+  });
+}
+
+// A readable job name for the per-sitemap jobs started by /api/sitemap/run.
+function sitemapJobName(source) {
+  const s = String(source || '').trim();
+  if (!s || s === '(pasted sitemap)') return 'Sitemap';
+  try { const u = new URL(s); return ('Sitemap: ' + u.hostname.replace(/^www\./, '') + u.pathname).slice(0, 120); }
+  catch { return ('Sitemap: ' + s).slice(0, 120); }
+}
 
 // Admin-only API (the request handler already verified the admin role before calling this).
 function handleAdmin(req, res, p) {
@@ -948,35 +992,47 @@ const server = http.createServer((req, res) => {
   // bioUrls as a normal 'webpage' job. Reads the body as bytes so .xml.gz uploads work.
   if (url.pathname === '/api/sitemap/extract' && req.method === 'POST') {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
-    const chunks = []; let size = 0; let aborted = false;
-    req.on('data', (c) => {
-      size += c.length;
-      if (size > 64 * 1024 * 1024) { aborted = true; req.destroy(); return; }   // 64MB cap
-      chunks.push(c);
-    });
-    req.on('end', async () => {
-      if (aborted) return;
+    readSitemapInput(req, async (inp) => {
+      if (inp.error) return jsonErr(res, 400, inp.error);
       try {
-        let buf = Buffer.concat(chunks);
-        // gunzip an uploaded .gz (magic 1f 8b); fetched .gz is handled inside the engine's fetchDoc
-        if (buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b) { try { buf = zlib.gunzipSync(buf); } catch { /* keep raw */ } }
-        const text = buf.toString('utf8').trim();
-        if (!text) return jsonErr(res, 400, 'Empty sitemap input.');
-
-        const looksXml = /<\?xml|<urlset[\s>]|<sitemapindex[\s>]/i.test(text);
-        let content = '', urls = [];
-        if (looksXml) {
-          content = text;
-        } else {
-          urls = text.split(/[\r\n,]+/).map((s) => s.trim()).filter((s) => /^https?:\/\//i.test(s));
-          if (!urls.length) return jsonErr(res, 400, 'No sitemap XML or sitemap URL(s) found in the input.');
-        }
         // directoryRules stays {} on the server by design (see project notes); genderMap aids bio detection
-        const out = await extractBioUrlsFromSitemaps({ content, urls, genderMap: GENDER_MAP });
+        const out = await extractBioUrlsFromSitemaps({ content: inp.content, urls: inp.urls, genderMap: GENDER_MAP });
         console.log(`Sitemap extract: ${out.bioUrls.length} bio URL(s) from ${out.totalUrls} URL(s) across ${out.sitemapsFetched} fetched sitemap(s)`);
         sendJson(res, { ok: true, ...out });
       } catch (e) {
         jsonErr(res, 500, e.message || 'Failed to parse sitemap.');
+      }
+    });
+    return;
+  }
+
+  // POST /api/sitemap/run?directoryFilter=&liveOnly=  (raw body: same as /api/sitemap/extract)
+  // Processes the sitemaps ONE AT A TIME: each sitemap's bio URLs start their OWN 'webpage' job,
+  // instead of merging every sitemap into a single job (which overflows the /api/jobs body cap and
+  // memory when several large sitemaps are uploaded). Jobs are created in-process via startJob, so
+  // the bio URLs never round-trip through an HTTP body. Returns the jobs that were started.
+  if (url.pathname === '/api/sitemap/run' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    const directoryFilter = (url.searchParams.get('directoryFilter') || '').trim();
+    const liveOnly = /^(1|true|yes)$/i.test(url.searchParams.get('liveOnly') || '');
+    readSitemapInput(req, async (inp) => {
+      if (inp.error) return jsonErr(res, 400, inp.error);
+      try {
+        const startedJobs = [];
+        const out = await extractBioUrlGroups({
+          content: inp.content, urls: inp.urls, genderMap: GENDER_MAP,
+          onGroup: (g) => {                                  // fires once per sitemap, in order
+            const job = startJob(g.bioUrls, directoryFilter, liveOnly, 'webpage', 'Sitemaps', sitemapJobName(g.source));
+            startedJobs.push({ id: job.id, name: job.name, source: g.source, bioUrls: g.bioUrls.length });
+          },
+        });
+        console.log(`Sitemap run: started ${startedJobs.length} job(s) across ${out.totalGroups} sitemap(s), ${out.totalBioUrls} bio URL(s) from ${out.sitemapsFetched} fetched sitemap(s)`);
+        sendJson(res, {
+          ok: true, jobs: startedJobs, sitemaps: out.totalGroups, totalBioUrls: out.totalBioUrls,
+          totalUrls: out.totalUrls, sitemapsFetched: out.sitemapsFetched, sitemapsOk: out.sitemapsOk,
+        });
+      } catch (e) {
+        jsonErr(res, 500, e.message || 'Failed to process sitemaps.');
       }
     });
     return;
@@ -1289,6 +1345,129 @@ server.listen(PORT, () => {
         console.log(`Angola fix: re-geocoded ${affected.length} corrected number set(s); refined ${wrote} location field(s).`);
       } catch (e) { console.error('Angola maint failed:', e.message); }
     }
+
+    // Idempotent deletion of ALL century21.com records, gated by DELETE_C21_ONCE=<token>. A marker
+    // file stores the last-applied token, so the deletion runs once PER token value — bump the token
+    // (e.g. '1' -> '2') to re-run after a fresh crawl. The removed rows are backed up to DATA_DIR
+    // first, and the field coverage (how many had email/phone) is logged so the crawl quality shows.
+    const c21Token = String(process.env.DELETE_C21_ONCE || '').trim();
+    if (c21Token) {
+      try {
+        const marker = path.join(DATA_DIR, '.century21-deleted.token');
+        const applied = fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim() : '';
+        if (applied === c21Token) {
+          console.log(`Century21 deletion: token "${c21Token}" already applied — skipping.`);
+        } else {
+          const out = db.deleteByDomain('century21.com');
+          const withEmail = out.rows.filter((r) => String(r['Email Address'] || '').trim()).length;
+          const withPhone = out.rows.filter((r) => String(r['Phone'] || '').trim()).length;
+          if (out.rows.length) {
+            const bak = path.join(DATA_DIR, `century21-deleted-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+            fs.writeFileSync(bak, JSON.stringify(out.rows));
+            console.log(`Century21 deletion: backed up ${out.rows.length} row(s) -> ${bak}`);
+          }
+          fs.writeFileSync(marker, c21Token);
+          console.log(`Century21 deletion (token "${c21Token}"): removed ${out.deleted}; deleted set had email=${withEmail}, phone=${withPhone}; central DB total now ${db.count()}.`);
+        }
+      } catch (e) { console.error('Century21 deletion failed:', e.message); }
+    }
+
+    // Idempotent junk-clean: delete century21 records that did NOT come from the Site API (the early
+    // "via webpage" scrape junk with no email/phone), keeping the clean adapter records. Token-gated.
+    const c21JunkToken = String(process.env.CLEAN_C21_JUNK || '').trim();
+    if (c21JunkToken) {
+      try {
+        const marker = path.join(DATA_DIR, '.century21-junk.token');
+        const applied = fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim() : '';
+        if (applied === c21JunkToken) {
+          console.log(`Century21 junk-clean: token "${c21JunkToken}" already applied — skipping.`);
+        } else {
+          const out = db.deleteByDomain('century21.com', { exceptSource: 'Site API' });
+          fs.writeFileSync(marker, c21JunkToken);
+          console.log(`Century21 junk-clean (token "${c21JunkToken}"): removed ${out.deleted} non-Site-API record(s); central DB total now ${db.count()}.`);
+          const cs = db.domainStats('century21.com');
+          const rs = db.domainStats('remax.com');
+          console.log(`Coverage — century21: ${cs.total} records (${cs.withEmail} email, ${cs.withPhone} phone); remax: ${rs.total} records (${rs.withEmail} email, ${rs.withPhone} phone).`);
+        }
+      } catch (e) { console.error('Century21 junk-clean failed:', e.message); }
+    }
+
+    // Idempotent one-off: start the remax agent crawl (fetch the sitemap server-side, extract all bio
+    // URLs, run them through the remax adapter). Token-gated so it starts once per token value.
+    const remaxToken = String(process.env.PROCESS_REMAX || '').trim();
+    if (remaxToken) {
+      try {
+        const marker = path.join(DATA_DIR, '.remax-started.token');
+        const applied = fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim() : '';
+        if (applied === remaxToken) {
+          console.log(`Remax: token "${remaxToken}" already started — skipping.`);
+        } else {
+          const sitemap = process.env.REMAX_SITEMAP || 'https://www.remax.com/AgentSitemaps/agents-2026_Q2-1.xml';
+          const started = [];
+          const out = await extractBioUrlGroups({
+            urls: [sitemap], genderMap: GENDER_MAP, candidateCap: 100000, maxUrls: 200000,
+            onGroup: (g) => { const job = startJob(g.bioUrls, '', false, 'webpage', 'Sitemaps', sitemapJobName(g.source)); started.push(job.id); },
+          });
+          fs.writeFileSync(marker, remaxToken);
+          console.log(`Remax: started ${started.length} job(s), ${out.totalBioUrls} bio URL(s) from ${out.sitemapsFetched} fetched sitemap(s).`);
+        }
+      } catch (e) { console.error('Remax start failed:', e.message); }
+    }
+
+    // Idempotent one-off: run a set of sitemap crawls. `skipExisting` makes it a GAP-FILL (only
+    // pages not already captured for that domain) — used to recover remax agents that failed the
+    // first pass without re-fetching the ones we have. century21 runs the full agent-detail index.
+    const runCrawlsToken = String(process.env.RUN_CRAWLS || '').trim();
+    if (runCrawlsToken) {
+      try {
+        const marker = path.join(DATA_DIR, '.run-crawls.token');
+        const applied = fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim() : '';
+        if (applied === runCrawlsToken) {
+          console.log(`Crawls: token "${runCrawlsToken}" already started — skipping.`);
+        } else {
+          const targets = [
+            { name: 'remax-gapfill', sitemap: 'https://www.remax.com/AgentSitemaps/agents-2026_Q2-1.xml', domain: 'remax.com', skipExisting: true, cap: 100000, max: 200000 },
+            { name: 'century21-full', sitemap: 'https://www.century21.com/xml-sitemaps/sitemapindex-agents-detail.xml', domain: 'century21.com', skipExisting: false, cap: 300000, max: 600000 },
+          ];
+          for (const t of targets) {
+            const existing = t.skipExisting ? db.existingUrls(t.domain) : null;
+            let started = 0, kept = 0, skipped = 0;
+            const out = await extractBioUrlGroups({
+              urls: [t.sitemap], genderMap: GENDER_MAP, candidateCap: t.cap, maxUrls: t.max,
+              onGroup: (g) => {
+                let urls = g.bioUrls;
+                if (existing) { const before = urls.length; urls = urls.filter((u) => !existing.has(String(u).split('?')[0])); skipped += before - urls.length; }
+                if (urls.length) { startJob(urls, '', false, 'webpage', 'Sitemaps', sitemapJobName(g.source)); started++; kept += urls.length; }
+              },
+            });
+            console.log(`Crawls[${t.name}]: started ${started} job(s), ${kept} URL(s)${existing ? ` (skipped ${skipped} already-captured)` : ''}, ${out.sitemapsFetched} sitemap(s) fetched.`);
+          }
+          fs.writeFileSync(marker, runCrawlsToken);
+        }
+      } catch (e) { console.error('Crawls start failed:', e.message); }
+    }
+
+    // One-time fix: correct remax records whose Location is RE/MAX HQ ("Denver, CO") by re-deriving
+    // the agent's City/State from the bio-URL slug. Token-gated + marker so it runs once per value.
+    const remaxLocToken = String(process.env.FIX_REMAX_LOC || '').trim();
+    if (remaxLocToken) {
+      try {
+        const marker = path.join(DATA_DIR, '.remax-locfix.token');
+        const applied = fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim() : '';
+        if (applied === remaxLocToken) {
+          console.log(`Remax loc-fix: token "${remaxLocToken}" already applied — skipping.`);
+        } else {
+          const { remaxLocationFromUrl } = require('./site-apis');
+          const r = db.fixRemaxLocations(remaxLocationFromUrl);
+          fs.writeFileSync(marker, remaxLocToken);
+          console.log(`Remax loc-fix (token "${remaxLocToken}"): scanned ${r.scanned} 'Denver, CO' record(s), corrected ${r.fixed}, unparsed ${r.unparsed}.`);
+          if (r.samples && r.samples.length) for (const s of r.samples) console.log(`  loc-fix unparsed: ${s}`);
+          // also persist the report so it survives the crawl log flood
+          try { fs.writeFileSync(path.join(DATA_DIR, 'remax-locfix-report.json'), JSON.stringify({ token: remaxLocToken, ...r }, null, 2)); } catch (e) { /* ignore */ }
+        }
+      } catch (e) { console.error('Remax loc-fix failed:', e.message); }
+    }
+
     // resume interrupted jobs (a job that was running when the server restarted) so long crawls finish
     try {
       let resumed = 0;

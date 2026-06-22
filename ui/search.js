@@ -5,7 +5,7 @@
 const CSV_COLUMNS = [
   'Time Stamp', 'Source', 'Web Source URL', 'Directory', 'Path ID', 'Domain', 'Last Path',
   'Bio Check', 'First', 'Last', 'Gender', 'Title', 'Position', 'Description', 'Email Address',
-  'Email Type', 'LinkedIn URL', 'Google Maps', 'Phone', 'Phone Type', 'Phone Location',
+  'Email Type', 'LinkedIn URL', 'Facebook', 'Twitter', 'WhatsApp', 'Google Maps', 'vCard', 'Phone', 'Phone Type', 'Phone Location',
   'Phone 2', 'Phone 2 Type', 'Type'
 ];
 
@@ -19,8 +19,12 @@ const COLUMNS = [
   { key: 'Email Address',  label: 'Email Address', type: 'text',     sortable: true  },
   { key: 'Email Type',     label: 'Type',          type: 'text',     sortable: true  },
   { key: 'LinkedIn URL',   label: 'LinkedIn',      type: 'linkedin', sortable: false },
+  { key: 'Facebook',       label: 'Facebook',      type: 'social',   sortable: false },
+  { key: 'Twitter',        label: 'Twitter',       type: 'social',   sortable: false },
+  { key: 'WhatsApp',       label: 'WhatsApp',      type: 'social',   sortable: false },
   { key: 'Google Maps',    label: 'Google Maps',   type: 'maps',     sortable: false },
   { key: 'Phone Location', label: 'Location',      type: 'location', sortable: true  },
+  { key: 'vCard',          label: 'vCard',         type: 'vcard',    sortable: false },
   { key: 'Phone',          label: 'Phone',         type: 'text',     sortable: true  },
   { key: 'Phone Type',     label: 'Type',          type: 'text',     sortable: true  },
   { key: 'Phone 2',        label: 'Phone 2',       type: 'text',     sortable: true  },
@@ -53,13 +57,25 @@ const PIN_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="tr
 const LINKEDIN_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">'
   + '<path fill="currentColor" d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14zM8.34 9.67H5.67V18h2.67V9.67zM7 5.67a1.55 1.55 0 1 0 0 3.1 1.55 1.55 0 0 0 0-3.1zM18.33 18v-4.57c0-2.45-1.31-3.59-3.06-3.59-1.41 0-2.04.78-2.39 1.33v-1.5h-2.67V18h2.67v-4.65c0-.25.02-.49.09-.67.2-.49.65-1 1.4-1 .99 0 1.38.75 1.38 1.85V18h2.67z"/></svg>';
 
+// address-card glyph for the vCard (.vcf) download column header + cells.
+const VCARD_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">'
+  + '<path fill="currentColor" d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 14H4V6h16v12zM9 12a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm-3.5 4c0-1.66 2.34-2.5 3.5-2.5s3.5.84 3.5 2.5H5.5zM14 9h5v1.5h-5V9zm0 3h5v1.5h-5V12zm0 3h3.5v1.5H14V15z"/></svg>';
+// social glyphs (Facebook / X / WhatsApp) for the header + cells.
+const FB_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M22 12a10 10 0 1 0-11.56 9.88v-6.99H7.9V12h2.54V9.8c0-2.5 1.49-3.89 3.78-3.89 1.09 0 2.24.2 2.24.2v2.46h-1.26c-1.24 0-1.63.77-1.63 1.56V12h2.78l-.44 2.89h-2.34v6.99A10 10 0 0 0 22 12z"/></svg>';
+const TW_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M18.9 2H22l-7.4 8.45L23 22h-6.84l-5.36-7-6.13 7H1.56l7.9-9.03L1 2h7l4.85 6.4L18.9 2zm-1.2 18h1.9L7.4 4H5.4l12.3 16z"/></svg>';
+const WA_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M.06 24l1.69-6.16A11.87 11.87 0 0 1 .14 11.9C.14 5.34 5.48 0 12.05 0a11.82 11.82 0 0 1 8.41 3.49 11.82 11.82 0 0 1 3.48 8.42c0 6.56-5.34 11.9-11.9 11.9a11.9 11.9 0 0 1-5.69-1.45L.06 24zM6.6 20.2c1.68 1 3.28 1.6 5.44 1.6 5.46 0 9.9-4.44 9.9-9.89A9.86 9.86 0 0 0 12.05 2C6.6 2 2.16 6.44 2.16 11.9c0 2.27.66 3.97 1.77 5.75l-1 3.65 3.67-.96zm11.39-5.46c-.07-.12-.27-.2-.57-.35-.3-.15-1.76-.87-2.03-.97-.27-.1-.47-.15-.67.15-.2.3-.77.97-.94 1.17-.17.2-.35.22-.65.07-.3-.15-1.26-.46-2.4-1.48-.89-.79-1.49-1.77-1.66-2.07-.17-.3-.02-.46.13-.61.13-.13.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.07-.15-.67-1.61-.92-2.21-.24-.58-.49-.5-.67-.51l-.57-.01c-.2 0-.52.07-.8.37-.27.3-1.04 1.02-1.04 2.48 0 1.46 1.07 2.88 1.22 3.08.15.2 2.1 3.2 5.08 4.49.71.31 1.26.49 1.69.62.71.23 1.36.2 1.87.12.57-.08 1.76-.72 2-1.41.25-.7.25-1.29.17-1.42z"/></svg>';
+const SOCIAL = { 'Facebook': { svg: FB_SVG, cls: 'fb-link', title: 'Facebook' }, 'Twitter': { svg: TW_SVG, cls: 'tw-link', title: 'X / Twitter' }, 'WhatsApp': { svg: WA_SVG, cls: 'wa-link', title: 'WhatsApp' } };
+
 const state = {
   rows: [],                  // current page of records
   total: 0,                  // server-reported match count
   page: 1,
   sort: { column: null, dir: 1 },   // dir: 1 asc, -1 desc
   selected: new Map(),       // email(lower) -> record, persists across pages
+  allMatching: false,        // true when EVERY matching record (across pages) is selected
 };
+
+const MAX_SELECT_ALL = 10000;   // cap on "select all matching" so the browser stays responsive
 
 let searchTimer = null;
 let allCheck = null;
@@ -115,6 +131,7 @@ function initElements() {
   el.body = $('resultsBody');
   el.summary = $('resultsSummary');
   el.selectedInfo = $('selectedInfo');
+  el.selectionBanner = $('selectionBanner');
   el.downloadBtn = $('downloadBtn');
   el.editBtn = $('editBtn');
   el.aiBtn = $('aiBtn');
@@ -147,14 +164,20 @@ function createHeader() {
     else if (col.type === 'lastpath') th.classList.add('lastpath-col');
     else if (col.type === 'position') th.classList.add('position-col');
     else if (col.type === 'location') th.classList.add('location-col');
-    if (col.type === 'linkedin' || col.type === 'maps') th.classList.add('icon-col');
+    if (col.type === 'linkedin' || col.type === 'maps' || col.type === 'vcard' || col.type === 'social') th.classList.add('icon-col');
 
     if (col.type === 'linkedin') {
       th.innerHTML = LINKEDIN_SVG;        // header shows the LinkedIn icon, not text
       th.title = 'LinkedIn';
+    } else if (col.type === 'social') {
+      th.innerHTML = SOCIAL[col.key].svg; // header shows the platform icon
+      th.title = SOCIAL[col.key].title;
     } else if (col.type === 'maps') {
       th.innerHTML = PIN_SVG;             // header shows a map pin, not text
       th.title = 'Google Maps';
+    } else if (col.type === 'vcard') {
+      th.innerHTML = VCARD_SVG;           // header shows an address-card icon, not text
+      th.title = 'vCard (.vcf)';
     } else if (col.sortable) {
       th.classList.add('sortable');
       const active = state.sort.column === col.key;
@@ -206,7 +229,7 @@ function renderRows() {
     cb.checked = state.selected.has(email);
     cb.addEventListener('change', () => {
       if (cb.checked) state.selected.set(email, record);
-      else state.selected.delete(email);
+      else { state.selected.delete(email); state.allMatching = false; }   // un-ticking one exits "all matching"
       tr.classList.toggle('selected', cb.checked);
       updateSelectedInfo();
       updateAllCheck();
@@ -304,6 +327,30 @@ function renderRows() {
           a.innerHTML = PIN_SVG;
           cell.appendChild(a);
         }
+      } else if (col.type === 'vcard') {
+        cell.className = 'vcard-cell';
+        if (value) {
+          const a = document.createElement('a');
+          a.href = value;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.className = 'vcard-link';
+          a.title = 'Download vCard (.vcf)';
+          a.innerHTML = VCARD_SVG;
+          cell.appendChild(a);
+        }
+      } else if (col.type === 'social') {
+        cell.className = 'social-cell';
+        if (value) {
+          const a = document.createElement('a');
+          a.href = value;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.className = SOCIAL[col.key].cls;
+          a.title = SOCIAL[col.key].title;
+          a.innerHTML = SOCIAL[col.key].svg;
+          cell.appendChild(a);
+        }
       } else if (col.type === 'position') {
         cell.className = 'position-cell';
         cell.textContent = value || '';
@@ -323,12 +370,83 @@ function renderRows() {
 }
 
 function toggleSelectAll(checked) {
+  if (!checked) state.allMatching = false;       // deselecting the page exits "all matching" mode
   for (const record of state.rows) {
     const email = norm(record['Email Address']);
     if (checked) state.selected.set(email, record);
     else state.selected.delete(email);
   }
   renderRows();
+}
+
+// Empty the selection (and exit "all matching" mode), then re-render.
+function clearSelection() {
+  state.selected.clear();
+  state.allMatching = false;
+  renderRows();
+  updateSelectedInfo();
+}
+
+// The thin bar above the table: offers "select all N matching" once the visible page is fully
+// selected, and shows the all-matching state with a Clear action. (Gmail-style.)
+function renderSelectionBanner() {
+  const b = el.selectionBanner;
+  if (!b) return;
+  b.innerHTML = '';
+  const total = state.total;
+  const pageCount = state.rows.length;
+  const pageAllSelected = pageCount > 0 && state.rows.every((r) => state.selected.has(norm(r['Email Address'])));
+
+  const addText = (html) => { const s = document.createElement('span'); s.innerHTML = html; b.appendChild(s); };
+  const addLink = (label, fn) => {
+    const a = document.createElement('button');
+    a.type = 'button'; a.className = 'link-btn'; a.textContent = label;
+    a.addEventListener('click', fn); b.appendChild(a);
+  };
+
+  if (state.allMatching) {
+    addText(`All <strong>${total.toLocaleString()}</strong> matching contacts are selected.`);
+    addLink('Clear selection', clearSelection);
+    b.hidden = false;
+  } else if (pageAllSelected && total > pageCount) {
+    addText(`All <strong>${pageCount}</strong> on this page are selected.`);
+    addLink(`Select all ${total.toLocaleString()} matching`, selectAllMatching);
+    b.hidden = false;
+  } else {
+    b.hidden = true;
+  }
+}
+
+// Pull EVERY matching record (across all pages) into the selection so the bulk actions operate on
+// the whole filtered set, not just the visible 50. Paginates the same query the table uses.
+async function selectAllMatching() {
+  const total = state.total;
+  if (!total) return;
+  if (total > MAX_SELECT_ALL) {
+    alert(`${total.toLocaleString()} matching contacts exceeds the ${MAX_SELECT_ALL.toLocaleString()}-record selection limit.\n\n`
+      + `• Download (with nothing selected) still exports all ${total.toLocaleString()}.\n`
+      + `• To Edit, AI Search, or Delete a set this large, narrow your filters first.`);
+    return;
+  }
+  const b = el.selectionBanner;
+  b.hidden = false; b.textContent = 'Selecting…';
+  try {
+    const pageSize = 500;
+    const pages = Math.ceil(total / pageSize);
+    for (let pg = 1; pg <= pages; pg++) {
+      const res = await fetch('/api/db/query?' + buildParams({ page: pg, pageSize }).toString());
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const out = await res.json();
+      for (const r of (out.rows || [])) state.selected.set(norm(r['Email Address']), r);
+      b.textContent = `Selecting… ${Math.min(pg * pageSize, total).toLocaleString()} of ${total.toLocaleString()}`;
+    }
+    state.allMatching = true;
+    renderRows();              // re-tick the visible checkboxes
+    updateSelectedInfo();      // also re-renders the banner
+  } catch (e) {
+    alert('Could not select all matching: ' + e.message);
+    renderSelectionBanner();
+  }
 }
 
 function updateAllCheck() {
@@ -346,6 +464,7 @@ function updateSelectedInfo() {
   if (el.editBtn) el.editBtn.disabled = n === 0;
   if (el.aiBtn) el.aiBtn.disabled = n === 0;
   if (el.deleteBtn) el.deleteBtn.disabled = n === 0;
+  renderSelectionBanner();
 }
 
 function buildParams(extra) {
@@ -450,20 +569,21 @@ function triggerDownload(text, filename) {
 function download() {
   const today = new Date().toISOString().split('T')[0];
 
-  // selection present -> export exactly those rows (client-side, across pages)
-  if (state.selected.size > 0) {
-    const lines = [CSV_COLUMNS.join(',')];
-    for (const r of state.selected.values()) {
-      lines.push(CSV_COLUMNS.map((c) => csvCell(r[c])).join(','));
-    }
-    triggerDownload(lines.join('\n'), `contacts-selected-${today}.csv`);
+  // "all matching" or no explicit selection -> stream the full filtered set from the server
+  // (exact + unlimited, so it works even beyond the in-browser selection cap).
+  if (state.allMatching || state.selected.size === 0) {
+    const p = buildParams();
+    p.delete('sort'); p.delete('dir');
+    window.location.href = '/api/db/export.csv?' + p.toString();
     return;
   }
 
-  // nothing selected -> stream the full filtered result set from the server
-  const p = buildParams();
-  p.delete('sort'); p.delete('dir');
-  window.location.href = '/api/db/export.csv?' + p.toString();
+  // an explicit subset is selected -> export exactly those rows (client-side, across pages)
+  const lines = [CSV_COLUMNS.join(',')];
+  for (const r of state.selected.values()) {
+    lines.push(CSV_COLUMNS.map((c) => csvCell(r[c])).join(','));
+  }
+  triggerDownload(lines.join('\n'), `contacts-selected-${today}.csv`);
 }
 
 // ---- modal helper ----
@@ -566,6 +686,7 @@ function openEditModal() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       closeModal();
       state.selected.clear();
+      state.allMatching = false;
       updateSelectedInfo();
       query();
     } catch (e) {
@@ -627,6 +748,7 @@ async function runAiSearch() {
     }
     closeBtn.disabled = false;
     state.selected.clear();
+    state.allMatching = false;
     updateSelectedInfo();
     query();
   } catch (e) {
@@ -652,6 +774,7 @@ async function deleteSelected() {
     const out = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(out.error || `HTTP ${res.status}`);
     state.selected.clear();
+    state.allMatching = false;
     updateSelectedInfo();
     query();
   } catch (e) {
@@ -661,6 +784,7 @@ async function deleteSelected() {
 }
 
 function runSearch() {
+  state.allMatching = false;     // a changed filter means a different match set; re-offer select-all
   state.page = 1;
   query();
 }

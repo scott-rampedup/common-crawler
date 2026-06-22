@@ -18,7 +18,11 @@ const CSV_COLUMNS = [
   'Email Address',
   'Email Type',
   'LinkedIn URL',
+  'Facebook',
+  'Twitter',
+  'WhatsApp',
   'Google Maps',
+  'vCard',
   'Phone',
   'Phone Type',
   'Phone Location',
@@ -31,8 +35,9 @@ const CSV_COLUMNS = [
 // shown in ID's place; the thumbnail links to the Web Source URL.
 const DISPLAY_COLUMNS = [
   'Time Stamp', 'Source', 'Directory', 'Path ID', 'Domain', 'Last Path', 'First', 'Last', 'Gender',
-  'Position', 'Description', 'Email Address', 'Email Type', 'LinkedIn URL', 'Google Maps',
-  'Phone', 'Phone Type', 'Phone Location', 'Phone 2', 'Phone 2 Type'
+  'Position', 'Description', 'Email Address', 'Email Type', 'LinkedIn URL',
+  'Facebook', 'Twitter', 'WhatsApp', 'Google Maps',
+  'vCard', 'Phone', 'Phone Type', 'Phone Location', 'Phone 2', 'Phone 2 Type'
 ];
 
 const PAGE_SIZE = 50;
@@ -43,6 +48,14 @@ const PIN_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="tr
 // small "open link" glyph for rows that have a source URL but no image
 const LINK_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">'
   + '<path fill="currentColor" d="M14 3v2h3.59l-9.3 9.29 1.42 1.42L19 6.41V10h2V3h-7zM5 5h6V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6h-2v6H5V5z"/></svg>';
+// address-card glyph for the vCard (.vcf) download link
+const VCARD_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">'
+  + '<path fill="currentColor" d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 14H4V6h16v12zM9 12a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm-3.5 4c0-1.66 2.34-2.5 3.5-2.5s3.5.84 3.5 2.5H5.5zM14 9h5v1.5h-5V9zm0 3h5v1.5h-5V12zm0 3h3.5v1.5H14V15z"/></svg>';
+// social glyphs (Facebook / X / WhatsApp)
+const FB_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M22 12a10 10 0 1 0-11.56 9.88v-6.99H7.9V12h2.54V9.8c0-2.5 1.49-3.89 3.78-3.89 1.09 0 2.24.2 2.24.2v2.46h-1.26c-1.24 0-1.63.77-1.63 1.56V12h2.78l-.44 2.89h-2.34v6.99A10 10 0 0 0 22 12z"/></svg>';
+const TW_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M18.9 2H22l-7.4 8.45L23 22h-6.84l-5.36-7-6.13 7H1.56l7.9-9.03L1 2h7l4.85 6.4L18.9 2zm-1.2 18h1.9L7.4 4H5.4l12.3 16z"/></svg>';
+const WA_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M.06 24l1.69-6.16A11.87 11.87 0 0 1 .14 11.9C.14 5.34 5.48 0 12.05 0a11.82 11.82 0 0 1 8.41 3.49 11.82 11.82 0 0 1 3.48 8.42c0 6.56-5.34 11.9-11.9 11.9a11.9 11.9 0 0 1-5.69-1.45L.06 24zM6.6 20.2c1.68 1 3.28 1.6 5.44 1.6 5.46 0 9.9-4.44 9.9-9.89A9.86 9.86 0 0 0 12.05 2C6.6 2 2.16 6.44 2.16 11.9c0 2.27.66 3.97 1.77 5.75l-1 3.65 3.67-.96zm11.39-5.46c-.07-.12-.27-.2-.57-.35-.3-.15-1.76-.87-2.03-.97-.27-.1-.47-.15-.67.15-.2.3-.77.97-.94 1.17-.17.2-.35.22-.65.07-.3-.15-1.26-.46-2.4-1.48-.89-.79-1.49-1.77-1.66-2.07-.17-.3-.02-.46.13-.61.13-.13.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.07-.15-.67-1.61-.92-2.21-.24-.58-.49-.5-.67-.51l-.57-.01c-.2 0-.52.07-.8.37-.27.3-1.04 1.02-1.04 2.48 0 1.46 1.07 2.88 1.22 3.08.15.2 2.1 3.2 5.08 4.49.71.31 1.26.49 1.69.62.71.23 1.36.2 1.87.12.57-.08 1.76-.72 2-1.41.25-.7.25-1.29.17-1.42z"/></svg>';
+const SOCIAL = { 'Facebook': { svg: FB_SVG, cls: 'fb-link', title: 'Facebook' }, 'Twitter': { svg: TW_SVG, cls: 'tw-link', title: 'X / Twitter' }, 'WhatsApp': { svg: WA_SVG, cls: 'wa-link', title: 'WhatsApp' } };
 
 const state = {
   data: [],
@@ -439,6 +452,30 @@ function renderTable() {
           a.innerHTML = PIN_SVG;
           cell.appendChild(a);
         }
+      } else if (SOCIAL[field]) {
+        cell.className = 'social-cell';
+        if (value) {
+          const a = document.createElement('a');
+          a.href = value;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.className = SOCIAL[field].cls;
+          a.title = SOCIAL[field].title;
+          a.innerHTML = SOCIAL[field].svg;
+          cell.appendChild(a);
+        }
+      } else if (field === 'vCard') {
+        cell.className = 'vcard-cell';
+        if (value) {
+          const a = document.createElement('a');
+          a.href = value;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.className = 'vcard-link';
+          a.title = 'Download vCard (.vcf)';
+          a.innerHTML = VCARD_SVG;
+          cell.appendChild(a);
+        }
       } else if (field === 'Description') {
         cell.className = 'desc-cell';
         const clip = document.createElement('div');
@@ -514,13 +551,20 @@ async function loadResults() {
   }
 }
 
-// Sitemap mode: send the pasted/uploaded sitemap to the server, which extracts the Bio/Contact
-// URLs, then start a normal 'webpage' job for those URLs. `body` is text (paste) or an
-// ArrayBuffer (file, possibly .xml.gz — the server gunzips it).
+// Sitemap mode: send the pasted/uploaded sitemap(s) to the server, which processes them ONE AT A
+// TIME — extracting each sitemap's Bio/Contact URLs and starting a separate 'webpage' job for it
+// (so several large sitemaps no longer have to be merged into one job that would fail). `body` is
+// text (paste) or an ArrayBuffer (file, possibly .xml.gz — the server gunzips it). directoryFilter
+// + liveOnly ride along as query params since the body is the raw sitemap, not JSON.
 async function extractSitemapAndRun(body, contentType) {
   try {
-    setSearchStatus('Reading sitemap(s) and extracting Bio URLs…');
-    const res = await fetch('/api/sitemap/extract', {
+    setSearchStatus('Reading sitemap(s) and starting a job per sitemap…');
+    const directoryFilter = elements.directoryFilter.value.trim();
+    const liveOnly = !!(elements.liveOnlyCheckbox && elements.liveOnlyCheckbox.checked);
+    const qs = new URLSearchParams();
+    if (directoryFilter) qs.set('directoryFilter', directoryFilter);
+    if (liveOnly) qs.set('liveOnly', '1');
+    const res = await fetch('/api/sitemap/run?' + qs.toString(), {
       method: 'POST',
       headers: { 'Content-Type': contentType },
       body,
@@ -530,11 +574,11 @@ async function extractSitemapAndRun(body, contentType) {
       throw new Error(payload.error || `HTTP ${res.status}`);
     }
     const data = await res.json();
-    const bioUrls = Array.isArray(data.bioUrls) ? data.bioUrls : [];
+    const jobs = Array.isArray(data.jobs) ? data.jobs : [];
     const scanned = data.totalUrls || 0;
     const fetched = data.sitemapsFetched || 0;
     const fetchedOk = data.sitemapsOk || 0;
-    if (bioUrls.length === 0) {
+    if (jobs.length === 0) {
       if (fetched > 0 && fetchedOk === 0) {
         setSearchStatus('Couldn’t read the sitemap — the site is likely blocking automated access (e.g. Cloudflare). Open the sitemap in your browser, then paste its XML here or upload the saved .xml file (that skips the fetch).');
       } else if (scanned === 0) {
@@ -544,23 +588,10 @@ async function extractSitemapAndRun(body, contentType) {
       }
       return;
     }
-    setSearchStatus(`Found ${bioUrls.length} Bio URL${bioUrls.length === 1 ? '' : 's'} from ${scanned} sitemap URL${scanned === 1 ? '' : 's'}. Starting job…`);
-
-    const directoryFilter = elements.directoryFilter.value.trim();
-    const liveOnly = !!(elements.liveOnlyCheckbox && elements.liveOnlyCheckbox.checked);
-    const jobRes = await fetch('/api/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ domains: bioUrls, mode: 'webpage', directoryFilter, liveOnly, type: 'Sitemaps' }),
-    });
-    if (!jobRes.ok) {
-      const payload = await jobRes.json().catch(() => ({}));
-      throw new Error(payload.error || `HTTP ${jobRes.status}`);
-    }
-    const job = await jobRes.json();
-    setSearchStatus(`Job started for ${bioUrls.length} Bio URL${bioUrls.length === 1 ? '' : 's'} from the sitemap. It runs on the server — you can leave this page.`);
+    const totalBio = data.totalBioUrls || jobs.reduce((n, j) => n + (j.bioUrls || 0), 0);
+    setSearchStatus(`Started ${jobs.length} job${jobs.length === 1 ? '' : 's'} (one per sitemap) for ${totalBio} Bio URL${totalBio === 1 ? '' : 's'}. They run on the server — you can leave this page.`);
     await fetchJobs();
-    viewJob(job.id);
+    if (jobs[0] && jobs[0].id) viewJob(jobs[0].id);
   } catch (error) {
     setSearchStatus(`Could not process sitemap: ${error.message}`);
   }

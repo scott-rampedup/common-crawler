@@ -33,10 +33,15 @@ function serperSearch(query, { page = 1, num = 100, apiKey } = {}){
   });
 }
 
-// site: target from a URL/domain input — strip the scheme + trailing slash, keep host (+ path)
-// so a path like "jll.com/en-us/people/bio-broker" narrows the search to that section.
+// site: target from a URL/domain input — drop the scheme, "www.", and trailing slash, keep host
+// (+ path) so a path like "jll.com/en-us/people/bio-broker" narrows the search to that section.
+// https:// and www. are optional: "www.jll.com" -> "jll.com" (site:jll.com already covers the
+// www host and every other subdomain, so this only widens the match — never narrows it).
 function siteTarget(input){
-  return String(input || "").trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "").trim();
+  return String(input || "").trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/^www\./i, "")
+    .replace(/\/+$/, "").trim();
 }
 
 // Paginate `site:<target>` and return deduped organic results [{ link, title, snippet }].

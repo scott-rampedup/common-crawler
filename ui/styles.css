@@ -570,6 +570,24 @@ td.linkedin-cell { text-align: center; }
 }
 .linkedin-link:hover { color: #004182; }
 
+/* vCard -> address-card glyph linking to the downloadable .vcf */
+td.vcard-cell { text-align: center; }
+.vcard-link {
+  color: #0f9d58;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.vcard-link:hover { color: #0b7a43; }
+
+/* social profile icons (Facebook / X / WhatsApp) next to LinkedIn */
+td.social-cell { text-align: center; }
+.fb-link, .tw-link, .wa-link { display: inline-flex; align-items: center; justify-content: center; }
+.fb-link { color: #1877f2; }
+.tw-link { color: #0f1419; }
+.wa-link { color: #25d366; }
+.fb-link:hover, .tw-link:hover, .wa-link:hover { opacity: .78; }
+
 /* ---- Search results table: tighter columns + frozen left columns ---- */
 /* minimize whitespace between columns (scoped to the search page only) */
 .search-page thead th { padding: 10px 8px; z-index: 4; }
@@ -887,6 +905,32 @@ body.search-page {
   flex-wrap: wrap;
 }
 .results-toolbar p { margin: 0; color: #4b5563; }
+
+/* "select all matching" banner (Gmail-style) shown above the results table */
+.selection-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: #ecfdf5;
+  border-bottom: 1px solid #a7f3d0;
+  color: #065f46;
+  font-size: 0.9rem;
+}
+.selection-banner[hidden] { display: none; }
+.selection-banner .link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #047857;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.selection-banner .link-btn:hover { color: #065f46; }
+
 .toolbar-actions { display: flex; align-items: center; gap: 14px; }
 .toolbar-actions .selected-info { color: #16a34a; font-weight: 700; font-size: 0.9rem; }
 .toolbar-actions .primary {

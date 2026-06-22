@@ -17,7 +17,7 @@ const { normalizeContact } = require('./normalize');
 // Record fields we persist (incl. Image URL for the thumbnail; CSV export drops it).
 const FIELDS = ['Time Stamp', 'Source', 'Web Source URL', 'Directory', 'Path ID', 'Last Path',
   'Bio Check', 'First', 'Last', 'Gender', 'Title', 'Position', 'Description', 'Image URL',
-  'Email Address', 'Email Type', 'LinkedIn URL', 'Google Maps', 'Phone', 'Phone Type',
+  'Email Address', 'Email Type', 'LinkedIn URL', 'Facebook', 'Twitter', 'WhatsApp', 'Google Maps', 'vCard', 'Phone', 'Phone Type',
   'Phone Location', 'Phone 2', 'Phone 2 Type', 'Phone 2 Location', 'Type'];
 const colName = (f) => f.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 const COLS = FIELDS.map(colName);                 // stable snake_case columns
@@ -215,6 +215,63 @@ function makeDb(dir) {
     if (e) db.prepare('DELETE FROM contacts WHERE email = ?').run(e);
   }
 
+  // Delete every record for a root domain (the apex AND any subdomain, e.g. century21.com +
+  // www/agents.century21.com). Returns the deleted rows (as records, so they can be restored)
+  // plus the deleted count.
+  // The set of Web Source URLs already captured for a root domain (apex + subdomains) — used to
+  // skip already-crawled pages on a gap-fill re-run. Query strings are dropped to match extraction.
+  function existingUrls(domain) {
+    const d = String(domain || '').toLowerCase().replace(/^www\./, '').trim();
+    const set = new Set();
+    if (!d) return set;
+    const rows = db.prepare('SELECT web_source_url u FROM contacts WHERE (domain = ? OR domain LIKE ?)').all(d, '%.' + d);
+    for (const r of rows) if (r.u) set.add(String(r.u).split('?')[0]);
+    return set;
+  }
+
+  // One-time fix: re-derive Phone Location from the URL slug for remax records currently set to
+  // RE/MAX HQ ("Denver, CO…"). `derive(url, first, last)` returns "City, ST" or "".
+  function fixRemaxLocations(derive) {
+    const rows = db.prepare("SELECT * FROM contacts WHERE (domain = 'remax.com' OR domain LIKE '%.remax.com') AND phone_location LIKE 'Denver, CO%'").all();
+    let fixed = 0, unparsed = 0; const samples = [];
+    db.exec('BEGIN');
+    try {
+      const upd = db.prepare('UPDATE contacts SET phone_location = ?, updated_at = ? WHERE email = ?');
+      const now = new Date().toISOString();
+      for (const row of rows) {
+        const loc = derive(row.web_source_url, row.first, row.last);
+        if (loc && loc !== row.phone_location) { upd.run(loc, now, row.email); fixed++; }
+        else if (!loc) { unparsed++; if (samples.length < 12) samples.push(`${row.first || ''}|${row.last || ''}|${(String(row.web_source_url || '').split('/real-estate-agents/')[1] || row.web_source_url)}`); }
+      }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    return { scanned: rows.length, fixed, unparsed, samples };
+  }
+
+  // Read-only field coverage for a root domain (apex + subdomains): how many records exist and
+  // how many carry an email / phone. For reporting crawl quality.
+  function domainStats(domain) {
+    const d = String(domain || '').toLowerCase().replace(/^www\./, '').trim();
+    if (!d) return { total: 0, withEmail: 0, withPhone: 0 };
+    const w = '(domain = ? OR domain LIKE ?)';
+    const p = [d, '%.' + d];
+    const n = (extra) => db.prepare(`SELECT COUNT(*) c FROM contacts WHERE ${w}${extra}`).get(...p).c;
+    return { total: n(''), withEmail: n(" AND email_address <> ''"), withPhone: n(" AND phone <> ''") };
+  }
+
+  function deleteByDomain(domain, opts = {}) {
+    const d = String(domain || '').toLowerCase().replace(/^www\./, '').trim();
+    if (!d) return { rows: [], deleted: 0 };
+    let where = '(domain = ? OR domain LIKE ?)';
+    const params = [d, '%.' + d];
+    // opts.exceptSource: keep rows from this Source (e.g. 'Site API'), delete the rest — used to
+    // purge only the early scrape "junk" while keeping the clean adapter-pulled records.
+    if (opts.exceptSource) { where += ' AND source <> ?'; params.push(String(opts.exceptSource)); }
+    const rows = db.prepare(`SELECT * FROM contacts WHERE ${where}`).all(...params).map(rowToRecord);
+    const res = db.prepare(`DELETE FROM contacts WHERE ${where}`).run(...params);
+    return { rows, deleted: res.changes };
+  }
+
   // Force-write a record (no score gate) — overwrites by email primary key.
   function putForce(record) {
     const v = rowValues(record);   // [email, ...fields, domain, search, score, updated_at] or null
@@ -381,7 +438,7 @@ function makeDb(dir) {
   const typedRows = backfillTypes();
   if (typedRows) console.log(`Central DB: set Type (from domain TLD) on ${typedRows} record(s).`);
   console.log(`Central DB (SQLite): ${count().toLocaleString()} contact(s) at ${file}`);
-  return { upsertMany, query, each, stats, count, facets, getByEmail, updateRecord, deleteByEmail, backfillLocations, updatePositionByPrefix, bulkSetPosition, fixAngola };
+  return { upsertMany, query, each, stats, count, facets, getByEmail, updateRecord, deleteByEmail, deleteByDomain, domainStats, existingUrls, fixRemaxLocations, backfillLocations, updatePositionByPrefix, bulkSetPosition, fixAngola };
 }
 
 module.exports = { makeDb };

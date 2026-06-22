@@ -7,7 +7,9 @@
     "start": "node ui-server.js",
     "demo:win": "set DEMO_MODE=true&& node ui-server.js",
     "demo": "DEMO_MODE=true node ui-server.js",
-    "selftest": "node cc-engine.js --selftest"
+    "selftest": "node cc-engine.js --selftest",
+    "selftest:apis": "node site-apis.js --selftest",
+    "selftest:vcard": "node vcard.js --selftest"
   },
   "engines": {
     "node": ">=22.5"

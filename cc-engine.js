@@ -22,6 +22,8 @@ const zlib = require("zlib");
 const http = require("http");
 const https = require("https");
 const { extractRecord, classifyDirectory, loadGenderMap, loadDirectoryRules, analyzePhones, geocodeRecords } = require("./extractor");
+const { findSiteApi } = require("./site-apis");
+let _siteApiSeen = 0;   // count of records pulled via a Site-API adapter (for sampling the logs)
 const { loadWirelessBlocks } = require("./wireless-block-classifier");
 
 const INDEX = "https://index.commoncrawl.org";
@@ -233,7 +235,7 @@ async function fetchWithRetries(url, opts = {}, { retries = 3, delay = 500 } = {
 // along on each record object (used for the UI thumbnail) but is not a CSV column.
 const COLUMNS = ["Time Stamp","Source","Web Source URL","Directory","Path ID","Domain","Last Path","Bio Check",
   "First","Last","Gender","Title","Position","Description","Email Address","Email Type",
-  "LinkedIn URL","Google Maps","Phone","Phone Type","Phone Location","Phone 2","Phone 2 Type","Type"];
+  "LinkedIn URL","Facebook","Twitter","WhatsApp","Google Maps","vCard","Phone","Phone Type","Phone Location","Phone 2","Phone 2 Type","Type"];
 
 // ---------------------------------------------------------------- input
 // Domain mode: reduce each line to a bare host (strip protocol/www/path), dedup.
@@ -648,12 +650,77 @@ async function extractBioUrlsFromSitemaps(opts = {}){
       let abs; try{ abs = new URL(loc); }catch{ continue; }
       if(abs.protocol !== "http:" && abs.protocol !== "https:") continue;
       if(LINK_SKIP_EXT.test(abs.pathname)) continue;
-      if(!isBioOrContactUrl(abs.toString(), directoryRules, genderMap)) continue;
+      if(!isBioOrContactUrl(abs.toString(), directoryRules, genderMap) && !findSiteApi(abs.toString())) continue;
       abs.hash = "";
       bio.add(abs.toString());
     }
   }
   return { bioUrls: [...bio], totalUrls, sitemapsFetched: fetched, sitemapsOk: fetchedOk };
+}
+
+// Like extractBioUrlsFromSitemaps, but yields the bio URLs ONE SITEMAP AT A TIME instead of
+// merging every sitemap into a single (often too-large) list. Each leaf <urlset> is its own
+// group; a <sitemapindex> is expanded so every child sitemap becomes its own group. The optional
+// async `onGroup({ index, source, bioUrls })` callback fires as each sitemap finishes — letting
+// the caller start a SEPARATE job per sitemap, so a combined job that would overflow request/
+// memory limits never has to be built. Page URLs are de-duped across the whole run. When no
+// onGroup is given the groups are collected and returned. (offline-testable via opts._fetchDoc)
+async function extractBioUrlGroups(opts = {}){
+  const { content = "", urls = [], directoryRules = {}, genderMap = {}, _fetchDoc = fetchDoc,
+          onGroup = null, maxSitemaps = 100, maxUrls = 200000, candidateCap = 100000 } = opts;
+  const seenSm = new Set();
+  const seenBio = new Set();                          // de-dupe page URLs across all sitemaps
+  const queue = [];
+  if(String(content || "").trim()) queue.push({ inline: content, source: "(pasted sitemap)" });
+  for(const u of urls){ if(u) queue.push({ url: String(u).trim(), source: String(u).trim() }); }
+  const groups = [];
+  let fetched = 0, fetchedOk = 0, totalUrls = 0, totalBio = 0, groupIndex = 0;
+
+  while(queue.length && fetched < maxSitemaps && totalUrls < maxUrls && totalBio < candidateCap){
+    const item = queue.shift();
+    let xml = "";
+    if(item.inline != null){
+      xml = item.inline;
+    } else {
+      if(seenSm.has(item.url)) continue;
+      seenSm.add(item.url);
+      xml = await _fetchDoc(item.url);
+      fetched++;
+      if(xml) fetchedOk++;
+      await sleep(120);                                // polite pause between sitemap fetches
+    }
+    if(!xml) continue;
+
+    const { isIndex, locs } = extractSitemapLocs(xml);
+    if(isIndex){                                       // index -> each child sitemap is its own group
+      for(const loc of locs){
+        if(seenSm.has(loc)) continue;
+        if(seenSm.size + queue.length >= maxSitemaps * 4) break;
+        queue.push({ url: loc, source: loc });
+      }
+      continue;
+    }
+    const bio = [];                                    // THIS sitemap's bio URLs only
+    for(const loc of locs){
+      if(totalUrls++ >= maxUrls || totalBio >= candidateCap) break;
+      let abs; try{ abs = new URL(loc); }catch{ continue; }
+      if(abs.protocol !== "http:" && abs.protocol !== "https:") continue;
+      if(LINK_SKIP_EXT.test(abs.pathname)) continue;
+      // keep a URL if the generic bio detector likes it OR a site adapter handles it (e.g. remax,
+      // whose slugs the generic detector misses but the adapter reads cleanly from the page).
+      if(!isBioOrContactUrl(abs.toString(), directoryRules, genderMap) && !findSiteApi(abs.toString())) continue;
+      abs.hash = "";
+      const s = abs.toString();
+      if(seenBio.has(s)) continue;
+      seenBio.add(s); bio.push(s); totalBio++;
+    }
+    if(bio.length){
+      const group = { index: groupIndex++, source: item.source || "(sitemap)", bioUrls: bio };
+      if(onGroup){ await onGroup(group); } else { groups.push(group); }
+    }
+  }
+  return { groups, totalGroups: groupIndex, totalBioUrls: totalBio, totalUrls,
+           sitemapsFetched: fetched, sitemapsOk: fetchedOk };
 }
 
 // Discover bio/contact page URLs for one or more DOMAINS straight from the Common Crawl index —
@@ -871,7 +938,16 @@ async function liveFetchPage(url){
 
 // Fetch robots.txt / sitemaps — XML, plain text, or gzipped, possibly large.
 async function fetchDoc(url){
-  return httpGetRaw(url, { accept: /xml|text|gzip|octet-stream|html|rss|plain/, maxBytes: 30 * 1024 * 1024 });
+  const accept = /xml|text|gzip|octet-stream|html|rss|plain/;
+  let r = await httpGetRaw(url, { accept, maxBytes: 30 * 1024 * 1024, returnMeta: true });
+  if(r.status === 200 && r.body) return r.body;
+  // escalate to the residential gateway for docs blocked on the primary path (e.g. a Cloudflare-
+  // fronted sitemap) so big agent sitemaps still come through.
+  if(PROXY_FALLBACK_URL){
+    r = await httpGetRaw(url, { accept, maxBytes: 30 * 1024 * 1024, returnMeta: true, proxyTier: "fallback" });
+    if(r.status === 200 && r.body) return r.body;
+  }
+  return "";
 }
 
 async function liveCrawl(domain, opts = {}){
@@ -1095,6 +1171,7 @@ async function run(csvPath, opts = {}){
     genderMap = {}, directoryRules = {}, outPath = "cc-results.csv",
     // injectable for testing; default to the real network functions
     _queryIndex = queryIndex, _queryIndexUrl = queryIndexUrl, _fetchWarc = fetchWarc, _liveCrawl = liveCrawl,
+    _findSiteApi = findSiteApi,  // per-site JSON-API adapters (site-apis.js); injectable for tests
     liveFallback = true,        // when CC has nothing / 504s, crawl the live site
     shouldStop = () => false,   // cooperative cancel: when true, stop taking new domains
     onRecord = () => {}, onProgress = () => {},
@@ -1152,9 +1229,26 @@ async function run(csvPath, opts = {}){
     // ---- WEBPAGE mode: this exact URL only. Common Crawl archive first (bypasses live
     //      blocks like Cloudflare), then live-fetch fallback. No domain crawl. ----
     if(mode === 'webpage'){
-      let kept = 0, wnote = "", fromCC = false, fromUrl = false;
+      let kept = 0, wnote = "", fromCC = false, fromUrl = false, fromApi = false;
+      // 0) Site API: large directories (century21, …) render their bio pages with JavaScript, so
+      //    the crawler only sees an empty shell — CC and live fetch both come back blank. When a
+      //    registered adapter handles this domain, pull the record straight from the site's own
+      //    JSON API (cheap, exact: name/email/phone incl. cell => Mobile). See site-apis.js.
+      const siteApi = _findSiteApi(domain);
+      if(siteApi){
+        try{
+          const out = await siteApi.fetchRecord(domain, { wireless, genderMap, directoryRules, source: "Site API", timestamp: today, allowNoEmail: true, _getText: fetchPage });
+          if(out){
+            ingest(out); kept++; fromApi = true;
+            _siteApiSeen++;
+            if(_siteApiSeen <= 5 || _siteApiSeen % 2000 === 0){   // sample so the logs show fields populating
+              console.log(`Site API sample #${_siteApiSeen}: ${(out["First"]||"")} ${(out["Last"]||"")} | email=${out["Email Address"]||"-"} | phone=${out["Phone"]||"-"} [${out["Phone Type"]||"-"}] | loc=${out["Phone Location"]||"-"}`);
+            }
+          }
+        }catch(e){ /* adapter failed -> fall through to Common Crawl / live */ }
+      }
       // 1) Common Crawl: read the archived snapshot of this exact URL (unless CC is disabled)
-      if(!ccDisabled){
+      if(!ccDisabled && kept === 0){
         try{
           const rec = await _queryIndexUrl(domain, opts);
           ccFailStreak = 0;                                          // index responded → it's up
@@ -1189,10 +1283,10 @@ async function run(csvPath, opts = {}){
         if(out){ ingest(out); kept++; fromUrl = true; }
       }
       if(kept > 0){
-        if(fromCC) coverage.found++; else coverage.live++;
-        const via = fromCC ? 'Common Crawl' : fromUrl ? `URL only${wnote ? ` (${wnote})` : ''}` : 'webpage';
+        if(fromCC || fromApi) coverage.found++; else coverage.live++;
+        const via = fromApi ? 'Site API' : fromCC ? 'Common Crawl' : fromUrl ? `URL only${wnote ? ` (${wnote})` : ''}` : 'webpage';
         console.log(`◆ ${domain.slice(0,48).padEnd(48)} ${kept} record(s) via ${via}`);
-        onProgress({ status:'domain-done', domain, index: domainNumber, total: domains.length, source: fromCC ? 'Common Crawl' : fromUrl ? 'URL' : 'Webpage', kept });
+        onProgress({ status:'domain-done', domain, index: domainNumber, total: domains.length, source: fromApi ? 'Site API' : fromCC ? 'Common Crawl' : fromUrl ? 'URL' : 'Webpage', kept });
       }else{
         coverage.empty++;
         console.log(`· ${domain.slice(0,48).padEnd(48)} no contacts found${wnote ? `  (${wnote})` : ""}`);
@@ -1305,7 +1399,7 @@ async function run(csvPath, opts = {}){
 
 module.exports = { run, runDomains, readDomains, selectCandidates, warcToHtml, queryIndex, queryIndexUrl, fetchWarc,
   liveCrawl, extractSameDomainLinks, isBioOrContactUrl, COLUMNS,
-  parseRobots, robotsAllows, extractSitemapLocs, extractBioUrlsFromSitemaps, discoverBioUrlsFromCC };
+  parseRobots, robotsAllows, extractSitemapLocs, extractBioUrlsFromSitemaps, extractBioUrlGroups, discoverBioUrlsFromCC };
 
 // ---------------------------------------------------------------- offline self-tests
 if(require.main === module){
@@ -1436,6 +1530,24 @@ if(require.main === module){
         wpRecs.some(r => String(r["Email Address"]).toLowerCase() === "jane.smith@blocked.com" && r["Source"] === "Common Crawl"));
       ok("webpage mode live-fetches only the URL CC didn't have", wpLive === 1);
 
+      // 3b-2) Site API adapter: when a registered adapter handles the domain (e.g. century21, a
+      //       JS-rendered site), the record comes straight from its JSON API and Common Crawl +
+      //       live fetch are NOT consulted for that URL.
+      let apiCC = 0, apiLive = 0;
+      const apiRecs = await run("", {
+        mode: "webpage",
+        _items: ["https://www.century21.com/agent/detail/nj/x/agents/agnes-aaron/aid-P00200000ABCdefGhij"],
+        wirelessPath:(__dirname + "/WIRELESS_BLOCKS.TXT"),
+        genderMap:{ agnes:"F" }, outPath:`${tmp}/wp-api.csv`,
+        _findSiteApi: () => ({ name:"fake", fetchRecord: async (u, deps) =>
+          extractRecord(`<h1>Agnes Aaron</h1><a href="mailto:a@c21.com">e</a><a href="sms:+16094136297">t</a>`, u, { ...deps, source:"Site API" }) }),
+        _queryIndexUrl: async () => { apiCC++; return null; },
+        _liveFetch: async () => { apiLive++; return ""; },
+      });
+      ok("webpage mode uses the Site API adapter when one matches",
+        apiRecs.some(r => r["Source"] === "Site API" && r["Phone Type"] === "Mobile" && r["Last Path"] === "Agnes Aaron"));
+      ok("Site API record skips Common Crawl + live fetch", apiCC === 0 && apiLive === 0);
+
       // 3c) URL-only fallback: page blocked (403) + not in Common Crawl, but the URL itself
       //     names a person under a known directory (e.g. an agent profile behind bot protection)
       const urlOnly = await run("", {
@@ -1491,6 +1603,11 @@ if(require.main === module){
         && isBioOrContactUrl("https://agent.travelers.com/john-smith"));
       ok("isBioOrContactUrl ignores a bio-dir subdomain root (no person leaf)",
         !isBioOrContactUrl("https://agent.travelers.com/"));
+      // profile URLs that TRAIL an opaque id after the name (century21 /agent/detail/.../First-Last/aid-…):
+      // the id segment must be skipped so the person-name leaf is found
+      ok("isBioOrContactUrl flags a /First-Last/aid-<blob> agent profile",
+        isBioOrContactUrl("https://www.century21.com/agent/detail/fl/jacksonville/agents/dragan-spiridonovic/aid-P00200000000033dyujCKdEsXQx08N4pMQLeFT62")
+        && !isBioOrContactUrl("https://www.century21.com/agent/detail/fl/jacksonville/agents/aid-P00200000000033dyujCKdEsXQx08N4pMQLeFT62"));
       // team-page terms must work whether in the SUBDOMAIN or the PATH (with a person leaf)
       const teamTerms = ["insurance-agents","staff","bio","contacts","advisor","advisors","broker","brokers","realtor","realtors"];
       ok("team-page terms classify as bio in both subdomain and path positions",
@@ -1547,6 +1664,31 @@ if(require.main === module){
       });
       ok("extractBioUrlsFromSitemaps works from a fetched sitemap URL too",
         smOut2.bioUrls.length === 1 && smOut2.sitemapsFetched === 1);
+
+      // 7b-2) extractBioUrlGroups: index -> ONE group per child sitemap, deduped across sitemaps
+      const grpDocs = {
+        [`https://${smHost}/index.xml`]:
+          `<sitemapindex><sitemap><loc>https://${smHost}/a.xml</loc></sitemap>` +
+          `<sitemap><loc>https://${smHost}/b.xml</loc></sitemap></sitemapindex>`,
+        [`https://${smHost}/a.xml`]:
+          `<urlset><url><loc>https://${smHost}/team/jane-doe/</loc></url>` +
+          `<url><loc>https://${smHost}/blog/x/</loc></url></urlset>`,             // non-bio -> skipped
+        [`https://${smHost}/b.xml`]:
+          `<urlset><url><loc>https://${smHost}/team/john-roe/</loc></url>` +
+          `<url><loc>https://${smHost}/team/jane-doe/</loc></url></urlset>`,       // jane dup across sitemaps
+      };
+      const grp = [];
+      const grpOut = await extractBioUrlGroups({
+        urls: [`https://${smHost}/index.xml`],
+        _fetchDoc: async (u) => grpDocs[u] || "",
+        onGroup: (g) => grp.push(g),
+      });
+      ok("extractBioUrlGroups yields one group per leaf sitemap",
+        grp.length === 2 && grpOut.totalGroups === 2);
+      ok("extractBioUrlGroups groups hold each sitemap's bio urls, deduped across sitemaps",
+        grp[0].bioUrls.length === 1 && grp[0].bioUrls[0] === `https://${smHost}/team/jane-doe/` &&
+        grp[1].bioUrls.length === 1 && grp[1].bioUrls[0] === `https://${smHost}/team/john-roe/` &&
+        grpOut.totalBioUrls === 2);
 
       // 7c) discoverBioUrlsFromCC: a domain's CC index -> keep only bio-looking captures
       const ccHost = "ccfirm.com";
