@@ -90,6 +90,9 @@ function checkAuth(req, res) {
 // progress survives a restart, and an interrupted job can be resumed.
 const JOBS_DIR = path.join(DATA_DIR, 'jobs');
 try { fs.mkdirSync(JOBS_DIR, { recursive: true }); } catch (e) { /* ignore */ }
+// Sweep throwaway per-job engine CSVs left over from past runs — they accumulate and can fill the
+// data volume (records live in the central DB). Safe at startup: no job is running yet.
+try { let n = 0; for (const f of fs.readdirSync(JOBS_DIR)) if (f.endsWith('.engine.csv')) { try { fs.unlinkSync(path.join(JOBS_DIR, f)); n++; } catch (e) {} } if (n) console.log(`Swept ${n} leftover engine.csv file(s).`); } catch (e) {}
 
 // central, de-duplicated contacts database (every finished job merges into it)
 const { makeDb } = require('./db');
@@ -476,6 +479,8 @@ async function runJobDomains(job, domainsToRun) {
     const merged = db.upsertMany(jobRecords(job));
     console.log(`Central DB: merged ${merged.processed} record(s), +${merged.added} new (total ${merged.total}).`);
   } catch (e) { console.error('Central DB merge failed:', e.message); }
+  // the per-job engine CSV is throwaway (records are in our DB now) — delete it so it can't fill /data
+  try { fs.unlinkSync(path.join(JOBS_DIR, `${job.id}.engine.csv`)); } catch (e) { /* may not exist */ }
   console.log(`Job ${job.id} ${job.status} — ${job.recordsByEmail.size} record(s)`);
 }
 
