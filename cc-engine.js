@@ -1276,21 +1276,24 @@ async function run(csvPath, opts = {}){
           }
         }catch(e){ /* adapter failed -> fall through to Common Crawl / live */ }
       }
-      // 1) Common Crawl: read the archived snapshot of this exact URL (unless CC is disabled)
-      if(!ccDisabled && kept === 0){
-        try{
-          const rec = await _queryIndexUrl(domain, opts);
-          ccFailStreak = 0;                                          // index responded → it's up
-          if(rec){
-            let html = ""; try{ html = await _fetchWarc(rec, opts); }catch{ html = ""; }
-            if(html){
-              const ts = (rec.timestamp||"").slice(0,8).replace(/(\d{4})(\d{2})(\d{2})/,"$1-$2-$3");
-              const out = extractRecord(html, domain, { wireless, genderMap, directoryRules, source:"Common Crawl", timestamp: ts, allowNoEmail: true });
-              if(out){ ingest(out); kept++; fromCC = true; }
-            }
+      // 1) Common Crawl: read the archived snapshot of this exact URL. Prefer a PRE-RESOLVED WARC
+      //    pointer (from cc-domain-miner --warc-out): fetch the archived record DIRECTLY, skipping the
+      //    per-domain index lookup — the bottleneck for many-small-domain batches — and works even if
+      //    the index is down. Otherwise do an exact-URL index lookup.
+      if(kept === 0){
+        const ptr = opts._warcByUrl && opts._warcByUrl.get(domain);   // { url, filename, offset, length, timestamp? }
+        let rec = ptr || null;
+        if(!rec && !ccDisabled){
+          try{ rec = await _queryIndexUrl(domain, opts); ccFailStreak = 0; }   // index responded → it's up
+          catch(e){ if(++ccFailStreak >= 3){ ccDisabled = true; console.log("(Common Crawl unreachable — webpage mode falling back to live only)"); } }
+        }
+        if(rec){
+          let html = ""; try{ html = await _fetchWarc(rec, opts); }catch{ html = ""; }
+          if(html){
+            const ts = (rec.timestamp||"").slice(0,8).replace(/(\d{4})(\d{2})(\d{2})/,"$1-$2-$3");
+            const out = extractRecord(html, domain, { wireless, genderMap, directoryRules, source:"Common Crawl", timestamp: ts, allowNoEmail: true });
+            if(out){ ingest(out); kept++; fromCC = true; }
           }
-        }catch(e){
-          if(++ccFailStreak >= 3){ ccDisabled = true; console.log("(Common Crawl unreachable — webpage mode falling back to live only)"); }
         }
       }
       // 2) live fetch fallback (the original webpage behavior) when CC had nothing
@@ -1563,6 +1566,23 @@ if(require.main === module){
       ok("webpage mode reads an archived URL from Common Crawl",
         wpRecs.some(r => String(r["Email Address"]).toLowerCase() === "jane.smith@blocked.com" && r["Source"] === "Common Crawl"));
       ok("webpage mode live-fetches only the URL CC didn't have", wpLive === 1);
+
+      // 3b-warc) WARC FAST PATH: a pre-resolved pointer (opts._warcByUrl) fetches the archived record
+      //          DIRECTLY — the index lookup must NOT be called for that URL.
+      let idxCalls = 0;
+      const warcRecs = await run("", {
+        mode: "webpage",
+        _items: ["https://acme.com/agent/jane-roe"],
+        wirelessPath:(__dirname + "/phone-blocks.csv"),
+        genderMap:{ jane:"F" }, outPath:`${tmp}/wp-warc.csv`,
+        _warcByUrl: new Map([["https://acme.com/agent/jane-roe", { url:"https://acme.com/agent/jane-roe", filename:"f", offset:0, length:1, timestamp:"20260201000000" }]]),
+        _queryIndexUrl: async () => { idxCalls++; return null; },     // must stay 0
+        _fetchWarc: async (rec) => rec.filename === "f" ? `<h1>Jane Roe</h1><a href="mailto:jane.roe@acme.com">e</a>` : "",
+        _liveFetch: async () => "",
+      });
+      ok("WARC fast path extracts via the pointer (Common Crawl)",
+        warcRecs.some(r => String(r["Email Address"]).toLowerCase() === "jane.roe@acme.com" && r["Source"] === "Common Crawl"));
+      ok("WARC fast path skips the index lookup", idxCalls === 0);
 
       // 3b-2) Site API adapter: when a registered adapter handles the domain (e.g. century21, a
       //       JS-rendered site), the record comes straight from its JSON API and Common Crawl +

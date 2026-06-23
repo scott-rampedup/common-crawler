@@ -433,6 +433,7 @@ async function runJobDomains(job, domainsToRun) {
       genderMap: GENDER_MAP,                                   // fill Gender via first-name lookup
       liveOnly: !!job.liveOnly,                                // skip Common Crawl when requested
       mode: job.mode || 'domain',                              // 'webpage' = only the exact URLs
+      _warcByUrl: job._warcByUrl || null,                      // pre-resolved WARC pointers -> skip per-URL index lookups
       shouldStop: () => job.stopRequested,                     // honor a STOP request
       outPath: path.join(JOBS_DIR, `${job.id}.engine.csv`),   // throwaway; we keep our own records
       onRecord: (row) => {
@@ -482,7 +483,7 @@ const JOB_TYPES = ['Domains', 'Webpages', 'Sitemaps', 'Site Search Results', 'Go
 const jobTypeFromMode = (mode) => (mode === 'webpage' ? 'Webpages' : 'Domains');
 const normalizeJobType = (t, mode) => (JOB_TYPES.includes(t) ? t : jobTypeFromMode(mode));
 
-function startJob(domains, directoryFilter, liveOnly, mode, type, name) {
+function startJob(domains, directoryFilter, liveOnly, mode, type, name, warcByUrl) {
   const m = mode === 'webpage' ? 'webpage' : 'domain';
   const job = {
     id: newJobId(),
@@ -502,6 +503,7 @@ function startJob(domains, directoryFilter, liveOnly, mode, type, name) {
     recordsByEmail: new Map(),
     lastProgress: null,
   };
+  job._warcByUrl = warcByUrl || null;     // transient WARC fast-path map (not persisted; resume falls back to index lookups)
   jobs.set(job.id, job);
   runJobDomains(job, domains);            // fire and forget; survives this request
   return job;
@@ -971,12 +973,19 @@ const server = http.createServer((req, res) => {
         const mode = payload.mode === 'webpage' ? 'webpage' : 'domain';
         const type = typeof payload.type === 'string' ? payload.type : '';
         const name = typeof payload.name === 'string' ? payload.name : '';
+        // Optional WARC fast path (webpage mode): pre-resolved pointers from cc-domain-miner --warc-out
+        // let extraction fetch each archived page directly, skipping the per-URL CC index lookup.
+        const warcArr = Array.isArray(payload.warc) ? payload.warc : [];
+        const warcByUrl = warcArr.length
+          ? new Map(warcArr.filter((w) => w && w.url && w.filename)
+              .map((w) => [String(w.url), { url: String(w.url), filename: w.filename, offset: w.offset, length: w.length, timestamp: w.timestamp }]))
+          : null;
         if (domains.length === 0) {
           res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({ error: 'No domains provided' }));
           return;
         }
-        const job = startJob(domains, directoryFilter, liveOnly, mode, type, name);
+        const job = startJob(domains, directoryFilter, liveOnly, mode, type, name, warcByUrl);
         console.log(`Started job ${job.id} for ${domains.length} domain(s)`);
         sendJson(res, jobSummary(job));
       } catch (e) {

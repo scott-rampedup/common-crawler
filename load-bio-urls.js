@@ -55,7 +55,8 @@ async function login(server, userPass) {
 async function main() {
   const server = (arg("server", "") || "").replace(/\/$/, "");
   const file = arg("file", "");
-  if (!server || !file) { console.error("need --server and --file"); process.exit(2); }
+  const warcFile = arg("warc-file", "");   // JSONL {url,filename,offset,length,timestamp} -> WARC fast path (no index lookups)
+  if (!server || (!file && !warcFile)) { console.error("need --server and --file (URLs) or --warc-file (JSONL pointers)"); process.exit(2); }
   const size = Math.max(1, Number(arg("chunk", "5000")));
   const limit = Number(arg("limit", "0")) || 0;
   const start = Number(arg("start", "0")) || 0;
@@ -63,13 +64,23 @@ async function main() {
   const type = arg("type", "CC Bio-Path");
   const pollMs = (Number(arg("poll-secs", "5")) || 5) * 1000;
 
-  let urls = fs.readFileSync(file, "utf8").split(/\r?\n/).map((s) => s.trim()).filter((s) => /^https?:\/\//i.test(s));
-  urls = [...new Set(urls)];
-  if (start) urls = urls.slice(start);
-  if (limit) urls = urls.slice(0, limit);
-  const batches = chunk(urls, size);
-  console.error(`${urls.length} URLs -> ${batches.length} chunk(s) of <=${size} into ${server}`);
-  if (flag("dry-run")) { console.error("(dry-run) first chunk sample:", batches[0]?.slice(0, 3)); return; }
+  // items: {url} (from --file) or {url,filename,offset,length,timestamp} (from --warc-file, fast path)
+  let items;
+  if (warcFile) {
+    items = fs.readFileSync(warcFile, "utf8").split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+      .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+      .filter((x) => x && /^https?:\/\//i.test(x.url || "") && x.filename);
+  } else {
+    items = fs.readFileSync(file, "utf8").split(/\r?\n/).map((s) => s.trim())
+      .filter((s) => /^https?:\/\//i.test(s)).map((u) => ({ url: u }));
+  }
+  const seenU = new Set();
+  items = items.filter((x) => !seenU.has(x.url) && seenU.add(x.url));   // de-dup by url
+  if (start) items = items.slice(start);
+  if (limit) items = items.slice(0, limit);
+  const batches = chunk(items, size);
+  console.error(`${items.length} ${warcFile ? "WARC pointers (fast path)" : "URLs"} -> ${batches.length} chunk(s) of <=${size} into ${server}`);
+  if (flag("dry-run")) { console.error("(dry-run) first chunk sample:", batches[0]?.slice(0, 2)); return; }
 
   const loginCreds = arg("login", "");
   let cookie = arg("cookie", "");
@@ -88,7 +99,9 @@ async function main() {
 
   let totalAdded = 0, authLost = false;
   for (let i = 0; i < batches.length && !authLost; i++) {
-    const r = await authed("POST", server + "/api/jobs", { domains: batches[i], mode: "webpage", type, name: `${name} [${i + 1}/${batches.length}]` });
+    const payload = { domains: batches[i].map((x) => x.url), mode: "webpage", type, name: `${name} [${i + 1}/${batches.length}]` };
+    if (warcFile) payload.warc = batches[i];   // pre-resolved pointers -> server uses the WARC fast path
+    const r = await authed("POST", server + "/api/jobs", payload);
     if (r.status === 401) { console.error(`chunk ${i + 1}: ${AUTH_MSG}`); authLost = true; break; }
     if (r.status >= 300) { console.error(`chunk ${i + 1}: POST /api/jobs -> ${r.status} ${r.body.slice(0, 200)}`); break; }
     let job; try { job = JSON.parse(r.body); } catch { console.error(`chunk ${i + 1}: bad response`); break; }

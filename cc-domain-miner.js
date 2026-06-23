@@ -62,7 +62,10 @@ function classify(line, bioRe) {
   if (!/html/.test(j.mime || j["mime-detected"] || "")) return null;
   let u; try { u = new URL(j.url); } catch { return null; }
   if (!bioRe.test(u.pathname) || EXCLUDE_RE.test(u.pathname)) return null;
-  return { domain: regDomain(u.hostname), path: u.pathname, url: u.origin + u.pathname };  // url: query/fragment dropped
+  const timestamp = (line.slice(0, sp).trim().split(/\s+/)[1]) || "";   // "<surtkey> <timestamp> {json}"
+  // url: query/fragment dropped; filename/offset/length = the WARC pointer (skips the index lookup later)
+  return { domain: regDomain(u.hostname), path: u.pathname, url: u.origin + u.pathname,
+    filename: j.filename, offset: j.offset, length: j.length, timestamp };
 }
 
 function shardUrl(crawl, n) {
@@ -82,8 +85,8 @@ function latestCrawl(fallback = "CC-MAIN-2026-25") {
   });
 }
 
-// Stream one shard, updating the domains map (and emitting each bio URL via onUrl). Resolves when done.
-function mineShard(crawl, n, bioRe, domains, maxMb, stats, onUrl) {
+// Stream one shard, updating the domains map (and emitting each bio hit via onUrl / onWarc). Resolves when done.
+function mineShard(crawl, n, bioRe, domains, maxMb, stats, onUrl, onWarc) {
   return new Promise((resolve) => {
     const headers = { "User-Agent": "rampedup-cc-domain-miner" };
     if (maxMb) headers.Range = `bytes=0-${Math.round(maxMb * 1024 * 1024)}`;
@@ -105,6 +108,7 @@ function mineShard(crawl, n, bioRe, domains, maxMb, stats, onUrl) {
         const e = domains.get(hit.domain) || { count: 0, sample: "" };
         e.count++; if (!e.sample) e.sample = hit.path; domains.set(hit.domain, e);
         if (onUrl) onUrl(hit.url);
+        if (onWarc) onWarc(hit);
       };
       res.pipe(gun);
       gun.on("data", (d) => { buf += d.toString("latin1"); flush(false); });
@@ -136,6 +140,7 @@ async function main() {
   const conc = Math.max(1, Number(arg("concurrency", "2")));
   const paths = arg("paths", "");
   const urlsOut = arg("urls-out", "");                 // also stream every bio URL here (feeds the loader)
+  const warcOut = arg("warc-out", "");                 // stream {url,filename,offset,length,timestamp} JSONL (WARC fast path)
   const terms = paths ? paths.split(",") : DEFAULT_BIO;
   const bioRe = bioRegex(terms);
 
@@ -144,16 +149,19 @@ async function main() {
   const stats = { scanned: 0, kept: 0 };
   const urlStream = urlsOut ? fs.createWriteStream(urlsOut) : null;
   const onUrl = urlStream ? (u) => urlStream.write(u + "\n") : null;
+  const warcStream = warcOut ? fs.createWriteStream(warcOut) : null;
+  const onWarc = warcStream ? (h) => warcStream.write(JSON.stringify({ url: h.url, filename: h.filename, offset: h.offset, length: h.length, timestamp: h.timestamp }) + "\n") : null;
   let idx = 0;
   const worker = async () => {
     while (idx < shards.length) {
       const n = shards[idx++];
-      await mineShard(crawl, n, bioRe, domains, maxMb, stats, onUrl);
+      await mineShard(crawl, n, bioRe, domains, maxMb, stats, onUrl, onWarc);
       console.error(`  shard ${n} done — ${domains.size} domains so far`);
     }
   };
   await Promise.all(Array.from({ length: Math.min(conc, shards.length) }, worker));
   if (urlStream) { await new Promise((r) => urlStream.end(r)); console.error(`Bio URLs written -> ${urlsOut}`); }
+  if (warcStream) { await new Promise((r) => warcStream.end(r)); console.error(`WARC pointers written -> ${warcOut}`); }
 
   const rows = [...domains.entries()].filter(([, e]) => e.count >= minPages).sort((a, b) => b[1].count - a[1].count);
   fs.writeFileSync(out, "domain,bio_pages,sample_path\n" +
@@ -182,6 +190,9 @@ if (require.main === module && process.argv.includes("--selftest")) {
   ok("drops non-200", classify(L("https://x.com/team/jane", "301", "text/html"), re) === null);
   ok("drops non-html", classify(L("https://x.com/team/jane.pdf", "200", "application/pdf"), re) === null);
   ok("custom paths only", classify(L("https://x.com/team/jane", "200", "text/html"), bioRegex(["agents"])) === null);
+  const full = `com,x)/p 20260101120000 ${JSON.stringify({ url: "https://x.com/our-people/jane", status: "200", mime: "text/html", filename: "crawl/seg/f.warc.gz", offset: "12345", length: "678" })}`;
+  const hit = classify(full, re);
+  ok("classify captures WARC pointer + timestamp", hit && hit.filename === "crawl/seg/f.warc.gz" && hit.offset === "12345" && hit.length === "678" && hit.timestamp === "20260101120000");
   console.log(`\ncc-domain-miner self-test: ${p} passed, ${f} failed`);
   process.exit(f ? 1 : 0);
 } else if (require.main === module) {
