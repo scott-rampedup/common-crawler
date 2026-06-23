@@ -27,7 +27,7 @@
 const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib");
-const { classifyLineType } = require("./wireless-block-classifier");
+const { classifyLineType, loadPhoneBlocks, blockLocation, PHONE_BLOCKS_CSV } = require("./wireless-block-classifier");
 const { intlMobileType } = require("./intl-mobile");
 
 // ---------------------------------------------------------------- config
@@ -814,12 +814,11 @@ function extractRecord(html, url, deps = {}){
   };
 }
 
-// minimal area-code -> region fallback; replace with libphonenumber geocoder in production
-const AREA_REGION = {212:"New York, NY",415:"San Francisco, CA",312:"Chicago, IL",404:"Atlanta, GA",
-  617:"Boston, MA",305:"Miami, FL",206:"Seattle, WA",512:"Austin, TX",201:"Jersey City, NJ",214:"Dallas, TX"};
+// Block-level City/State for a NANP number, from phone-blocks.csv (memoized load). City-level —
+// far more precise than the old 10-area-code fallback. Non-NANP/unknown blocks return "" and get
+// libphonenumber later (see geocodePhone / geocodeRecords).
 function defaultGeocode(phone){
-  const d = String(phone).replace(/\D/g,""); const ten = d.length===11&&d[0]==="1"?d.slice(1):d;
-  return AREA_REGION[Number(ten.slice(0,3))] || "";
+  return blockLocation(phone, loadPhoneBlocks(PHONE_BLOCKS_CSV).location);
 }
 
 const { countryForDomain } = require("./tld-lookup");   // domain-TLD country (Phone Location fallback)
@@ -868,6 +867,11 @@ function intlLineType(e164){
 // always returns at least the country for a valid number (incl. toll-free, which has no area).
 // "" only when the number can't be parsed at all. `cc` = default country calling code.
 async function geocodePhone(raw, cc){
+  // Block-level "City, ST, Country" (US/Canada) is more precise than libphonenumber's rate-center
+  // (which often returns only the state) — try it first, fall back to libphonenumber for intl /
+  // uncovered blocks.
+  const blk = blockLocation(raw, loadPhoneBlocks(PHONE_BLOCKS_CSV).location);
+  if(blk) return blk;
   loadGeoLibs();
   if(!_phoneUtil || !_geocoder || !raw) return "";
   let e164 = String(raw).trim();
@@ -1054,7 +1058,7 @@ module.exports = { extractRecord, classifyEmail, classifyDirectory, nameFromSlug
 // ---------------------------------------------------------------- self-test
 if(require.main === module){
   const { loadWirelessBlocks } = require("./wireless-block-classifier");
-  const wireless = loadWirelessBlocks(process.argv[2] || (__dirname + "/WIRELESS_BLOCKS.TXT"));
+  const wireless = loadWirelessBlocks(process.argv[2] || (__dirname + "/phone-blocks.csv"));
   const genderMap = { marcus:"M", nina:"F", maria:"F", omar:"M" };   // production: full census CSV
 
   const cases = [

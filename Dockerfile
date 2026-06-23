@@ -8,7 +8,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install --omit=dev
 
-# app source (WIRELESS_BLOCKS.TXT is included; scraped data + xlsx are .dockerignored)
+# app source (phone-blocks.csv is included; scraped data + xlsx are .dockerignored)
 COPY . .
 
 ENV PORT=3000 \

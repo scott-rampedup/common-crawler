@@ -9,7 +9,8 @@
     "demo": "DEMO_MODE=true node ui-server.js",
     "selftest": "node cc-engine.js --selftest",
     "selftest:apis": "node site-apis.js --selftest",
-    "selftest:vcard": "node vcard.js --selftest"
+    "selftest:vcard": "node vcard.js --selftest",
+    "selftest:blocks": "node wireless-block-classifier.js"
   },
   "engines": {
     "node": ">=22.5"

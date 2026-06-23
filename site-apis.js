@@ -275,7 +275,7 @@ module.exports = { findSiteApi, ADAPTERS, getJson, remaxLocationFromUrl, _centur
 // ---- offline self-test: node site-apis.js --selftest (mocks the API via deps._getJson) ----
 if(require.main === module && process.argv.includes("--selftest")){
   const { loadWirelessBlocks } = require("./wireless-block-classifier");
-  const wireless = loadWirelessBlocks(__dirname + "/WIRELESS_BLOCKS.TXT");
+  const wireless = loadWirelessBlocks(__dirname + "/phone-blocks.csv");
   let p = 0, f = 0; const ok = (l, c) => { console.log((c ? "✓" : "✗") + " " + l); c ? p++ : f++; };
   (async () => {
     const url = "https://www.century21.com/agent/detail/nj/medford/agents/agnes-aaron/aid-P00200000FZGd1opBBuOqLprx9TUD7AZamyzZbCg";

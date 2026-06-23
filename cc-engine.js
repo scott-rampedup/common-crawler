@@ -1167,7 +1167,7 @@ function uniqueByEmail(records){
 // ---------------------------------------------------------------- orchestration
 async function run(csvPath, opts = {}){
   const {
-    wirelessPath = (__dirname + "/WIRELESS_BLOCKS.TXT"),
+    wirelessPath = (__dirname + "/phone-blocks.csv"),
     genderMap = {}, directoryRules = {}, outPath = "cc-results.csv",
     // injectable for testing; default to the real network functions
     _queryIndex = queryIndex, _queryIndexUrl = queryIndexUrl, _fetchWarc = fetchWarc, _liveCrawl = liveCrawl,
@@ -1492,17 +1492,17 @@ if(require.main === module){
       ok("warcToHtml extracts the HTML body from a gzipped WARC", warcToHtml(zlib.gunzipSync(gz)) === html);
 
       // 3) full pipeline with mocked network → real extractRecord + real wireless table
-      const wireless = loadWirelessBlocks((__dirname + "/WIRELESS_BLOCKS.TXT"));
+      const wireless = loadWirelessBlocks((__dirname + "/phone-blocks.csv"));
       const pages = {
         "https://acme.com/team/marcus-patel":
           `<h1>Marcus Patel</h1><meta property="og:description" content="VP of Marketing at Acme.">`
-          + `<a href="mailto:marcus.patel@acme.com">e</a><a href="tel:+12012012345">c</a>`,
+          + `<a href="mailto:marcus.patel@acme.com">e</a><a href="tel:+12012042888">c</a>`,   // 2012042 = PCS/Mobile block
         "https://acme.com/contact": `<h1>Contact</h1><p>123 Main St.</p>`,   // dropped by gate
       };
       const tmp = os.tmpdir();
       fs.writeFileSync(`${tmp}/domains.csv`, "domain\nacme.com\nuncrawled-xyz.com\n");
       const recs = await run(`${tmp}/domains.csv`, {
-        wirelessPath:(__dirname + "/WIRELESS_BLOCKS.TXT"),
+        wirelessPath:(__dirname + "/phone-blocks.csv"),
         genderMap:{ marcus:"M" }, outPath:`${tmp}/cc-results.csv`,
         liveFallback:false,                              // keep the self-test fully offline
         _queryIndex: async (domain) => domain === "acme.com" ? Object.keys(pages).map(url =>
@@ -1510,7 +1510,11 @@ if(require.main === module){
         _fetchWarc: async (rec) => pages[rec.url] || "",
       });
       ok("pipeline keeps the bio record, drops the empty contact page", recs.length === 1);
-      ok("pipeline classified the phone as Mobile via the block table", recs[0]["Phone Type"] === "Mobile");
+      ok("pipeline classified the PCS number as Mobile via the block table", recs[0]["Phone Type"] === "Mobile");
+      ok("pipeline filled block-level Phone Location (City, ST)", /,\s*NJ/.test(recs[0]["Phone Location"] || ""));
+      // bug-fix regression: a WIRE/Office (landline) block must classify as Direct, NOT Mobile
+      const { classifyLineType: _clt } = require("./wireless-block-classifier");
+      ok("landline (WIRE) block classifies as Direct, not Mobile", _clt("+12012012345", wireless).type === "Direct");
       ok("pipeline tagged source = Common Crawl", recs[0]["Source"] === "Common Crawl");
       ok("results CSV was written", fs.existsSync(`${tmp}/cc-results.csv`));
 
@@ -1519,7 +1523,7 @@ if(require.main === module){
       const wpRecs = await run("", {
         mode: "webpage",
         _items: ["https://blocked.com/team/jane-smith/", "https://blocked.com/team/bob-uncrawled/"],
-        wirelessPath:(__dirname + "/WIRELESS_BLOCKS.TXT"),
+        wirelessPath:(__dirname + "/phone-blocks.csv"),
         genderMap:{ jane:"F" }, outPath:`${tmp}/wp-results.csv`,
         _queryIndexUrl: async (u) => u.includes("jane-smith")
           ? ({ url:u, filename:"f", offset:0, length:1, timestamp:"20260201000000" }) : null,   // only jane is archived
@@ -1537,7 +1541,7 @@ if(require.main === module){
       const apiRecs = await run("", {
         mode: "webpage",
         _items: ["https://www.century21.com/agent/detail/nj/x/agents/agnes-aaron/aid-P00200000ABCdefGhij"],
-        wirelessPath:(__dirname + "/WIRELESS_BLOCKS.TXT"),
+        wirelessPath:(__dirname + "/phone-blocks.csv"),
         genderMap:{ agnes:"F" }, outPath:`${tmp}/wp-api.csv`,
         _findSiteApi: () => ({ name:"fake", fetchRecord: async (u, deps) =>
           extractRecord(`<h1>Agnes Aaron</h1><a href="mailto:a@c21.com">e</a><a href="sms:+16094136297">t</a>`, u, { ...deps, source:"Site API" }) }),
@@ -1553,7 +1557,7 @@ if(require.main === module){
       const urlOnly = await run("", {
         mode: "webpage",
         _items: ["https://blocked.com/Agent/Detail/Jane-Smith/71955"],
-        wirelessPath:(__dirname + "/WIRELESS_BLOCKS.TXT"),
+        wirelessPath:(__dirname + "/phone-blocks.csv"),
         genderMap:{ jane:"F" }, outPath:`${tmp}/wp-url.csv`,
         _queryIndexUrl: async () => null,                                                        // not archived
         _liveFetch: async () => "",                                                              // blocked

@@ -1,45 +1,96 @@
 /**
  * wireless-block-classifier.js
  * -------------------------------------------------------------
- * Classifies US/Canada (NANP) phone numbers as Toll Free / Mobile / Direct
- * using the IMS Wireless Block Identifier table (NPA-NXX-X thousands blocks).
+ * One module, one dataset (phone-blocks.csv) for US/Canada (NANP) numbers:
  *
- *   • Toll Free  -> detected by area code prefix (reliable)
- *   • Mobile     -> the number's NPA+NXX+X block is in the wireless table
- *   • Direct     -> a geographic number whose block is NOT wireless (landline)
- *   • Unknown    -> not a parseable NANP number
+ *   • LINE TYPE  — Toll Free / Mobile / Direct, from the number's NPA+NXX+X block.
+ *   • LOCATION   — "City, ST, Country" for that block (more precise than libphonenumber's
+ *                  rate-center, which often returns only the state).
  *
- * Geographic LOCATION is intentionally NOT handled here — that comes from
- * libphonenumber's offline geocoder. This module does one job: line type.
+ * Data source: `phone-blocks.csv` — columns: Country Code, Area Code, 7 Block, City, State,
+ * Country, Type. The **7 Block** is NPA+NXX+X (7 digits). **Type** is the carrier-allocation
+ * class: "Mobile"/"WRSL" => wireless, "Office" => wireline (landline). The legacy
+ * WIRELESS_BLOCKS.TXT format (NPA,NXX,X,CATEGORY,...) with CATEGORY "PCS"/"WRSL"=wireless,
+ * "WIRE"=landline is also understood, so old callers still work.
  *
- * Caveat: block data reflects the ORIGINAL carrier-type assignment. A number
- * ported landline<->wireless won't be caught by block data alone (that needs
- * a separate ported-number/LRN feed). Block ID is high-accuracy, not perfect.
+ * HISTORY: the previous loader added EVERY block to the wireless set regardless of class, so
+ * the 694k WIRE/"Office" (landline) blocks were misclassified as Mobile. This loader honors the
+ * class column: only Mobile/PCS/WRSL/wireless blocks count as wireless.
+ *
+ * Caveat: block class reflects the ORIGINAL carrier-type assignment. A number ported
+ * landline<->wireless won't be caught by block data alone (that needs an LRN feed).
  */
 
 const fs = require("fs");
 
 const TOLL_FREE = new Set(["800", "888", "877", "866", "855", "844", "833", "822"]);
 
-/** Build the lookup set once at startup. Key = NPA+NXX+X (7 chars). */
-function loadWirelessBlocks(path) {
-  const text = fs.readFileSync(path, "utf8");
-  const set = new Set();
+// Carrier-allocation classes that mean WIRELESS (=> Mobile). Everything else (WIRE / Office /
+// wireline / landline / blank) is treated as a geographic landline (=> Direct).
+const WIRELESS_CLASS = new Set(["MOBILE", "WIRELESS", "PCS", "WRSL", "CELL", "CELLULAR", "CL"]);
+const isWirelessClass = (s) => WIRELESS_CLASS.has(String(s || "").toUpperCase().trim());
+
+// Some datasets list "Quebec" in the Country column for QC blocks; normalize to the country.
+const normCountry = (c) => (/^quebec$/i.test(String(c || "").trim()) ? "Canada" : String(c || "").trim());
+
+// Memoize parsed datasets by path — the CSV is ~42MB / 837k rows; parse it once per process and
+// share the structure across every job and every caller (loadWirelessBlocks, blockLocation, …).
+const _cache = new Map();
+
+/**
+ * Load a phone-block dataset (CSV or legacy TXT, auto-detected by header).
+ * @returns {{ wireless: Set<string>, location: Map<string,string> }}
+ *   wireless = set of 7-blocks (NPA+NXX+X) whose class is wireless.
+ *   location = 7-block -> "City, ST, Country" (empty for the legacy TXT, which has no city).
+ */
+function loadPhoneBlocks(path) {
+  if (_cache.has(path)) return _cache.get(path);
+  const wireless = new Set();
+  const location = new Map();
+  let text = "";
+  try { text = fs.readFileSync(path, "utf8"); }
+  catch (e) { const empty = { wireless, location }; _cache.set(path, empty); return empty; }
+
   const lines = text.split(/\r?\n/);
-  for (let i = 1; i < lines.length; i++) {      // skip header row
-    const line = lines[i];
-    if (!line) continue;
-    // rows look like:  "201","202","0","WIRE",
-    const cells = line.split(",");
-    if (cells.length < 3) continue;
-    const npa = cells[0].replace(/"/g, "").trim();
-    const nxx = cells[1].replace(/"/g, "").trim();
-    const x   = cells[2].replace(/"/g, "").trim();
-    if (npa.length === 3 && nxx.length === 3 && x.length === 1) {
-      set.add(npa + nxx + x);
+  const header = (lines[0] || "").toLowerCase();
+  const isCsv = header.includes("7 block") || header.includes("country code");
+
+  for (let i = 1; i < lines.length; i++) {
+    const ln = lines[i];
+    if (!ln) continue;
+    const c = ln.split(",");
+    let block, cls, loc = "";
+    if (isCsv) {
+      // Country Code, Area Code, 7 Block, City, State, Country, Type
+      if (c.length < 7) continue;
+      block = c[2].replace(/"/g, "").trim();
+      cls = c[6].replace(/"/g, "").trim();
+      const city = (c[3] || "").trim();
+      const state = (c[4] || "").trim();
+      const country = normCountry(c[5]);
+      loc = [city, state, country].filter(Boolean).join(", ");
+    } else {
+      // NPA, NXX, X, CATEGORY, FUTURE
+      if (c.length < 4) continue;
+      const npa = c[0].replace(/"/g, "").trim();
+      const nxx = c[1].replace(/"/g, "").trim();
+      const x = c[2].replace(/"/g, "").trim();
+      if (npa.length !== 3 || nxx.length !== 3 || x.length !== 1) continue;
+      block = npa + nxx + x;
+      cls = c[3].replace(/"/g, "").trim();
     }
+    if (!/^\d{7}$/.test(block)) continue;
+    if (isWirelessClass(cls)) wireless.add(block);
+    if (loc) location.set(block, loc);
   }
-  return set;
+  const out = { wireless, location };
+  _cache.set(path, out);
+  return out;
+}
+
+/** Back-compat: build just the wireless-block Set (now class-filtered, so landlines are excluded). */
+function loadWirelessBlocks(path) {
+  return loadPhoneBlocks(path).wireless;
 }
 
 /** Normalize to 10 NANP digits, or null if it isn't a NANP number. */
@@ -52,7 +103,7 @@ function nanpDigits(input) {
 
 /**
  * @param {string} phone     E.164 or loose ("+1 415-555-0142", "4155550142")
- * @param {Set}    wireless  set returned by loadWirelessBlocks()
+ * @param {Set}    wireless  set returned by loadWirelessBlocks()/loadPhoneBlocks().wireless
  * @returns {{type:string, block:?string, wireless:boolean}}
  */
 function classifyLineType(phone, wireless) {
@@ -60,32 +111,46 @@ function classifyLineType(phone, wireless) {
   if (!d) return { type: "Unknown", block: null, wireless: false };
 
   const npa = d.slice(0, 3);
-  const nxx = d.slice(3, 6);
-  const x   = d.slice(6, 7);
-  const block = npa + nxx + x;
+  const block = d.slice(0, 7);
 
   if (TOLL_FREE.has(npa)) return { type: "Toll Free", block, wireless: false };
-  if (wireless.has(block)) return { type: "Mobile",    block, wireless: true  };
+  if (wireless && wireless.has(block)) return { type: "Mobile", block, wireless: true };
   return { type: "Direct", block, wireless: false };
 }
 
-module.exports = { loadWirelessBlocks, classifyLineType, nanpDigits };
+/**
+ * Block-level location for a NANP number.
+ * @param {string} phone
+ * @param {Map}    location  map from loadPhoneBlocks().location
+ * @returns {string} "City, ST, Country" or "" (non-NANP / unknown block).
+ */
+function blockLocation(phone, location) {
+  const d = nanpDigits(phone);
+  if (!d || !location) return "";
+  return location.get(d.slice(0, 7)) || "";
+}
 
-// --- quick self-test when run directly: `node wireless-block-classifier.js <path>` ---
+const PHONE_BLOCKS_CSV = __dirname + "/phone-blocks.csv";
+
+module.exports = { loadPhoneBlocks, loadWirelessBlocks, classifyLineType, nanpDigits, blockLocation, PHONE_BLOCKS_CSV };
+
+// --- self-test: `node wireless-block-classifier.js [path]` ---
 if (require.main === module) {
-  const path = process.argv[2] || (__dirname + "/WIRELESS_BLOCKS.TXT");
+  const path = process.argv[2] || PHONE_BLOCKS_CSV;
   const t0 = Date.now();
-  const wireless = loadWirelessBlocks(path);
-  console.log(`Loaded ${wireless.size.toLocaleString()} wireless blocks in ${Date.now() - t0}ms\n`);
-  const samples = [
-    "+1 201-201-2345",   // 2012012 -> WIRE in file  -> Mobile
-    "+1 201-201-0345",   // 2012010 -> not wireless   -> Direct
-    "1-800-555-0199",    // toll free
-    "+1 201-204-2888",   // 2012042 -> PCS in file    -> Mobile
-    "+44 20 7946 0958",  // non-NANP                  -> Unknown
-  ];
-  for (const s of samples) {
-    const r = classifyLineType(s, wireless);
-    console.log(`${s.padEnd(20)} -> ${r.type.padEnd(10)} (block ${r.block || "n/a"})`);
-  }
+  const { wireless, location } = loadPhoneBlocks(path);
+  console.log(`Loaded ${wireless.size.toLocaleString()} wireless blocks + ${location.size.toLocaleString()} located blocks in ${Date.now() - t0}ms\n`);
+
+  let p = 0, f = 0; const ok = (l, c) => { console.log((c ? "✓" : "✗") + " " + l); c ? p++ : f++; };
+  // 2012012 is an "Office"/WIRE (landline) block -> Direct (this was the bug: it returned Mobile)
+  ok("WIRE/Office block 201-201-... => Direct (not Mobile)", classifyLineType("+12012012345", wireless).type === "Direct");
+  // 2012042 is a PCS/Mobile block -> Mobile
+  ok("PCS/Mobile block 201-204-2888 => Mobile", classifyLineType("+12012042888", wireless).type === "Mobile");
+  ok("toll-free 800 => Toll Free", classifyLineType("1-800-555-0199", wireless).type === "Toll Free");
+  ok("non-NANP => Unknown", classifyLineType("+44 20 7946 0958", wireless).type === "Unknown");
+  ok("block location is city-level (Hackensack, NJ)", /Hackensack, NJ/.test(blockLocation("+12012012345", location)));
+  ok("non-NANP has no block location", blockLocation("+442079460958", location) === "");
+
+  console.log(`\nblock-classifier self-test: ${p} passed, ${f} failed`);
+  process.exit(f ? 1 : 0);
 }
