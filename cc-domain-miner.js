@@ -69,6 +69,19 @@ function shardUrl(crawl, n) {
   return `https://data.commoncrawl.org/cc-index/collections/${crawl}/indexes/cdx-${String(n).padStart(5, "0")}.gz`;
 }
 
+// Resolve the LATEST Common Crawl corpus id (collinfo.json is newest-first); fallback on failure.
+function latestCrawl(fallback = "CC-MAIN-2026-25") {
+  return new Promise((resolve) => {
+    const req = https.get("https://index.commoncrawl.org/collinfo.json", { headers: { "User-Agent": "cc-domain-miner" }, timeout: 8000 }, (res) => {
+      let b = ""; res.on("data", (d) => b += d); res.on("end", () => {
+        try { const a = JSON.parse(b); const id = a && a[0] && a[0].id; resolve(/^CC-MAIN-\d{4}-\d+$/.test(id) ? id : fallback); } catch { resolve(fallback); }
+      });
+    });
+    req.on("error", () => resolve(fallback));
+    req.on("timeout", () => { req.destroy(); resolve(fallback); });
+  });
+}
+
 // Stream one shard, updating the domains map (and emitting each bio URL via onUrl). Resolves when done.
 function mineShard(crawl, n, bioRe, domains, maxMb, stats, onUrl) {
   return new Promise((resolve) => {
@@ -114,7 +127,8 @@ function parseShards(spec) {
 
 async function main() {
   const arg = (name, def) => { const i = process.argv.indexOf("--" + name); return i > 0 ? process.argv[i + 1] : def; };
-  const crawl = arg("crawl", "CC-MAIN-2026-25");
+  let crawl = arg("crawl", "");
+  if (!crawl) { crawl = await latestCrawl(); console.error(`(no --crawl given) using latest corpus ${crawl}`); }
   const shards = parseShards(arg("shards", "0"));
   const maxMb = Number(arg("max-mb", "0")) || 0;
   const minPages = Number(arg("min-pages", "1"));

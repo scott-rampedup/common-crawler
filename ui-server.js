@@ -7,7 +7,7 @@ const zlib = require('zlib');
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'ui');
 const RESULTS_CSV = path.join(__dirname, 'cc-results.csv');
-const { runDomains, COLUMNS, extractBioUrlsFromSitemaps, extractBioUrlGroups, isBioOrContactUrl, discoverBioUrlsFromCC } = require('./cc-engine');
+const { runDomains, COLUMNS, extractBioUrlsFromSitemaps, extractBioUrlGroups, isBioOrContactUrl, discoverBioUrlsFromCC, resolveLatestCrawl } = require('./cc-engine');
 const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords, geocodePhone, classifyEmail, cleanEmail, findPosition } = require('./extractor');
 const { modelEmail } = require('./email-pattern');
 const { importSheet } = require('./sheet-import');
@@ -1295,8 +1295,9 @@ const server = http.createServer((req, res) => {
 });
 
 loadJobs();
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`UI server running at http://localhost:${PORT}`);
+  if(!DEMO_MODE) { try { await resolveLatestCrawl(); } catch (e) { console.error('Latest-crawl resolve failed:', e.message); } }  // always read the freshest CC corpus
   if(DEMO_MODE) {
     console.log('⚠️  DEMO MODE ENABLED - Using mock data. Set DEMO_MODE=false to connect to real Common Crawl.');
   } else {

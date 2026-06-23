@@ -28,12 +28,41 @@ const { loadWirelessBlocks } = require("./wireless-block-classifier");
 
 const INDEX = "https://index.commoncrawl.org";
 const DATA  = "https://data.commoncrawl.org";
-const CRAWL = "CC-MAIN-2026-21";                 // latest monthly crawl; combine several for coverage
+// ALWAYS use the latest Common Crawl corpus: resolveLatestCrawl() updates this from collinfo.json at
+// startup. The literal is a recent fallback if that lookup fails; CC_CRAWL pins a specific crawl.
+let CRAWL = process.env.CC_CRAWL || "CC-MAIN-2026-25";
 const UA = "RampedUp-CC-Engine/0.1 (https://rampedup.io; contact@rampedup.io)";
 // Browser UA for PROXIED live fetches (bot-protected sites flag the honest crawler UA).
 // Direct fetches + robots.txt keep the honest UA above.
 const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Resolve the LATEST published Common Crawl corpus from collinfo.json (newest first) and point CRAWL
+// at it, so we always read the freshest archive. Pin with CC_CRAWL to skip auto-resolution. On any
+// failure, the recent literal fallback above stands. Call once at startup (before jobs run).
+function _getJsonCC(u, timeoutMs = 8000){
+  return new Promise((resolve) => {
+    const req = https.get(u, { headers: { "User-Agent": UA }, timeout: timeoutMs }, (res) => {
+      if(res.statusCode !== 200){ res.resume(); return resolve(null); }
+      let b = ""; res.on("data", (d) => b += d); res.on("end", () => { try{ resolve(JSON.parse(b)); }catch{ resolve(null); } });
+    });
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => { req.destroy(); resolve(null); });
+  });
+}
+async function resolveLatestCrawl(){
+  if(process.env.CC_CRAWL){ CRAWL = process.env.CC_CRAWL; return CRAWL; }      // explicit pin
+  const info = await _getJsonCC(INDEX + "/collinfo.json");
+  const latest = Array.isArray(info) && info[0] && info[0].id;
+  if(typeof latest === "string" && /^CC-MAIN-\d{4}-\d+$/.test(latest)){
+    if(latest !== CRAWL) console.log(`Common Crawl: using latest corpus ${latest} (was ${CRAWL}).`);
+    CRAWL = latest;
+  } else {
+    console.log(`Common Crawl: latest-corpus lookup failed; using ${CRAWL}.`);
+  }
+  return CRAWL;
+}
+function currentCrawl(){ return CRAWL; }
 
 // Keep-alive agents so we reuse TCP/TLS connections (esp. when pulling many pages
 // from one site) instead of paying a fresh handshake per request.
@@ -1399,7 +1428,8 @@ async function run(csvPath, opts = {}){
 
 module.exports = { run, runDomains, readDomains, selectCandidates, warcToHtml, queryIndex, queryIndexUrl, fetchWarc,
   liveCrawl, extractSameDomainLinks, isBioOrContactUrl, COLUMNS,
-  parseRobots, robotsAllows, extractSitemapLocs, extractBioUrlsFromSitemaps, extractBioUrlGroups, discoverBioUrlsFromCC };
+  parseRobots, robotsAllows, extractSitemapLocs, extractBioUrlsFromSitemaps, extractBioUrlGroups, discoverBioUrlsFromCC,
+  resolveLatestCrawl, currentCrawl };
 
 // ---------------------------------------------------------------- offline self-tests
 if(require.main === module){
