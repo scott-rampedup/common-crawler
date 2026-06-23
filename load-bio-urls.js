@@ -22,8 +22,10 @@ const { URL } = require("url");
 const arg = (n, d) => { const i = process.argv.indexOf("--" + n); return i > 0 ? process.argv[i + 1] : d; };
 const flag = (n) => process.argv.includes("--" + n);
 
+// Resolves { status, headers, body }. On a network error/timeout it resolves { status: 0 } rather
+// than rejecting, so a transient blip never crashes a long run — callers retry on status 0.
 function req(method, urlStr, { cookie, json, token } = {}) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const u = new URL(urlStr);
     const lib = u.protocol === "http:" ? http : https;
     const body = json != null ? JSON.stringify(json) : null;
@@ -35,7 +37,8 @@ function req(method, urlStr, { cookie, json, token } = {}) {
       const chunks = []; res.on("data", (d) => chunks.push(d));
       res.on("end", () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString("utf8") }));
     });
-    r.on("error", reject); r.on("timeout", () => { r.destroy(new Error("timeout")); });
+    r.on("error", (e) => resolve({ status: 0, headers: {}, body: String((e && e.message) || e) }));
+    r.on("timeout", () => { r.destroy(); resolve({ status: 0, headers: {}, body: "timeout" }); });
     if (body) r.write(body); r.end();
   });
 }
@@ -106,7 +109,14 @@ async function main() {
   for (let i = 0; i < batches.length && !authLost; i++) {
     const payload = { domains: batches[i].map((x) => x.url), mode: "webpage", type, name: `${name} [${i + 1}/${batches.length}]` };
     if (warcFile) payload.warc = batches[i];   // pre-resolved pointers -> server uses the WARC fast path
-    const r = await authed("POST", server + "/api/jobs", payload);
+    let r;
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      r = await authed("POST", server + "/api/jobs", payload);
+      if (r.status !== 0) break;              // got a real response (any HTTP status)
+      console.error(`  chunk ${i + 1}: network blip posting job (attempt ${attempt}/5) — retrying in 5s...`);
+      await sleep(5000);
+    }
+    if (r.status === 0) { console.error(`chunk ${i + 1}: server unreachable after retries — aborting (started jobs finish server-side).`); break; }
     if (r.status === 401) { console.error(`chunk ${i + 1}: ${AUTH_MSG}`); authLost = true; break; }
     if (r.status >= 300) { console.error(`chunk ${i + 1}: POST /api/jobs -> ${r.status} ${r.body.slice(0, 200)}`); break; }
     let job; try { job = JSON.parse(r.body); } catch { console.error(`chunk ${i + 1}: bad response`); break; }

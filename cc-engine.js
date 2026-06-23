@@ -1133,9 +1133,9 @@ async function fetchWarc(rec, { demoMode = false } = {}){
   const opts = {
     headers:{ "User-Agent":UA, "Range":`bytes=${start}-${end}` }
   };
-  if(proxyEnv && ProxyAgent && undiciFetch){
-    opts.dispatcher = getProxyDispatcher(url);
-  }
+  // Fetch Common Crawl's PUBLIC data store (data.commoncrawl.org, S3/CloudFront) DIRECTLY — it serves
+  // bulk WARC ranges to anyone and scales, so the slow/metered live-fetch proxy is neither needed nor
+  // wanted here (proxying CC data was ~12x slower on prod). The live-fetch + index paths still proxy.
   // WARC data store scales (S3/CloudFront) — fetch in parallel via its own pool, NOT the index lane.
   return warcLimit(async () => {
     const res = await fetchImpl(url, opts);
