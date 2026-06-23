@@ -40,3 +40,5 @@ Thumbs.db
 
 # original logo drop (the served copy lives at ui/logo.png)
 /Common Crawler.png
+
+cc-bio-urls*.txt
