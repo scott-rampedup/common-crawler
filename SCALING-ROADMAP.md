@@ -56,6 +56,37 @@ group**. Postgres is the shared system of record **and** the queue/schedule/feed
 
 ## 3. Phases
 
+### Phase 0 — Domain acquisition *(top of the funnel)*
+
+**Why:** the app takes "a CSV of domains" as input; at scale that list must be *generated*. This is
+the upstream stage that feeds everything else. Bias toward where extraction wins — small/local/
+professional-services firms with bio pages (realtors, insurance/financial advisors, lawyers,
+accountants), which are also the easiest domains to source in bulk.
+
+**Scope — a `domains` table** (`domain, source, vertical, rank, discovered_at, status`), deduped by
+**registrable domain** (public-suffix list; strip `www`), junk-filtered (parked pages, aggregators
+we don't want crawled as one domain). Populated by, in priority order:
+
+1. **Vertical directory harvesting** *(highest ROI — reuses existing crawler/adapters)*: directories
+   we already crack (century21/remax/HomeSmart/Morgan Stanley) are structured lists of thousands of
+   firms + their own sites. Output `(company, domain, vertical)`.
+2. **Common Crawl domain/host index** *(broadest, free)*: the **columnar URL index** (Athena/DuckDB on
+   S3) → hosts whose URLs contain bio-path signals (`/team`, `/our-people`, `/agents`, `/attorneys`,
+   `/about-us`); the **host/domain web graph** → the full domain universe, rankable by centrality.
+3. **Name → domain resolution** *(when starting from names)*: **serper.dev** (already integrated) —
+   search the company name, take the top organic domain; Clearbit-style APIs as a higher-accuracy upgrade.
+4. **Public registries / aggregators**: state license boards (real estate / insurance / law / medical),
+   SEC EDGAR, Google Maps/Yelp by category+geo, Crunchbase, association member directories.
+5. **Link-graph expansion**: from known domains, follow CC's web graph / on-page links ("partners,"
+   association badges) to adjacent firms in the same vertical.
+
+**Recommended mix:** (1) directories + (2) CC bio-path filtering + (3) serper. The `domains` table
+becomes the source the crawl queue (Phase 2) pulls from. See [[cc-scale-and-discovery]], [[site-search]].
+
+**Effort:** ~1–2 weeks for the framework + ~0.5–1 week per directory/registry source · **Cost:** serper
+(~\$ per 1k searches, already in use); CC Athena ~\$5/TB scanned · **Risk:** Low–Medium (dedup/junk
+filtering quality; aggregator-vs-target classification).
+
 ### Phase 1 — Postgres migration *(the keystone)*
 **Why:** `node:sqlite` on one volume is the single thing preventing a worker fleet. Everything
 else depends on a shared, multi-writer store.
