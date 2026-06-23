@@ -71,31 +71,42 @@ async function main() {
   console.error(`${urls.length} URLs -> ${batches.length} chunk(s) of <=${size} into ${server}`);
   if (flag("dry-run")) { console.error("(dry-run) first chunk sample:", batches[0]?.slice(0, 3)); return; }
 
+  const loginCreds = arg("login", "");
   let cookie = arg("cookie", "");
-  if (!cookie && arg("login", "")) cookie = await login(server, arg("login"));
+  if (!cookie && loginCreds) cookie = await login(server, loginCreds);
   if (!cookie) { console.error("need --cookie \"sid=…\" or --login user:pass"); process.exit(2); }
   if (!/^sid=/.test(cookie)) cookie = "sid=" + cookie;   // accept bare token
+  const AUTH_MSG = "auth lost (session ended) — re-run with --login for auto re-auth, or a fresh --cookie. Jobs already started finish server-side.";
 
-  let totalAdded = 0;
-  for (let i = 0; i < batches.length; i++) {
-    const r = await req("POST", server + "/api/jobs", { cookie, json: { domains: batches[i], mode: "webpage", type, name: `${name} [${i + 1}/${batches.length}]` } });
-    if (r.status >= 300) { console.error(`chunk ${i + 1}: POST /api/jobs -> ${r.status} ${r.body.slice(0, 200)}`); if (r.status === 403) console.error("  (auth — cookie/login invalid or not analyst+)"); break; }
+  // Re-authenticate on a mid-run 401 (a 14-day session can still be ended by sign-out). Needs --login.
+  async function relogin() { if (!loginCreds) return false; try { cookie = await login(server, loginCreds); console.error("  (re-authenticated)"); return true; } catch { return false; } }
+  async function authed(method, u, json) {
+    let r = await req(method, u, { cookie, json });
+    if (r.status === 401 && await relogin()) r = await req(method, u, { cookie, json });
+    return r;
+  }
+
+  let totalAdded = 0, authLost = false;
+  for (let i = 0; i < batches.length && !authLost; i++) {
+    const r = await authed("POST", server + "/api/jobs", { domains: batches[i], mode: "webpage", type, name: `${name} [${i + 1}/${batches.length}]` });
+    if (r.status === 401) { console.error(`chunk ${i + 1}: ${AUTH_MSG}`); authLost = true; break; }
+    if (r.status >= 300) { console.error(`chunk ${i + 1}: POST /api/jobs -> ${r.status} ${r.body.slice(0, 200)}`); break; }
     let job; try { job = JSON.parse(r.body); } catch { console.error(`chunk ${i + 1}: bad response`); break; }
     process.stderr.write(`chunk ${i + 1}/${batches.length} job ${job.id} (${batches[i].length} urls) `);
     let last;
     for (;;) {
       await sleep(pollMs);
-      const s = await req("GET", `${server}/api/jobs/${job.id}`, { cookie });
+      const s = await authed("GET", `${server}/api/jobs/${job.id}`);
+      if (s.status === 401) { console.error(`\n  ${AUTH_MSG}`); authLost = true; break; }
       let j; try { j = JSON.parse(s.body); } catch { continue; }
+      if (!j.id) continue;                 // ignore transient error bodies
       last = j;
       if (j.status !== "running" && j.status !== "queued" && j.status !== "starting") break;
       process.stderr.write(".");
     }
-    const added = last && (last.recordCount != null ? last.recordCount : 0);
-    totalAdded += added || 0;
-    console.error(` ${last ? last.status : "?"} — ${added} record(s) [${last ? (last.done || 0) : 0}/${last ? (last.total || batches[i].length) : batches[i].length} urls]`);
+    if (last) { const added = last.recordCount != null ? last.recordCount : 0; totalAdded += added; console.error(` ${last.status} — ${added} record(s) [${last.done || 0}/${last.total || batches[i].length} urls]`); }
   }
-  console.error(`\nDone. ~${totalAdded} record(s) across ${batches.length} chunk(s). (DB dedups by email; check the Search tab for totals.)`);
+  console.error(`\n${authLost ? "Stopped early (auth)." : "Done."} ~${totalAdded} record(s) across the completed chunk(s). (DB dedups by email; check the Search tab for totals.)`);
 }
 
 module.exports = { chunk };
