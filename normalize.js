@@ -68,23 +68,23 @@ const RULES = [
     apply: (r) => { const lp = lastPathFromUrl(r['Web Source URL']); if (lp) r['Last Path'] = lp; },
   },
   {
-    // Phone line type from the carrier block table (NANP). Durable fix for records imported/crawled
-    // before the block dataset honored the carrier class — landline ("Office"/WIRE) blocks used to be
-    // mislabeled Mobile. Re-derive Toll Free / Mobile / Direct from the (now class-aware) block.
-    // SAFEGUARDS: skip non-NANP numbers (keep libphonenumber's intl type), skip blocks the dataset
-    // doesn't cover (can't confidently call them Direct), and skip records carrying a vCard (the card's
-    // TEL;TYPE=CELL is the authoritative mobile signal — see vcard.js).
+    // Phone line type from the carrier block table (NANP) — SMS-SAFE. The engine treats an sms: link
+    // as authoritative (an sms-textable number is Mobile, applied AFTER block classification — see
+    // extractor.js), so sms wins over the block. A stored "Mobile" may be sms-derived and we can't tell
+    // post-hoc, so we NEVER downgrade Mobile->Direct here. We only: set Toll Free (unambiguous,
+    // area-code based), UPGRADE to Mobile on a wireless block, or FILL an empty/Unknown type with the
+    // block's type. SAFEGUARDS: skip non-NANP (keep libphonenumber's intl type), skip blocks the
+    // dataset doesn't cover, and skip records carrying a vCard (its TEL;TYPE=CELL is authoritative).
+    // Existing landline-block records mislabeled Mobile thus self-correct on RE-CRAWL (engine:
+    // block->Direct, then sms->Mobile if textable), not here.
     name: 'phone-type-from-block',
     match: (r) => {
       if (String(r['vCard'] || '').trim()) return false;
-      return [['Phone', 'Phone Type'], ['Phone 2', 'Phone 2 Type']].some(([pf, tf]) => {
-        const t = blockType(r[pf]);
-        return t && t !== String(r[tf] || '').trim();
-      });
+      return [['Phone', 'Phone Type'], ['Phone 2', 'Phone 2 Type']].some(([pf, tf]) => typeUpgrade(r[pf], r[tf]));
     },
     apply: (r) => {
       for (const [pf, tf] of [['Phone', 'Phone Type'], ['Phone 2', 'Phone 2 Type']]) {
-        const t = blockType(r[pf]); if (t) r[tf] = t;
+        const nt = typeUpgrade(r[pf], r[tf]); if (nt) r[tf] = nt;
       }
     },
   },
@@ -125,6 +125,19 @@ function blockType(phone) {
   return known ? c.type : '';
 }
 
+// SMS-SAFE line-type correction: the new type to write, or "" for no change. Never downgrades a
+// stored Mobile to Direct (it may be an sms-textable number — sms wins over the carrier block).
+// Allowed: -> Toll Free (unambiguous), -> Mobile on a wireless block, and -> Direct ONLY to fill a
+// missing/Unknown type.
+function typeUpgrade(phone, cur) {
+  const t = blockType(phone);
+  if (!t) return '';
+  cur = String(cur || '').trim();
+  if (t === 'Toll Free') return cur === 'Toll Free' ? '' : 'Toll Free';
+  if (t === 'Mobile') return cur === 'Mobile' ? '' : 'Mobile';
+  return (!cur || cur === 'Unknown') ? 'Direct' : '';   // landline block: fill only, never downgrade
+}
+
 // Apply all matching rules to a record (mutates + returns it).
 function normalizeContact(rec) {
   if (!rec || typeof rec !== 'object') return rec;
@@ -132,7 +145,7 @@ function normalizeContact(rec) {
   return rec;
 }
 
-module.exports = { normalizeContact, RULES, isCoarseLocation, blockType };
+module.exports = { normalizeContact, RULES, isCoarseLocation, blockType, typeUpgrade };
 
 // ---- offline self-test: node normalize.js --selftest ----
 if (require.main === module && process.argv.includes('--selftest')) {
@@ -145,20 +158,31 @@ if (require.main === module && process.argv.includes('--selftest')) {
   ok('NOT coarse: city + 2-letter state', !isCoarseLocation('Hackensack, NJ, United States'));
   ok('NOT coarse: city + full state name', !isCoarseLocation('Brooklyn, New York'));
 
-  // line type: landline (WIRE/Office) block was bug-labeled Mobile -> corrected to Direct
+  // line type SMS-SAFE: a landline (WIRE/Office) block KEEPS a stored Mobile (it may be sms-textable;
+  // sms wins over the carrier block). The bug fix for these happens on re-crawl, not here.
   const r1 = { Phone: '+12012012345', 'Phone Type': 'Mobile' };
   normalizeContact(r1);
-  ok('landline block Mobile -> Direct', r1['Phone Type'] === 'Direct');
+  ok('landline block keeps Mobile (sms wins over block)', r1['Phone Type'] === 'Mobile');
 
-  // line type: a real PCS/Mobile block stays Mobile
+  // line type: a landline block FILLS an empty type with Direct (no existing value to protect)
+  const r1b = { Phone: '+12012012345', 'Phone Type': '' };
+  normalizeContact(r1b);
+  ok('landline block fills empty type -> Direct', r1b['Phone Type'] === 'Direct');
+
+  // line type: a wireless (PCS) block upgrades a stored Direct -> Mobile
   const r2 = { Phone: '+12012042888', 'Phone Type': 'Direct' };
   normalizeContact(r2);
-  ok('PCS block -> Mobile', r2['Phone Type'] === 'Mobile');
+  ok('PCS block Direct -> Mobile', r2['Phone Type'] === 'Mobile');
+
+  // line type: a toll-free number is corrected (unambiguous, area-code based)
+  const r2b = { Phone: '+18002551212', 'Phone Type': 'Mobile' };
+  normalizeContact(r2b);
+  ok('toll-free corrected -> Toll Free', r2b['Phone Type'] === 'Toll Free');
 
   // vCard record is left alone (the card's CELL signal wins)
-  const r3 = { Phone: '+12012012345', 'Phone Type': 'Mobile', vCard: 'https://x/a.vcf' };
+  const r3 = { Phone: '+12012042888', 'Phone Type': 'Direct', vCard: 'https://x/a.vcf' };
   normalizeContact(r3);
-  ok('vCard record: line type untouched', r3['Phone Type'] === 'Mobile');
+  ok('vCard record: line type untouched', r3['Phone Type'] === 'Direct');
 
   // non-NANP keeps its (intl) type
   const r4 = { Phone: '+442079460958', 'Phone Type': 'Direct' };
