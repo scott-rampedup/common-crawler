@@ -759,6 +759,10 @@ const server = http.createServer((req, res) => {
   // ---------------- authentication + role gate ----------------
   const me = currentUser(req);
   const p = url.pathname;
+  // Machine loader auth: a valid LOADER_TOKEN header grants ANALYST-level API access (start/read jobs)
+  // without a personal session — for unattended batch loads. Never grants admin. (See load-bio-urls --token.)
+  const LOADER_TOKEN = process.env.LOADER_TOKEN || '';
+  const hasLoaderToken = !!LOADER_TOKEN && safeEqual(LOADER_TOKEN, String(req.headers['x-loader-token'] || ''));
   const PUBLIC_PATH = (
     p.startsWith('/ui/') || p === '/favicon.ico' ||
     p === '/home' ||
@@ -767,14 +771,14 @@ const server = http.createServer((req, res) => {
     p === '/api/auth/forgot' ||
     (p.startsWith('/api/pages/') && req.method === 'GET')
   );
-  if (!PUBLIC_PATH && !me) {
+  if (!PUBLIC_PATH && !me && !hasLoaderToken) {
     if (p.startsWith('/api/')) jsonErr(res, 401, 'Authentication required');
     else if (p === '/' || p === '/index.html') { serveStaticFile(res, path.join(PUBLIC_DIR, 'home.html')); return; }  // anon root -> public landing
     else { res.writeHead(302, { Location: '/login' }); res.end(); }
     return;
   }
   const rank = me ? users.roleRank(me.role) : -1;
-  const isAnalyst = rank >= RANK_ANALYST;
+  const isAnalyst = rank >= RANK_ANALYST || hasLoaderToken;   // token = analyst-level (jobs); not admin
   const isAdmin = rank >= RANK_ADMIN;
 
   // ---- public auth + legal pages ----

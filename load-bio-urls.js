@@ -22,13 +22,14 @@ const { URL } = require("url");
 const arg = (n, d) => { const i = process.argv.indexOf("--" + n); return i > 0 ? process.argv[i + 1] : d; };
 const flag = (n) => process.argv.includes("--" + n);
 
-function req(method, urlStr, { cookie, json } = {}) {
+function req(method, urlStr, { cookie, json, token } = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(urlStr);
     const lib = u.protocol === "http:" ? http : https;
     const body = json != null ? JSON.stringify(json) : null;
     const headers = { "User-Agent": "rampedup-bio-loader", "Accept": "application/json" };
     if (cookie) headers.Cookie = cookie;
+    if (token) headers["x-loader-token"] = token;
     if (body) { headers["Content-Type"] = "application/json"; headers["Content-Length"] = Buffer.byteLength(body); }
     const r = lib.request(u, { method, headers, timeout: 600000 }, (res) => {
       const chunks = []; res.on("data", (d) => chunks.push(d));
@@ -83,17 +84,21 @@ async function main() {
   if (flag("dry-run")) { console.error("(dry-run) first chunk sample:", batches[0]?.slice(0, 2)); return; }
 
   const loginCreds = arg("login", "");
+  const token = arg("token", "");                        // dedicated machine token (LOADER_TOKEN) — best for unattended runs
   let cookie = arg("cookie", "");
-  if (!cookie && loginCreds) cookie = await login(server, loginCreds);
-  if (!cookie) { console.error("need --cookie \"sid=…\" or --login user:pass"); process.exit(2); }
-  if (!/^sid=/.test(cookie)) cookie = "sid=" + cookie;   // accept bare token
-  const AUTH_MSG = "auth lost (session ended) — re-run with --login for auto re-auth, or a fresh --cookie. Jobs already started finish server-side.";
+  if (!token) {
+    if (!cookie && loginCreds) cookie = await login(server, loginCreds);
+    if (!cookie) { console.error("need --token, --cookie \"sid=…\", or --login user:pass"); process.exit(2); }
+    if (!/^sid=/.test(cookie)) cookie = "sid=" + cookie;   // accept bare token
+  }
+  const AUTH_MSG = "auth failed — check --token / --cookie / --login. Jobs already started finish server-side.";
 
   // Re-authenticate on a mid-run 401 (a 14-day session can still be ended by sign-out). Needs --login.
-  async function relogin() { if (!loginCreds) return false; try { cookie = await login(server, loginCreds); console.error("  (re-authenticated)"); return true; } catch { return false; } }
+  // A --token doesn't expire, so no relogin is needed there.
+  async function relogin() { if (token || !loginCreds) return false; try { cookie = await login(server, loginCreds); console.error("  (re-authenticated)"); return true; } catch { return false; } }
   async function authed(method, u, json) {
-    let r = await req(method, u, { cookie, json });
-    if (r.status === 401 && await relogin()) r = await req(method, u, { cookie, json });
+    let r = await req(method, u, { cookie, token, json });
+    if (r.status === 401 && await relogin()) r = await req(method, u, { cookie, token, json });
     return r;
   }
 
