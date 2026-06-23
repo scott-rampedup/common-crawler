@@ -29,6 +29,7 @@ const path = require("path");
 const zlib = require("zlib");
 const { classifyLineType, loadPhoneBlocks, blockLocation, PHONE_BLOCKS_CSV } = require("./wireless-block-classifier");
 const { intlMobileType } = require("./intl-mobile");
+const { modelEmail, templateFor } = require("./email-pattern");
 
 // ---------------------------------------------------------------- config
 const FREE_DOMAINS = new Set(["gmail.com","yahoo.com","hotmail.com","outlook.com",
@@ -689,7 +690,8 @@ function extractRecord(html, url, deps = {}){
     for(const e of extractEmailsFromText(html)) addEmail(e);
   }
   if(!emails.length && sd.email) addEmail(sd.email);     // JSON-LD email when none in mailto/text
-  const email = emails[0] || "";
+  let email = emails[0] || "";
+  let emailType = "";                                     // "" -> classifyEmail(email); "Modelled" for a modelled guess
 
   // linkedin(s): /in/ only, not /company/
   const lis = []; const seenL = new Set();
@@ -761,11 +763,41 @@ function extractRecord(html, url, deps = {}){
   // A matched directory Path ID with a role (e.g. /attorneys/ -> "Attorney") drives both
   // Title and Position; otherwise Title = page title and Position = page-derived role.
   const role = (pathHit && pathHit.role) ? pathHit.role : "";
-  const title = role || pageTtl;
-  const position = role || findPosition(pageTtl, description);
+  let title = role || pageTtl;
+  let position = role || findPosition(pageTtl, description);
   let image = findImage(html, url);
   if(!image && sd.image) image = toAbs(sd.image, url);
   const gender = first ? (genderMap[first.toLowerCase()] || "") : "";
+
+  // ---- Morgan Stanley advisor pages (advisor.morganstanley.com) ----
+  // Server-rendered team-roster pages read from Common Crawl (the live site blocks datacenter IPs).
+  // The lead advisor's OWN email isn't printed (compliance) — only the team's — and the page <title>
+  // "Name | City, ST | Division" carries the office location + division. Improve the lead record:
+  // take City/State + division from the title, and MODEL the lead's email from the Firstname.Lastname
+  // pattern visible in the team's printed emails (labelled "Modelled" — never a verified address).
+  if(isBio && first && lastName && /(^|\.)morganstanley\.com$/.test(getBaseDomain(url))){
+    // the RAW <title> is "Name | City, ST | Division" (pageTitle() strips after the first "|")
+    const rawTitle = decode(stripTags((html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || ""));
+    const parts = rawTitle.split("|").map((s) => s.trim()).filter(Boolean);
+    const locPart = parts.find((p) => /,\s*[A-Z]{2}\b/.test(p) && !/morgan stanley/i.test(p));  // "Coral Gables, FL"
+    if(locPart && !(sd.locality || sd.region)) phoneLocation = locPart;                          // office city beats the phone's area
+    const divPart = parts.slice(1).find((p) => p !== locPart);                                   // "Morgan Stanley Private Wealth Management"
+    if(divPart){ title = divPart; position = findPosition(divPart, description) || position; }
+    // The advisor's OWN email is never printed (only the team's + a generic FAwebsites@ inbox). Keep a
+    // found email ONLY if it's the lead's own (local-part fits the lead's name); otherwise MODEL it from
+    // the team's Firstname.Lastname pattern, and never attribute a generic/team inbox to the advisor.
+    const foundIsLead = email && templateFor(email.split("@")[0], first, lastName);
+    if(!foundIsLead){
+      const found = String(html).match(/[A-Za-z0-9._%+-]+@morganstanley(?:pwm)?\.com/gi) || [];
+      const samples = [...new Set(found.map((e) => e.toLowerCase()))].map((e) => {
+        const toks = e.split("@")[0].split(/[._-]/).filter(Boolean);
+        return toks.length === 2 ? { first: toks[0], last: toks[1], email: e } : null;           // skip generics (FAwebsites@…)
+      }).filter(Boolean);
+      const modelled = samples.length >= 2 ? modelEmail(samples, first, lastName) : "";
+      if(modelled){ email = modelled; emailType = "Modelled"; }
+      else { email = ""; emailType = ""; }     // drop generic/team inbox — not the advisor's address
+    }
+  }
 
   // ---- QUALITY GATE ----
   // Normally every record needs a real email. EXCEPTION — when deps.allowNoEmail is set
@@ -798,7 +830,7 @@ function extractRecord(html, url, deps = {}){
     "Description": description,
     "Image URL": image,
     "Email Address": email,
-    "Email Type": classifyEmail(email),
+    "Email Type": emailType || classifyEmail(email),
     "LinkedIn URL": linkedin,
     "Facebook": socials.facebook,
     "Twitter": socials.twitter,
@@ -1125,6 +1157,28 @@ if(require.main === module){
     "https://www.rsmuk.com/our-people/adam-gage", { wireless, genderMap: { adam:"M" }, source:"Test", allowNoEmail:true });
   okp("bio text-phone captured + normalized", txtPhoneRec && txtPhoneRec["Phone"] === "+441483307090");
   okp("email-less bio kept when gender assigned", txtPhoneRec && txtPhoneRec["First"] === "Adam" && !txtPhoneRec["Email Address"]);
+
+  // Morgan Stanley advisor page (advisor.morganstanley.com): server-rendered team roster where the
+  // lead's own email isn't printed. Pull City/State + division from the "Name | City, ST | Division"
+  // title, and MODEL the lead's email from the Firstname.Lastname pattern in the team's printed emails.
+  const msRec = extractRecord(
+    `<html><head><title>Adam E. Carlin | Coral Gables, FL | Morgan Stanley Private Wealth Management</title></head>` +
+    `<body><h1>Adam E. Carlin</h1><a href="tel:+1-305-476-3302">call</a>` +
+    `<input type="hidden" value="Luisa.Arias@morganstanleypwm.com">` +
+    `<input type="hidden" value="Jan.Strusinski@morganstanleypwm.com">` +
+    `<a href="mailto:FAwebsites@morganstanley.com">generic</a></body></html>`,
+    "https://advisor.morganstanley.com/adam.e.carlin", { wireless, genderMap: { adam:"M" }, source:"Test", allowNoEmail:true });
+  okp("MS: location from title", msRec && msRec["Phone Location"] === "Coral Gables, FL");
+  okp("MS: division as title", msRec && /Private Wealth Management/.test(msRec["Title"]));
+  okp("MS: lead email modelled from team pattern", msRec && msRec["Email Address"] === "adam.carlin@morganstanleypwm.com");
+  okp("MS: modelled email labelled Modelled", msRec && msRec["Email Type"] === "Modelled");
+  okp("MS: phone captured", msRec && msRec["Phone"] === "+13054763302");
+  // a generic-only page (no parseable team pattern) must NOT fabricate an email
+  const msGeneric = extractRecord(
+    `<html><head><title>Jane Q. Roe | Austin, TX | Morgan Stanley</title></head><body><h1>Jane Q. Roe</h1>` +
+    `<a href="mailto:FAwebsites@morganstanley.com">x</a></body></html>`,
+    "https://advisor.morganstanley.com/jane.q.roe", { wireless, genderMap: { jane:"F" }, source:"Test", allowNoEmail:true });
+  okp("MS: no email modelled without a team pattern", msGeneric && !msGeneric["Email Address"] && msGeneric["Phone Location"] === "Austin, TX");
 
   // non-NANP line type via libphonenumber (skipped if the lib isn't installed)
   if(intlLineType("+441483307090")){
