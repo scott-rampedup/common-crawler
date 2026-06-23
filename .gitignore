@@ -8,6 +8,7 @@ jobs/
 cc-results.csv
 cc-results-*.csv
 contacts-database*.csv
+cc-domains*.csv
 tmp-results.csv
 contacts.json
 contacts.json.tmp
