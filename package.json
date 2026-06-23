@@ -12,7 +12,8 @@
     "selftest:vcard": "node vcard.js --selftest",
     "selftest:blocks": "node wireless-block-classifier.js",
     "selftest:normalize": "node normalize.js --selftest",
-    "selftest:miner": "node cc-domain-miner.js --selftest"
+    "selftest:miner": "node cc-domain-miner.js --selftest",
+    "selftest:loader": "node load-bio-urls.js --selftest"
   },
   "engines": {
     "node": ">=22.5"
