@@ -62,15 +62,15 @@ function classify(line, bioRe) {
   if (!/html/.test(j.mime || j["mime-detected"] || "")) return null;
   let u; try { u = new URL(j.url); } catch { return null; }
   if (!bioRe.test(u.pathname) || EXCLUDE_RE.test(u.pathname)) return null;
-  return { domain: regDomain(u.hostname), path: u.pathname };
+  return { domain: regDomain(u.hostname), path: u.pathname, url: u.origin + u.pathname };  // url: query/fragment dropped
 }
 
 function shardUrl(crawl, n) {
   return `https://data.commoncrawl.org/cc-index/collections/${crawl}/indexes/cdx-${String(n).padStart(5, "0")}.gz`;
 }
 
-// Stream one shard, updating the domains map. Resolves { scanned, kept }.
-function mineShard(crawl, n, bioRe, domains, maxMb, stats) {
+// Stream one shard, updating the domains map (and emitting each bio URL via onUrl). Resolves when done.
+function mineShard(crawl, n, bioRe, domains, maxMb, stats, onUrl) {
   return new Promise((resolve) => {
     const headers = { "User-Agent": "rampedup-cc-domain-miner" };
     if (maxMb) headers.Range = `bytes=0-${Math.round(maxMb * 1024 * 1024)}`;
@@ -91,6 +91,7 @@ function mineShard(crawl, n, bioRe, domains, maxMb, stats) {
         if (!hit) return; stats.kept++;
         const e = domains.get(hit.domain) || { count: 0, sample: "" };
         e.count++; if (!e.sample) e.sample = hit.path; domains.set(hit.domain, e);
+        if (onUrl) onUrl(hit.url);
       };
       res.pipe(gun);
       gun.on("data", (d) => { buf += d.toString("latin1"); flush(false); });
@@ -120,21 +121,25 @@ async function main() {
   const out = arg("out", "cc-domains.csv");
   const conc = Math.max(1, Number(arg("concurrency", "2")));
   const paths = arg("paths", "");
+  const urlsOut = arg("urls-out", "");                 // also stream every bio URL here (feeds the loader)
   const terms = paths ? paths.split(",") : DEFAULT_BIO;
   const bioRe = bioRegex(terms);
 
   console.error(`Mining ${shards.length} shard(s) of ${crawl}${maxMb ? ` (~${maxMb}MB each)` : ""} for bio paths.`);
   const domains = new Map();
   const stats = { scanned: 0, kept: 0 };
+  const urlStream = urlsOut ? fs.createWriteStream(urlsOut) : null;
+  const onUrl = urlStream ? (u) => urlStream.write(u + "\n") : null;
   let idx = 0;
   const worker = async () => {
     while (idx < shards.length) {
       const n = shards[idx++];
-      await mineShard(crawl, n, bioRe, domains, maxMb, stats);
+      await mineShard(crawl, n, bioRe, domains, maxMb, stats, onUrl);
       console.error(`  shard ${n} done — ${domains.size} domains so far`);
     }
   };
   await Promise.all(Array.from({ length: Math.min(conc, shards.length) }, worker));
+  if (urlStream) { await new Promise((r) => urlStream.end(r)); console.error(`Bio URLs written -> ${urlsOut}`); }
 
   const rows = [...domains.entries()].filter(([, e]) => e.count >= minPages).sort((a, b) => b[1].count - a[1].count);
   fs.writeFileSync(out, "domain,bio_pages,sample_path\n" +
