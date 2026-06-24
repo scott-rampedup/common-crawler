@@ -368,6 +368,30 @@ function loadJobs() {
   console.log(`Loaded ${jobs.size} saved job(s) from ${JOBS_DIR}`);
 }
 
+// Each job file embeds ALL its records (a big crawl/load can be tens of MB), and they accumulate
+// forever — a backlog once filled the data volume (ENOSPC -> jobs "failed" mid-run). The records
+// already live in the central DB, so old per-job files are redundant beyond dashboard history.
+// At startup (after loadJobs, before resume), keep the most recent JOBS_RETAIN terminal jobs and
+// delete the rest; never touch active (running/interrupted/queued/starting) jobs or the persistent
+// Google Sheet job. Bounds accumulation so a big harvest of chunked loader jobs can't refill the disk.
+function pruneOldJobs() {
+  const RETAIN = Math.max(0, Number(process.env.JOBS_RETAIN) || 100);
+  const ACTIVE = new Set(['running', 'interrupted', 'queued', 'starting']);
+  const terminal = [...jobs.values()]
+    .filter((j) => j.id !== SHEET_JOB_ID && !ACTIVE.has(j.status))
+    .sort((a, b) => String(b.finishedAt || b.createdAt || '').localeCompare(String(a.finishedAt || a.createdAt || '')));
+  const drop = terminal.slice(RETAIN);
+  if (!drop.length) return;
+  let n = 0, bytes = 0;
+  for (const j of drop) {
+    const fp = path.join(JOBS_DIR, `${j.id}.json`);
+    try { bytes += fs.statSync(fp).size; } catch (e) { /* may already be gone */ }
+    try { fs.unlinkSync(fp); n++; } catch (e) { /* ignore */ }
+    jobs.delete(j.id);
+  }
+  console.log(`Pruned ${n} old job file(s) (${(bytes / 1048576).toFixed(1)} MB freed), kept ${RETAIN} most recent.`);
+}
+
 // Fill in a best-guess email for bio records that have a name + Gender but no published
 // address (sitemap/webpage mode). The format is LEARNED from that company's own
 // Professional emails — this job's finds plus the central DB — and the result is labelled
@@ -1313,6 +1337,7 @@ const server = http.createServer((req, res) => {
 });
 
 loadJobs();
+pruneOldJobs();
 server.listen(PORT, async () => {
   console.log(`UI server running at http://localhost:${PORT}`);
   if(!DEMO_MODE) { try { await resolveLatestCrawl(); } catch (e) { console.error('Latest-crawl resolve failed:', e.message); } }  // always read the freshest CC corpus
