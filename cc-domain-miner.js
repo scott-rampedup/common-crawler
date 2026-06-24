@@ -85,38 +85,57 @@ function latestCrawl(fallback = "CC-MAIN-2026-25") {
   });
 }
 
-// Stream one shard, updating the domains map (and emitting each bio hit via onUrl / onWarc). Resolves when done.
-function mineShard(crawl, n, bioRe, domains, maxMb, stats, onUrl, onWarc) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// One fetch attempt for a shard. Buffers hits locally (does NOT touch global state) so a failed
+// attempt can be retried cleanly. Resolves { ok, dataReceived, hits, scanned }: ok=true means the
+// gzip stream ended normally OR was truncated by our Range cap (both = we got the sample); a
+// connection-level error (ECONNRESET / ENOTFOUND) or bad status -> ok=false (retry candidate).
+function mineShardOnce(crawl, n, bioRe, maxMb) {
   return new Promise((resolve) => {
     const headers = { "User-Agent": "rampedup-cc-domain-miner" };
     if (maxMb) headers.Range = `bytes=0-${Math.round(maxMb * 1024 * 1024)}`;
+    const hits = []; let scanned = 0, dataReceived = false, settled = false;
+    const done = (ok) => { if (settled) return; settled = true; resolve({ ok, dataReceived, hits, scanned }); };
+    let buf = "";
+    const absorb = (line) => { if (!line) return; scanned++; const h = classify(line, bioRe); if (h) hits.push(h); };
+    const flush = (last) => {
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) { absorb(buf.slice(0, nl)); buf = buf.slice(nl + 1); }
+      if (last && buf) { absorb(buf); buf = ""; }
+    };
     const req = https.get(shardUrl(crawl, n), { headers }, (res) => {
       if (res.statusCode !== 200 && res.statusCode !== 206) {
-        console.error(`  shard ${n}: HTTP ${res.statusCode}`); res.resume(); return resolve();
+        console.error(`  shard ${n}: HTTP ${res.statusCode}`); res.resume(); return done(false);
       }
       const gun = zlib.createGunzip();
-      let buf = "";
-      const flush = (last) => {
-        let nl;
-        while ((nl = buf.indexOf("\n")) >= 0) { absorb(buf.slice(0, nl)); buf = buf.slice(nl + 1); }
-        if (last && buf) { absorb(buf); buf = ""; }
-      };
-      const absorb = (line) => {
-        if (!line) return; stats.scanned++;
-        const hit = classify(line, bioRe);
-        if (!hit) return; stats.kept++;
-        const e = domains.get(hit.domain) || { count: 0, sample: "" };
-        e.count++; if (!e.sample) e.sample = hit.path; domains.set(hit.domain, e);
-        if (onUrl) onUrl(hit.url);
-        if (onWarc) onWarc(hit);
-      };
       res.pipe(gun);
-      gun.on("data", (d) => { buf += d.toString("latin1"); flush(false); });
-      gun.on("error", () => resolve());          // truncated gzip from a Range request ends cleanly here
-      gun.on("end", () => { flush(true); resolve(); });
+      gun.on("data", (d) => { dataReceived = true; buf += d.toString("latin1"); flush(false); });
+      gun.on("error", () => done(true));          // truncated gzip from a Range request = got our sample
+      gun.on("end", () => { flush(true); done(true); });
     });
-    req.on("error", (e) => { console.error(`  shard ${n}: ${e.message}`); resolve(); });
+    req.on("error", (e) => { console.error(`  shard ${n}: ${e.message}`); done(false); });
   });
+}
+
+// Stream one shard with retry/backoff, then commit its hits to the domains map (+ emit via onUrl/onWarc).
+// Without retry a single transient blip (ECONNRESET / DNS ENOTFOUND) permanently skips a shard — that
+// once wiped shards 14-299 of a full run. Retry only when an attempt got NO data; partial data is kept.
+async function mineShard(crawl, n, bioRe, domains, maxMb, stats, onUrl, onWarc, retries = 4) {
+  let r;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    r = await mineShardOnce(crawl, n, bioRe, maxMb);
+    if (r.ok || r.dataReceived) break;                 // success, or at least a partial sample
+    if (attempt < retries) { const wait = 1000 * attempt; console.error(`  shard ${n}: retry ${attempt}/${retries - 1} in ${wait}ms`); await sleep(wait); }
+  }
+  stats.scanned += r.scanned;
+  for (const hit of r.hits) {
+    stats.kept++;
+    const e = domains.get(hit.domain) || { count: 0, sample: "" };
+    e.count++; if (!e.sample) e.sample = hit.path; domains.set(hit.domain, e);
+    if (onUrl) onUrl(hit.url);
+    if (onWarc) onWarc(hit);
+  }
 }
 
 function parseShards(spec) {
