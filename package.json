@@ -25,7 +25,8 @@
     "http-proxy-agent": "^7.0.2",
     "https-proxy-agent": "^7.0.6",
     "libphonenumber-geo-carrier": "^2.0.0",
-    "nodemailer": "^9.0.0"
+    "nodemailer": "^9.0.0",
+    "pg": "^8.22.0"
   },
   "author": "",
   "license": "MIT",
