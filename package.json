@@ -13,6 +13,7 @@
     "selftest:blocks": "node wireless-block-classifier.js",
     "selftest:normalize": "node normalize.js --selftest",
     "selftest:miner": "node cc-domain-miner.js --selftest",
+    "selftest:athena": "node cc-athena-miner.js --selftest",
     "selftest:loader": "node load-bio-urls.js --selftest"
   },
   "engines": {
@@ -27,5 +28,10 @@
     "nodemailer": "^9.0.0"
   },
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@aws-sdk/client-athena": "^3.1075.0",
+    "@aws-sdk/client-s3": "^3.1075.0",
+    "@aws-sdk/client-sts": "^3.1075.0"
+  }
 }
