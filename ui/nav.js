@@ -22,6 +22,15 @@
     if (master) master.style.display = 'none';
   }
 
+  // Monitor link for analyst+ (new-employee detection).
+  if (rank >= 1 && !nav.querySelector('a[href="/monitor"]')) {
+    const m = document.createElement('a');
+    m.className = 'nav-link green';
+    m.href = '/monitor';
+    m.textContent = '🛰 Monitor';
+    nav.appendChild(m);
+  }
+
   // Admin link for admins.
   if (rank >= 2 && !nav.querySelector('a[href="/admin"]')) {
     const a = document.createElement('a');

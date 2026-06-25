@@ -14,7 +14,8 @@
     "selftest:normalize": "node normalize.js --selftest",
     "selftest:miner": "node cc-domain-miner.js --selftest",
     "selftest:athena": "node cc-athena-miner.js --selftest",
-    "selftest:loader": "node load-bio-urls.js --selftest"
+    "selftest:loader": "node load-bio-urls.js --selftest",
+    "selftest:monitor": "node sitemap-monitor.js --selftest"
   },
   "engines": {
     "node": ">=22.5"

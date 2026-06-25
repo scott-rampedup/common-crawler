@@ -99,6 +99,32 @@ const { makeDb } = require('./db');
 const db = makeDb(DATA_DIR);
 const aiEnrich = require('./ai-enrich');
 
+// ---- Sitemap monitor (new-employee detection via bio-dedicated child sitemaps) ----
+// Re-checks watched child sitemaps on a schedule, diffs the URL set vs the stored baseline, and
+// extracts the DELTA (new bios = candidate new hires). MONITOR_ENABLED turns the nightly tick on.
+const ccEngine = require('./cc-engine');
+const { makeMonitor } = require('./sitemap-monitor');
+const MONITOR_ENABLED = /^(1|true|yes|on)$/i.test(process.env.MONITOR_ENABLED || '');
+const MONITOR_INTERVAL_HOURS = Math.max(1, Number(process.env.MONITOR_INTERVAL_HOURS) || 24);
+const monitor = makeMonitor({
+  db,
+  engine: ccEngine,
+  fetchDoc: ccEngine.fetchDoc,
+  genderMap: GENDER_MAP,
+  // delta extraction reuses the normal CC-first webpage pipeline (-> Master DB upsert)
+  extract: (urls, label) => { startJob(urls, '', false, 'webpage', 'Monitor', label || 'Monitor: new bios', null); },
+  log: (m) => console.log(`[monitor] ${m}`),
+});
+let monitorRunning = false;
+// Single guard shared by the scheduled tick AND the manual /api/monitor/run endpoint, so two passes
+// never overlap.
+async function runMonitorPassGuarded(opts = {}) {
+  if (monitorRunning) return { skipped: true, reason: 'a monitor pass is already running' };
+  monitorRunning = true;
+  try { return await monitor.runMonitorPass(opts); }
+  finally { monitorRunning = false; }
+}
+
 // ---- Google Sheet -> Master DB scheduled sync (one-way, import-only) ----
 // SHEET_SYNC_URL = the sheet to import; SHEET_SYNC_HOURS = interval (default 24).
 const SHEET_SYNC_URL = process.env.SHEET_SYNC_URL || '';
@@ -508,7 +534,7 @@ async function runJobDomains(job, domainsToRun) {
   console.log(`Job ${job.id} ${job.status} — ${job.recordsByEmail.size} record(s)`);
 }
 
-const JOB_TYPES = ['Domains', 'Webpages', 'Sitemaps', 'Site Search Results', 'Google Sheet', 'CC Discovery'];
+const JOB_TYPES = ['Domains', 'Webpages', 'Sitemaps', 'Site Search Results', 'Google Sheet', 'CC Discovery', 'Monitor'];
 const jobTypeFromMode = (mode) => (mode === 'webpage' ? 'Webpages' : 'Domains');
 const normalizeJobType = (t, mode) => (JOB_TYPES.includes(t) ? t : jobTypeFromMode(mode));
 
@@ -910,6 +936,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (url.pathname === '/monitor' || url.pathname === '/monitor.html') {
+    if (!isAnalyst) { res.writeHead(302, { Location: '/search' }); res.end(); return; }   // analyst+ (manages watches + runs passes)
+    serveStaticFile(res, path.join(PUBLIC_DIR, 'monitor.html'));
+    return;
+  }
+
   if (url.pathname.startsWith('/ui/')) {
     const filePath = path.join(PUBLIC_DIR, url.pathname.replace(/^\/ui\//, ''));
     serveStaticFile(res, filePath);
@@ -1025,6 +1057,77 @@ const server = http.createServer((req, res) => {
         res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ error: e.message || 'Bad request' }));
       }
+    });
+    return;
+  }
+
+  // ---- Sitemap monitor (new-employee detection) ----
+  // GET /api/monitor -> status + headline stats.
+  if (url.pathname === '/api/monitor' && req.method === 'GET') {
+    sendJson(res, { stats: db.monitorStats(), enabled: MONITOR_ENABLED,
+      intervalHours: MONITOR_INTERVAL_HOURS, running: monitorRunning });
+    return;
+  }
+  // GET /api/monitor/watches -> every watched child sitemap (+ present/departed counts).
+  if (url.pathname === '/api/monitor/watches' && req.method === 'GET') {
+    sendJson(res, { watches: db.listWatches() });
+    return;
+  }
+  // GET /api/monitor/changes?event=&domain=&limit= -> the change feed.
+  if (url.pathname === '/api/monitor/changes' && req.method === 'GET') {
+    sendJson(res, { changes: db.recentObservations({
+      event: url.searchParams.get('event') || '',
+      domain: url.searchParams.get('domain') || '',
+      limit: Number(url.searchParams.get('limit')) || 200,
+    }) });
+    return;
+  }
+  // POST /api/monitor/watch  { domains:[], sitemaps:[] }  -> discover bio-dedicated child sitemaps,
+  // register each as a watch, seed its baseline (no observations). Analyst+.
+  if (url.pathname === '/api/monitor/watch' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    readJsonBody(req, async (payload) => {
+      if (!payload) return jsonErr(res, 400, 'Bad JSON');
+      const domains = Array.isArray(payload.domains) ? payload.domains.filter(Boolean) : [];
+      const sitemaps = Array.isArray(payload.sitemaps) ? payload.sitemaps.filter(Boolean) : [];
+      if (!domains.length && !sitemaps.length) return jsonErr(res, 400, 'Provide domains or sitemaps');
+      try {
+        const out = await monitor.discoverWatches({ domains, sitemaps });
+        console.log(`[monitor] registered ${out.added} watch(es)`);
+        sendJson(res, { ok: true, ...out });
+      } catch (e) { jsonErr(res, 500, e.message || 'discover failed'); }
+    });
+    return;
+  }
+  // POST /api/monitor/run  { force? }  -> run one monitoring pass now. Analyst+.
+  if (url.pathname === '/api/monitor/run' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    readJsonBody(req, async (payload) => {
+      try {
+        const summary = await runMonitorPassGuarded({ force: !!(payload && payload.force) });
+        sendJson(res, { ok: true, summary });
+      } catch (e) { jsonErr(res, 500, e.message || 'monitor pass failed'); }
+    });
+    return;
+  }
+  // POST /api/monitor/toggle  { sitemapUrl, status:'active'|'paused' }  -> pause/resume a watch.
+  if (url.pathname === '/api/monitor/toggle' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    readJsonBody(req, (payload) => {
+      const sm = payload && String(payload.sitemapUrl || '').trim();
+      const status = payload && String(payload.status || '').trim();
+      if (!sm || (status !== 'active' && status !== 'paused')) return jsonErr(res, 400, 'sitemapUrl + status required');
+      sendJson(res, { ok: db.setWatchStatus(sm, status) });
+    });
+    return;
+  }
+  // POST /api/monitor/unwatch  { sitemapUrl }  -> stop watching + drop its baseline. Analyst+.
+  if (url.pathname === '/api/monitor/unwatch' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    readJsonBody(req, (payload) => {
+      const sm = payload && String(payload.sitemapUrl || '').trim();
+      if (!sm) return jsonErr(res, 400, 'sitemapUrl required');
+      sendJson(res, { ok: db.removeWatch(sm) });
     });
     return;
   }
@@ -1357,6 +1460,13 @@ server.listen(PORT, async () => {
     console.log(`Sheet sync: ON for ${SHEET_SYNC_URL} every ${SHEET_SYNC_HOURS}h.`);
     setTimeout(() => runSheetSync(), 30000);                              // initial import shortly after startup
     setInterval(() => runSheetSync(), SHEET_SYNC_HOURS * 3600 * 1000);   // then on the interval
+  }
+  if (MONITOR_ENABLED) {
+    console.log(`Sitemap monitor: ON, every ${MONITOR_INTERVAL_HOURS}h.`);
+    setInterval(() => { runMonitorPassGuarded().catch((e) => console.error('[monitor] pass crashed:', e.message)); },
+      MONITOR_INTERVAL_HOURS * 3600 * 1000);
+  } else {
+    console.log('Sitemap monitor: OFF (set MONITOR_ENABLED=1 to run the nightly new-hire pass).');
   }
   // One-off bulk relabel: set Position AND Title = POSITION_FIX_VALUE for records matching any of
   // POSITION_FIX_DOMAIN (exact source domain), POSITION_FIX_EMAIL_DOMAIN (email @domain), and/or

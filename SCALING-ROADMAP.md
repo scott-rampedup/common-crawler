@@ -140,6 +140,19 @@ re-delivery safe; start with 2–3 workers and measure.
 ### Phase 4 — Scheduler + diff engine + new-employee feed *(the monitoring product)*
 **Why:** this is the enterprise differentiator and the stated end goal.
 
+> **MVP SHIPPED (2026-06-25) — sitemap-diff new-hire detection, on the current SQLite box.**
+> `sitemap-monitor.js` watches the **bio-dedicated child sitemaps** (found by `cc-engine.discoverBioSitemaps`,
+> which scores each child's bio-URL ratio — `agents-sitemap.xml` qualifies, `blog-sitemap.xml` doesn't),
+> and on a schedule (`MONITOR_ENABLED=1`, `MONITOR_INTERVAL_HOURS=24`) diffs each child's URL set vs a
+> stored baseline. New URL → candidate **new hire** (auto-extracted via the CC-first webpage pipeline →
+> Master DB); disappeared URL → candidate **departure**. Two cost levers keep a pass ~free: we watch only
+> bio-dedicated children, and a child whose `<lastmod>` in its parent index is unchanged is **not refetched**
+> (content-hash fallback when no lastmod). New tables in `db.js`: `watched_sitemaps`, `bio_urls` (baseline),
+> `observations` (change feed). UI at **`/monitor`** (add domains/sitemaps, watchlist, change feed, run-now);
+> API under `/api/monitor/*`. Selftests: `npm run selftest:monitor` (15) + 5 new engine tests. Still TODO
+> below: configurable per-domain schedules, departure→contact reconciliation, alerts/webhook, and lifting
+> off SQLite onto the Phase 1/2 worker fleet for columnar-scale watch counts.
+
 **Scope:**
 - **Scheduler:** `schedules` table + a tick worker (or Fly scheduled machines) → recurring re-crawl
   per domain (weekly/monthly, configurable).

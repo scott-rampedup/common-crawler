@@ -581,17 +581,35 @@ function robotsAllows(pathname, rules = []){
   return best ? best.allow : true;
 }
 
-// Pull <loc> URLs out of a sitemap (or sitemap index) XML blob. (offline-testable)
+// Pull <loc> URLs out of a sitemap (or sitemap index) XML blob, pairing each <loc> with its
+// sibling <lastmod> when present. Returns { isIndex, locs:[url], entries:[{loc,lastmod}] } — `locs`
+// is kept (string array) for back-compat; `entries` carries the lastmod the monitor uses to skip
+// unchanged child sitemaps. (offline-testable)
 function extractSitemapLocs(xml){
   const text = String(xml || "");
   const isIndex = /<sitemapindex[\s>]/i.test(text);
-  const locs = [];
-  const re = /<loc>\s*([^<]+?)\s*<\/loc>/gi; let m;
-  while((m = re.exec(text))){
-    const u = m[1].replace(/&amp;/g, "&").replace(/&#38;/g, "&").trim();
-    if(u) locs.push(u);
+  const decode = (u) => u.replace(/&amp;/g, "&").replace(/&#38;/g, "&").trim();
+  const entries = [];
+  // Parse per <url>/<sitemap> block so a <loc> binds to the <lastmod> in the SAME block.
+  const blockRe = /<(url|sitemap)\b[^>]*>([\s\S]*?)<\/\1>/gi; let b; let matchedBlock = false;
+  while((b = blockRe.exec(text))){
+    matchedBlock = true;
+    const inner = b[2];
+    const lm = /<loc>\s*([^<]+?)\s*<\/loc>/i.exec(inner);
+    if(!lm) continue;
+    const loc = decode(lm[1]);
+    if(!loc) continue;
+    const lmod = /<lastmod>\s*([^<]+?)\s*<\/lastmod>/i.exec(inner);
+    entries.push({ loc, lastmod: lmod ? lmod[1].trim() : null });
   }
-  return { isIndex, locs };
+  if(!matchedBlock){                                 // malformed/blockless sitemap -> flat <loc> scan
+    const re = /<loc>\s*([^<]+?)\s*<\/loc>/gi; let m;
+    while((m = re.exec(text))){
+      const u = decode(m[1]);
+      if(u) entries.push({ loc: u, lastmod: null });
+    }
+  }
+  return { isIndex, locs: entries.map(e => e.loc), entries };
 }
 
 // Walk a site's sitemaps and return every same-domain bio/contact URL that robots allows.
@@ -750,6 +768,74 @@ async function extractBioUrlGroups(opts = {}){
   }
   return { groups, totalGroups: groupIndex, totalBioUrls: totalBio, totalUrls,
            sitemapsFetched: fetched, sitemapsOk: fetchedOk };
+}
+
+// Find the CHILD sitemaps that are *dedicated to people/bio pages* — the ones worth monitoring for
+// new hires. Walks an index (or a single urlset), and for every leaf <urlset> computes its bio-ratio
+// (fraction of <loc>s that pass isBioOrContactUrl). A child qualifies as a watch when it has at least
+// `minBioCount` bio URLs AND bioRatio >= `minBioRatio` (so `agents-sitemap.xml` qualifies but a mixed
+// `pages-sitemap.xml` or a `blog-sitemap.xml` does not). Each watch carries the child's <lastmod> from
+// its parent index entry (lets the nightly pass skip unchanged children) and its bio URLs paired with
+// their own <lastmod>. Returns { watches:[{sitemapUrl,parentUrl,lastmod,urlCount,bioCount,bioRatio,
+// domain,bioUrls:[{url,lastmod}]}], sitemapsFetched, totalUrls }. (offline-testable via opts._fetchDoc)
+async function discoverBioSitemaps(opts = {}){
+  const { content = "", urls = [], directoryRules = {}, genderMap = {}, _fetchDoc = fetchDoc,
+          minBioRatio = 0.30, minBioCount = 3, maxSitemaps = 200, maxUrls = 500000 } = opts;
+  const seenSm = new Set();
+  const queue = [];
+  if(String(content || "").trim()) queue.push({ inline: content, url: "(pasted sitemap)", parent: null, lastmod: null });
+  for(const u of urls){ if(u) queue.push({ url: String(u).trim(), parent: null, lastmod: null }); }
+  const watches = [];
+  let fetched = 0, totalUrls = 0;
+
+  while(queue.length && fetched < maxSitemaps && totalUrls < maxUrls){
+    const item = queue.shift();
+    let xml = "";
+    if(item.inline != null){ xml = item.inline; }
+    else {
+      if(seenSm.has(item.url)) continue;
+      seenSm.add(item.url);
+      xml = await _fetchDoc(item.url);
+      fetched++;
+      await sleep(120);
+    }
+    if(!xml) continue;
+
+    const { isIndex, entries } = extractSitemapLocs(xml);
+    if(isIndex){                                       // index -> queue each child, carrying its <lastmod>
+      for(const e of entries){
+        if(seenSm.has(e.loc)) continue;
+        if(seenSm.size + queue.length >= maxSitemaps * 4) break;
+        queue.push({ url: e.loc, parent: item.url || null, lastmod: e.lastmod });
+      }
+      continue;
+    }
+    // leaf urlset -> score how bio-dedicated it is
+    let total = 0; const bio = [];
+    for(const e of entries){
+      total++; totalUrls++;
+      let abs; try{ abs = new URL(e.loc); }catch{ continue; }
+      if(abs.protocol !== "http:" && abs.protocol !== "https:") continue;
+      if(LINK_SKIP_EXT.test(abs.pathname)) continue;
+      if(!isBioOrContactUrl(abs.toString(), directoryRules, genderMap) && !findSiteApi(abs.toString())) continue;
+      abs.hash = "";
+      bio.push({ url: abs.toString(), lastmod: e.lastmod });
+    }
+    const ratio = total ? bio.length / total : 0;
+    if(bio.length >= minBioCount && ratio >= minBioRatio){
+      watches.push({
+        sitemapUrl: item.url,
+        parentUrl: item.parent || null,
+        lastmod: item.lastmod || null,
+        urlCount: total,
+        bioCount: bio.length,
+        bioRatio: ratio,
+        domain: bio.length ? hostOf(bio[0].url) : (item.url ? hostOf(item.url) : ""),
+        bioUrls: bio,
+      });
+    }
+  }
+  return { watches, sitemapsFetched: fetched, totalUrls };
 }
 
 // Discover bio/contact page URLs for one or more DOMAINS straight from the Common Crawl index —
@@ -1430,8 +1516,8 @@ async function run(csvPath, opts = {}){
 }
 
 module.exports = { run, runDomains, readDomains, selectCandidates, warcToHtml, queryIndex, queryIndexUrl, fetchWarc,
-  liveCrawl, extractSameDomainLinks, isBioOrContactUrl, COLUMNS,
-  parseRobots, robotsAllows, extractSitemapLocs, extractBioUrlsFromSitemaps, extractBioUrlGroups, discoverBioUrlsFromCC,
+  liveCrawl, extractSameDomainLinks, isBioOrContactUrl, COLUMNS, fetchDoc,
+  parseRobots, robotsAllows, extractSitemapLocs, extractBioUrlsFromSitemaps, extractBioUrlGroups, discoverBioSitemaps, discoverBioUrlsFromCC,
   resolveLatestCrawl, currentCrawl };
 
 // ---------------------------------------------------------------- offline self-tests
@@ -1743,6 +1829,53 @@ if(require.main === module){
         grp[0].bioUrls.length === 1 && grp[0].bioUrls[0] === `https://${smHost}/team/jane-doe/` &&
         grp[1].bioUrls.length === 1 && grp[1].bioUrls[0] === `https://${smHost}/team/john-roe/` &&
         grpOut.totalBioUrls === 2);
+
+      // 7b-3) extractSitemapLocs pairs <loc> with its sibling <lastmod> (entries[]), back-compat locs[]
+      const lmSet = extractSitemapLocs(
+        `<urlset><url><loc>https://x.com/attorneys/jane/</loc><lastmod>2026-06-20</lastmod></url>` +
+        `<url><loc>https://x.com/attorneys/john/</loc></url></urlset>`);   // 2nd has no lastmod
+      ok("extractSitemapLocs binds lastmod per block",
+        lmSet.entries.length === 2 && lmSet.locs.length === 2 &&
+        lmSet.entries[0].loc === "https://x.com/attorneys/jane/" && lmSet.entries[0].lastmod === "2026-06-20" &&
+        lmSet.entries[1].lastmod === null);
+      const lmIdx = extractSitemapLocs(
+        `<sitemapindex><sitemap><loc>https://x.com/agents.xml</loc><lastmod>2026-06-24T00:00:00Z</lastmod></sitemap></sitemapindex>`);
+      ok("extractSitemapLocs carries child-sitemap lastmod from an index",
+        lmIdx.isIndex === true && lmIdx.entries[0].lastmod === "2026-06-24T00:00:00Z");
+
+      // 7b-4) discoverBioSitemaps: keep only children that are DEDICATED to bio pages
+      const dbsHost = "agency.com";
+      const dbsDocs = {
+        [`https://${dbsHost}/sitemap_index.xml`]:
+          `<sitemapindex>` +
+          `<sitemap><loc>https://${dbsHost}/agents.xml</loc><lastmod>2026-06-24</lastmod></sitemap>` +
+          `<sitemap><loc>https://${dbsHost}/blog.xml</loc><lastmod>2026-06-24</lastmod></sitemap>` +
+          `</sitemapindex>`,
+        // agents.xml: 3/3 bio -> dedicated (qualifies)
+        [`https://${dbsHost}/agents.xml`]:
+          `<urlset>` +
+          `<url><loc>https://${dbsHost}/agents/jane-doe/</loc><lastmod>2026-06-20</lastmod></url>` +
+          `<url><loc>https://${dbsHost}/agents/john-roe/</loc></url>` +
+          `<url><loc>https://${dbsHost}/agents/amy-poe/</loc></url></urlset>`,
+        // blog.xml: 0/3 bio -> NOT dedicated (filtered out)
+        [`https://${dbsHost}/blog.xml`]:
+          `<urlset><url><loc>https://${dbsHost}/blog/a/</loc></url>` +
+          `<url><loc>https://${dbsHost}/blog/b/</loc></url>` +
+          `<url><loc>https://${dbsHost}/news/c/</loc></url></urlset>`,
+      };
+      const dbsOut = await discoverBioSitemaps({
+        urls: [`https://${dbsHost}/sitemap_index.xml`],
+        _fetchDoc: async (u) => dbsDocs[u] || "",
+      });
+      ok("discoverBioSitemaps keeps only the bio-dedicated child sitemap",
+        dbsOut.watches.length === 1 && dbsOut.watches[0].sitemapUrl === `https://${dbsHost}/agents.xml`);
+      ok("discoverBioSitemaps reports the child's lastmod (from the parent index) + bio-ratio",
+        dbsOut.watches[0].lastmod === "2026-06-24" && dbsOut.watches[0].bioRatio === 1 &&
+        dbsOut.watches[0].bioCount === 3 && dbsOut.watches[0].parentUrl === `https://${dbsHost}/sitemap_index.xml`);
+      ok("discoverBioSitemaps pairs each bio url with its own lastmod",
+        dbsOut.watches[0].bioUrls[0].url === `https://${dbsHost}/agents/jane-doe/` &&
+        dbsOut.watches[0].bioUrls[0].lastmod === "2026-06-20" &&
+        dbsOut.watches[0].bioUrls[1].lastmod === null);
 
       // 7c) discoverBioUrlsFromCC: a domain's CC index -> keep only bio-looking captures
       const ccHost = "ccfirm.com";

@@ -66,6 +66,50 @@ function makeDb(dir) {
   const haveCols = new Set(db.prepare('PRAGMA table_info(contacts)').all().map((r) => r.name));
   for (const c of COLS) if (!haveCols.has(c)) db.exec(`ALTER TABLE contacts ADD COLUMN "${c}" TEXT`);
 
+  // --- Sitemap monitor (new-employee detection) ----------------------------------------------
+  // watched_sitemaps: the bio-DEDICATED child sitemaps we re-check on a schedule (one row each).
+  // bio_urls: the per-URL baseline we diff each pass against (present | departed).
+  // observations: the append-only change feed (new_bio | reappeared | departed).
+  db.exec(`CREATE TABLE IF NOT EXISTS watched_sitemaps (
+    sitemap_url  TEXT PRIMARY KEY,
+    parent_url   TEXT,
+    domain       TEXT,
+    bio_ratio    REAL,
+    url_count    INTEGER,
+    bio_count    INTEGER,
+    last_lastmod TEXT,
+    last_hash    TEXT,
+    last_fetched TEXT,
+    added_at     TEXT,
+    status       TEXT DEFAULT 'active'
+  );`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_watched_domain ON watched_sitemaps(domain);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_watched_parent ON watched_sitemaps(parent_url);`);
+  db.exec(`CREATE TABLE IF NOT EXISTS bio_urls (
+    url         TEXT PRIMARY KEY,
+    domain      TEXT,
+    sitemap_url TEXT,
+    lastmod     TEXT,
+    first_seen  TEXT,
+    last_seen   TEXT,
+    status      TEXT DEFAULT 'present',
+    extracted   INTEGER DEFAULT 0
+  );`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_bio_urls_sitemap ON bio_urls(sitemap_url);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_bio_urls_domain ON bio_urls(domain);`);
+  db.exec(`CREATE TABLE IF NOT EXISTS observations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          TEXT,
+    domain      TEXT,
+    url         TEXT,
+    event       TEXT,
+    sitemap_url TEXT,
+    details     TEXT
+  );`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_obs_ts ON observations(ts);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_obs_event ON observations(event);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_obs_domain ON observations(domain);`);
+
   const insertCols = ['email', ...COLS, 'domain', 'search', 'score', 'updated_at'];
   const placeholders = insertCols.map(() => '?').join(', ');
   const updates = [...COLS, 'domain', 'search', 'score', 'updated_at']
@@ -432,13 +476,151 @@ function makeDb(dir) {
     return affected;
   }
 
+  // --- Sitemap monitor methods ---------------------------------------------------------------
+  const nowIso = () => new Date().toISOString();
+
+  // Add/refresh a watched child sitemap. Preserves change-detection state (last_lastmod/last_hash/
+  // last_fetched), status and added_at across re-discovery; only the descriptive meta is refreshed.
+  const watchUpsertStmt = db.prepare(`
+    INSERT INTO watched_sitemaps (sitemap_url, parent_url, domain, bio_ratio, url_count, bio_count, added_at, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
+    ON CONFLICT(sitemap_url) DO UPDATE SET
+      parent_url = excluded.parent_url, domain = excluded.domain,
+      bio_ratio = excluded.bio_ratio, url_count = excluded.url_count, bio_count = excluded.bio_count`);
+  function upsertWatch(w) {
+    if (!w || !w.sitemapUrl) return false;
+    watchUpsertStmt.run(w.sitemapUrl, w.parentUrl || null, w.domain || rootDomain(w.sitemapUrl),
+      w.bioRatio == null ? null : Number(w.bioRatio), w.urlCount == null ? null : (w.urlCount | 0),
+      w.bioCount == null ? null : (w.bioCount | 0), nowIso());
+    return true;
+  }
+
+  // All watches, each annotated with its current present/departed bio-URL counts (for the UI).
+  function listWatches(opts = {}) {
+    const where = []; const params = [];
+    if (opts.status) { where.push('w.status = ?'); params.push(opts.status); }
+    if (opts.domain) { where.push('w.domain = ?'); params.push(String(opts.domain).toLowerCase()); }
+    const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    return db.prepare(`
+      SELECT w.*,
+        (SELECT COUNT(*) FROM bio_urls b WHERE b.sitemap_url = w.sitemap_url AND b.status = 'present')  AS present_count,
+        (SELECT COUNT(*) FROM bio_urls b WHERE b.sitemap_url = w.sitemap_url AND b.status = 'departed') AS departed_count
+      FROM watched_sitemaps w ${w} ORDER BY w.domain, w.sitemap_url`).all(...params);
+  }
+  function activeWatches() { return db.prepare(`SELECT * FROM watched_sitemaps WHERE status = 'active'`).all(); }
+
+  const setWatchStateStmt = db.prepare(`UPDATE watched_sitemaps
+    SET last_lastmod = ?, last_hash = ?, last_fetched = ? WHERE sitemap_url = ?`);
+  function setWatchState(sitemapUrl, { lastLastmod = null, lastHash = null, lastFetched = nowIso() } = {}) {
+    setWatchStateStmt.run(lastLastmod, lastHash, lastFetched, sitemapUrl);
+  }
+  function setWatchStatus(sitemapUrl, status) {
+    if (status !== 'active' && status !== 'paused') return false;
+    return db.prepare(`UPDATE watched_sitemaps SET status = ? WHERE sitemap_url = ?`).run(status, sitemapUrl).changes > 0;
+  }
+  function removeWatch(sitemapUrl) {
+    db.exec('BEGIN');
+    try {
+      db.prepare('DELETE FROM bio_urls WHERE sitemap_url = ?').run(sitemapUrl);
+      const r = db.prepare('DELETE FROM watched_sitemaps WHERE sitemap_url = ?').run(sitemapUrl);
+      db.exec('COMMIT');
+      return r.changes > 0;
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+  }
+
+  // THE DIFF. Given the current bio URLs of a sitemap ([{url,lastmod}]), reconcile against the stored
+  // baseline in one transaction: brand-new URLs are inserted (event new_bio), URLs that had departed
+  // and came back flip to present (event reappeared), and present URLs no longer listed flip to
+  // departed (event departed). opts.seed=true records the baseline WITHOUT emitting observations (the
+  // initial population is not "new hires"). Returns { newUrls, reappearedUrls, departedUrls, present }.
+  const obsInsertStmt = db.prepare(`INSERT INTO observations (ts, domain, url, event, sitemap_url, details) VALUES (?, ?, ?, ?, ?, ?)`);
+  const bioInsertStmt = db.prepare(`INSERT INTO bio_urls (url, domain, sitemap_url, lastmod, first_seen, last_seen, status, extracted)
+    VALUES (?, ?, ?, ?, ?, ?, 'present', 0)`);
+  const bioSeenStmt = db.prepare(`UPDATE bio_urls SET last_seen = ?, lastmod = ? WHERE url = ?`);
+  const bioReappearStmt = db.prepare(`UPDATE bio_urls SET last_seen = ?, lastmod = ?, status = 'present' WHERE url = ?`);
+  const bioDepartStmt = db.prepare(`UPDATE bio_urls SET status = 'departed' WHERE url = ?`);
+  function syncSitemapUrls(sitemapUrl, domain, currentEntries, opts = {}) {
+    const seed = !!opts.seed;
+    const now = nowIso();
+    const dom = String(domain || rootDomain(sitemapUrl) || '').toLowerCase();
+    const existing = new Map();
+    for (const r of db.prepare('SELECT url, status FROM bio_urls WHERE sitemap_url = ?').all(sitemapUrl)) existing.set(r.url, r);
+    const seenNow = new Set();
+    const newUrls = [], reappearedUrls = [], departedUrls = [];
+    db.exec('BEGIN');
+    try {
+      for (const e of (currentEntries || [])) {
+        const url = String(e && e.url || '').trim();
+        if (!url || seenNow.has(url)) continue;
+        seenNow.add(url);
+        const lastmod = e.lastmod || null;
+        const prev = existing.get(url);
+        if (!prev) {
+          bioInsertStmt.run(url, rootDomain(url) || dom, sitemapUrl, lastmod, now, now);
+          newUrls.push(url);
+          if (!seed) obsInsertStmt.run(now, rootDomain(url) || dom, url, 'new_bio', sitemapUrl, null);
+        } else if (prev.status === 'departed') {
+          bioReappearStmt.run(now, lastmod, url);
+          reappearedUrls.push(url);
+          if (!seed) obsInsertStmt.run(now, rootDomain(url) || dom, url, 'reappeared', sitemapUrl, null);
+        } else {
+          bioSeenStmt.run(now, lastmod, url);
+        }
+      }
+      for (const [url, prev] of existing) {
+        if (prev.status === 'present' && !seenNow.has(url)) {
+          bioDepartStmt.run(url);
+          departedUrls.push(url);
+          if (!seed) obsInsertStmt.run(now, rootDomain(url) || dom, url, 'departed', sitemapUrl, null);
+        }
+      }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    return { newUrls, reappearedUrls, departedUrls, present: seenNow.size };
+  }
+
+  // Mark bio URLs as extracted (the monitor calls this after enqueuing the delta for extraction).
+  function markExtracted(urls) {
+    const upd = db.prepare(`UPDATE bio_urls SET extracted = 1 WHERE url = ?`);
+    let n = 0;
+    db.exec('BEGIN');
+    try { for (const u of (urls || [])) if (u) n += upd.run(u).changes; db.exec('COMMIT'); }
+    catch (e) { db.exec('ROLLBACK'); throw e; }
+    return n;
+  }
+
+  // The change feed: most-recent observations first, optionally filtered.
+  function recentObservations(opts = {}) {
+    const limit = Math.min(2000, Math.max(1, Number(opts.limit) || 200));
+    const where = []; const params = [];
+    if (opts.event) { where.push('event = ?'); params.push(String(opts.event)); }
+    if (opts.domain) { where.push('domain = ?'); params.push(String(opts.domain).toLowerCase()); }
+    if (opts.sinceTs) { where.push('ts >= ?'); params.push(String(opts.sinceTs)); }
+    const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    return db.prepare(`SELECT * FROM observations ${w} ORDER BY ts DESC, id DESC LIMIT ?`).all(...params, limit);
+  }
+
+  // Headline counts for the Monitor tab.
+  function monitorStats() {
+    const watches = db.prepare(`SELECT COUNT(*) c FROM watched_sitemaps`).get().c;
+    const activeW = db.prepare(`SELECT COUNT(*) c FROM watched_sitemaps WHERE status = 'active'`).get().c;
+    const present = db.prepare(`SELECT COUNT(*) c FROM bio_urls WHERE status = 'present'`).get().c;
+    const departed = db.prepare(`SELECT COUNT(*) c FROM bio_urls WHERE status = 'departed'`).get().c;
+    const lastPass = db.prepare(`SELECT MAX(last_fetched) m FROM watched_sitemaps`).get().m || null;
+    const byEvent = {};
+    for (const r of db.prepare(`SELECT event, COUNT(*) c FROM observations GROUP BY event`).all()) byEvent[r.event] = r.c;
+    return { watches, activeWatches: activeW, present, departed, lastPass, observations: byEvent };
+  }
+
   importLegacyJson();
   const cleanedEmails = cleanStoredEmails();
   if (cleanedEmails) console.log(`Central DB: removed encoded spaces from ${cleanedEmails} email(s).`);
   const typedRows = backfillTypes();
   if (typedRows) console.log(`Central DB: set Type (from domain TLD) on ${typedRows} record(s).`);
   console.log(`Central DB (SQLite): ${count().toLocaleString()} contact(s) at ${file}`);
-  return { upsertMany, query, each, stats, count, facets, getByEmail, updateRecord, deleteByEmail, deleteByDomain, domainStats, existingUrls, fixRemaxLocations, backfillLocations, updatePositionByPrefix, bulkSetPosition, fixAngola };
+  return { upsertMany, query, each, stats, count, facets, getByEmail, updateRecord, deleteByEmail, deleteByDomain, domainStats, existingUrls, fixRemaxLocations, backfillLocations, updatePositionByPrefix, bulkSetPosition, fixAngola,
+    // sitemap monitor
+    upsertWatch, listWatches, activeWatches, setWatchState, setWatchStatus, removeWatch, syncSitemapUrls, markExtracted, recentObservations, monitorStats };
 }
 
 module.exports = { makeDb };
