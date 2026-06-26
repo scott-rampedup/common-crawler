@@ -20,6 +20,7 @@
  */
 const https = require("https");
 const fs = require("fs");
+const readline = require("readline");
 const { DEFAULT_BIO } = require("./cc-domain-miner.js");
 
 const REGION = process.env.AWS_REGION || "us-east-1";
@@ -152,6 +153,19 @@ async function s3Text(A, s3url) {
   const chunks = []; for await (const c of obj.Body) chunks.push(c); return Buffer.concat(chunks).toString("utf8");
 }
 
+// Parse ONE CSV line into fields (reuses the tested parseCsv; our rows never contain raw newlines).
+function parseCsvLine(line) { let row = null; parseCsv(line + "\n", (r) => { if (!row) row = r; }); return row || []; }
+
+// STREAM an S3 result object row-by-row (the full columnar harvest result is ~1GB — too big to buffer
+// into one Node string, which caps at ~512MB). readline over the S3 Body, parse each CSV line, await
+// onRow (so the caller can apply write backpressure).
+async function s3StreamRows(A, s3url, onRow) {
+  const m = s3url.match(/^s3:\/\/([^/]+)\/(.+)$/); if (!m) throw new Error("bad s3 url: " + s3url);
+  const obj = await A.s3.send(new A.GetObjectCommand({ Bucket: m[1], Key: m[2] }));
+  const rl = readline.createInterface({ input: obj.Body, crlfDelay: Infinity });
+  for await (const line of rl) { if (line.length) await onRow(parseCsvLine(line)); }
+}
+
 const CREATE_TABLE = `
 CREATE EXTERNAL TABLE IF NOT EXISTS ${DB}.ccindex (
   url_surtkey STRING, url STRING, url_host_name STRING, url_host_tld STRING,
@@ -198,22 +212,23 @@ async function main() {
 
   console.error(`\nDiscovering pointers -> ${warcOut} (per-domain<=${perDomain || "∞"}${limit ? `, limit ${limit}` : ""}) ...`);
   const { id } = await runAthena(A, buildDiscoverySql({ crawl, tlds, perDomain, limit }), output, "discover");
-  const csv = await s3Text(A, (await A.athena.send(new A.GetQueryExecutionCommand({ QueryExecutionId: id }))).QueryExecution.ResultConfiguration.OutputLocation);
+  const loc = (await A.athena.send(new A.GetQueryExecutionCommand({ QueryExecutionId: id }))).QueryExecution.ResultConfiguration.OutputLocation;
   const ws = fs.createWriteStream(warcOut);
-  let n = 0;
-  parseCsv(csv, (r) => {
-    if (n === 0 && r[0] === "url") { n++; return; }       // header
+  let seen = 0, written = 0;
+  await s3StreamRows(A, loc, async (r) => {
+    if (seen++ === 0 && r[0] === "url") return;           // header
     const [url, filename, offset, length, timestamp] = r;
     if (!url || !filename) return;
-    ws.write(JSON.stringify({ url, filename, offset, length, timestamp }) + "\n");
-    n++;
+    written++;
+    if (!ws.write(JSON.stringify({ url, filename, offset, length, timestamp }) + "\n"))
+      await new Promise((res) => ws.once("drain", res));  // backpressure: don't outrun the disk
   });
   await new Promise((res) => ws.end(res));
-  console.error(`Wrote ${(n - 1).toLocaleString()} WARC pointers -> ${warcOut}`);
-  console.error(`Next: node load-bio-urls.js --server <url> --warc-file ${warcOut} --token <LOADER_TOKEN> --chunk 2000`);
+  console.error(`Wrote ${written.toLocaleString()} WARC pointers -> ${warcOut}`);
+  console.error(`Next: DATABASE_URL=… node load-queue.js ${warcOut}`);
 }
 
-module.exports = { buildDiscoverySql, buildCountSql, bioRegexSql, excludeRegexSql, parseCsv, DEFAULT_TLDS };
+module.exports = { buildDiscoverySql, buildCountSql, bioRegexSql, excludeRegexSql, parseCsv, parseCsvLine, DEFAULT_TLDS };
 
 // ---- offline self-test: node cc-athena-miner.js --selftest ----
 if (require.main === module && process.argv.includes("--selftest")) {
@@ -230,6 +245,8 @@ if (require.main === module && process.argv.includes("--selftest")) {
   const rows = []; parseCsv(`"url","filename"\n"https://x.com/a,b","f.warc.gz"\n"he said ""hi""","g"\n`, (r) => rows.push(r));
   ok("csv parses quoted comma field", rows[1][0] === "https://x.com/a,b" && rows[1][1] === "f.warc.gz");
   ok("csv unescapes doubled quotes", rows[2][0] === 'he said "hi"');
+  const pl = parseCsvLine('"https://x.com/a,b","f.warc.gz","10","20","20260601000000"');
+  ok("parseCsvLine streams one row, quoted comma intact", pl[0] === "https://x.com/a,b" && pl[1] === "f.warc.gz" && pl[4] === "20260601000000");
   ok("count sql has no row_number/cap", !/row_number/.test(buildCountSql({ crawl: "X", tlds: ["com"] })));
   console.log(`\ncc-athena-miner self-test: ${p} passed, ${f} failed`);
   process.exit(f ? 1 : 0);
