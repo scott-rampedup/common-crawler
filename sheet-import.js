@@ -164,7 +164,7 @@ async function importSheet(db, sheetRefOrUrl, { genderMap = {} } = {}){
   if(!ref.spreadsheetId) throw new Error("could not parse a spreadsheet id from: " + sheetRefOrUrl);
   const { records, stats } = await buildRecords(ref, { genderMap });
   const withEmail = records.filter((r) => r["Email Address"]).length;
-  const merged = db.upsertMany(records);                       // DB is email-keyed; email-less rows are skipped
+  const merged = await db.upsertMany(records);                 // DB is email-keyed; email-less rows are skipped
   return {
     ...stats, withEmail, withoutEmail: records.length - withEmail,
     imported: merged.processed, added: merged.added, dbTotal: merged.total,

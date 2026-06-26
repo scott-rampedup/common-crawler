@@ -94,9 +94,17 @@ try { fs.mkdirSync(JOBS_DIR, { recursive: true }); } catch (e) { /* ignore */ }
 // data volume (records live in the central DB). Safe at startup: no job is running yet.
 try { let n = 0; for (const f of fs.readdirSync(JOBS_DIR)) if (f.endsWith('.engine.csv')) { try { fs.unlinkSync(path.join(JOBS_DIR, f)); n++; } catch (e) {} } if (n) console.log(`Swept ${n} leftover engine.csv file(s).`); } catch (e) {}
 
-// central, de-duplicated contacts database (every finished job merges into it)
+// central, de-duplicated contacts database (every finished job merges into it).
+// Two backends, same method names: SQLite (db.js, synchronous) or Postgres (db-pg.js, async — the
+// shared store the worker fleet writes to). CONTACTS_PG=1 selects Postgres; every db call is awaited
+// so either backend works (await on a sync return is a no-op). The SQLite instance is ALWAYS created
+// because the sitemap monitor's tables live in it (monitorDb); only the CONTACTS store is swapped.
 const { makeDb } = require('./db');
-const db = makeDb(DATA_DIR);
+const { makeDb: makeContactsPg } = require('./db-pg');
+const CONTACTS_PG = /^(1|true|yes|on)$/i.test(process.env.CONTACTS_PG || '');
+const sqliteDb = makeDb(DATA_DIR);
+let db = sqliteDb;                 // contacts backend — reassigned to Postgres in startup() if flagged
+const monitorDb = sqliteDb;        // sitemap-monitor tables always live in SQLite
 const aiEnrich = require('./ai-enrich');
 
 // ---- Sitemap monitor (new-employee detection via bio-dedicated child sitemaps) ----
@@ -107,7 +115,7 @@ const { makeMonitor } = require('./sitemap-monitor');
 const MONITOR_ENABLED = /^(1|true|yes|on)$/i.test(process.env.MONITOR_ENABLED || '');
 const MONITOR_INTERVAL_HOURS = Math.max(1, Number(process.env.MONITOR_INTERVAL_HOURS) || 24);
 const monitor = makeMonitor({
-  db,
+  db: monitorDb,                   // monitor tables are in SQLite; its deltas extract into `db` (contacts) via startJob
   engine: ccEngine,
   fetchDoc: ccEngine.fetchDoc,
   genderMap: GENDER_MAP,
@@ -209,8 +217,8 @@ async function runSiteSearch(input) {
       //    Master DB, modelling an email for the email-less ones from the company's known pattern.
       const today = new Date().toISOString().slice(0, 10);
       const serperRecords = bioRowsToRecords(bio, GENDER_MAP, today);
-      const modelled = modelMissingEmailsForRecords(serperRecords);
-      const merged = db.upsertMany(serperRecords);
+      const modelled = await modelMissingEmailsForRecords(serperRecords);
+      const merged = await db.upsertMany(serperRecords);
       siteSearchState.snippetAdded = merged.added; siteSearchState.snippetUpserted = merged.processed; siteSearchState.modelled = modelled;
       // reflect each row's final email (found-in-snippet or modelled) + name/position back to the UI rows
       const recByUrl = new Map(serperRecords.map((r) => [r['Web Source URL'], r]));
@@ -269,9 +277,9 @@ const users = makeUsers(DATA_DIR);
 // blocklist. New crawls already drop blocklisted emails at ingestion; this catches ones
 // stored before they were added to the list.
 try {
-  const before = db.count();
-  for (const e of blocklist) db.deleteByEmail(e);
-  const removed = before - db.count();
+  const before = sqliteDb.count();
+  for (const e of blocklist) sqliteDb.deleteByEmail(e);
+  const removed = before - sqliteDb.count();
   if (removed) console.log(`Email blocklist: removed ${removed} existing contact(s).`);
 } catch (e) { /* ignore */ }
 
@@ -281,7 +289,7 @@ try {
 (async () => {
   try {
     const need = [];
-    db.each({}, (rec) => {
+    sqliteDb.each({}, (rec) => {
       if (!rec['Phone Location'] || (rec['Phone 2'] && !rec['Phone 2 Location'])) need.push(rec);
     });
     if (!need.length) return;
@@ -289,7 +297,7 @@ try {
     const items = need
       .map((r) => ({ email: r['Email Address'], loc1: r['Phone Location'], loc2: r['Phone 2 Location'] }))
       .filter((x) => x.loc1 || x.loc2);
-    const filled = db.backfillLocations(items);
+    const filled = sqliteDb.backfillLocations(items);
     if (filled) console.log(`Phone geocode backfill: filled ${filled} location(s) across ${need.length} record(s).`);
   } catch (e) { console.warn('Phone geocode backfill failed:', e.message); }
 })();
@@ -427,7 +435,7 @@ function pruneOldJobs() {
 // Core: model an email for each email-less record that has a name + Gender, learning the format
 // from that company's Professional emails (the given records + the central DB). Result is
 // labelled Email Type "Modelled". Mutates records in place; returns how many were modelled.
-function modelMissingEmailsForRecords(records) {
+async function modelMissingEmailsForRecords(records) {
   const missing = records.filter((r) =>
     !cleanEmail(r['Email Address']) && r['First'] && r['Last'] && r['Gender']);
   if (!missing.length) return 0;
@@ -453,7 +461,7 @@ function modelMissingEmailsForRecords(records) {
     };
     for (const r of records) if (String(r['Domain'] || '').toLowerCase() === domain) addSample(r);
     try {
-      const res = db.query({ domain, emailType: 'Professional', pageSize: 500 });
+      const res = await db.query({ domain, emailType: 'Professional', pageSize: 500 });
       for (const r of (res.rows || [])) addSample(r);
     } catch (e) { /* central DB lookup is best-effort */ }
 
@@ -466,9 +474,9 @@ function modelMissingEmailsForRecords(records) {
   return modelled;
 }
 
-function modelMissingEmails(job) {
+async function modelMissingEmails(job) {
   if ((job.mode || 'domain') !== 'webpage') return 0;          // sitemap/webpage only
-  const n = modelMissingEmailsForRecords([...job.recordsByEmail.values()]);
+  const n = await modelMissingEmailsForRecords([...job.recordsByEmail.values()]);
   if (n) console.log(`Job ${job.id}: modelled ${n} email(s) from company pattern(s).`);
   return n;
 }
@@ -518,7 +526,7 @@ async function runJobDomains(job, domainsToRun) {
     const v = await vcard.enrichRecords([...job.recordsByEmail.values()], { genderMap: GENDER_MAP });
     if (v.fetched) console.log(`Job ${job.id}: read ${v.fetched} vCard(s), enriched ${v.applied} record(s).`);
   } catch (e) { console.error('vCard enrichment failed:', e.message); }
-  try { modelMissingEmails(job); }                                  // model emails for email-less bios (sitemap/webpage)
+  try { await modelMissingEmails(job); }                            // model emails for email-less bios (sitemap/webpage)
   catch (e) { console.error('email modelling failed:', e.message); }
   try { await geocodeRecords([...job.recordsByEmail.values()]); }   // City, Region, Country
   catch (e) { console.error('geocode failed:', e.message); }
@@ -526,7 +534,7 @@ async function runJobDomains(job, domainsToRun) {
   persistJob(job);
   // merge this job's fully-processed records into the central database
   try {
-    const merged = db.upsertMany(jobRecords(job));
+    const merged = await db.upsertMany(jobRecords(job));
     console.log(`Central DB: merged ${merged.processed} record(s), +${merged.added} new (total ${merged.total}).`);
   } catch (e) { console.error('Central DB merge failed:', e.message); }
   // the per-job engine CSV is throwaway (records are in our DB now) — delete it so it can't fill /data
@@ -807,7 +815,7 @@ function handleAdmin(req, res, p) {
   jsonErr(res, 404, 'Not found');
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   console.log(`[${new Date().toISOString()}] ${req.method} ${url.pathname}`);
 
@@ -1064,18 +1072,18 @@ const server = http.createServer((req, res) => {
   // ---- Sitemap monitor (new-employee detection) ----
   // GET /api/monitor -> status + headline stats.
   if (url.pathname === '/api/monitor' && req.method === 'GET') {
-    sendJson(res, { stats: db.monitorStats(), enabled: MONITOR_ENABLED,
+    sendJson(res, { stats: monitorDb.monitorStats(), enabled: MONITOR_ENABLED,
       intervalHours: MONITOR_INTERVAL_HOURS, running: monitorRunning });
     return;
   }
   // GET /api/monitor/watches -> every watched child sitemap (+ present/departed counts).
   if (url.pathname === '/api/monitor/watches' && req.method === 'GET') {
-    sendJson(res, { watches: db.listWatches() });
+    sendJson(res, { watches: monitorDb.listWatches() });
     return;
   }
   // GET /api/monitor/changes?event=&domain=&limit= -> the change feed.
   if (url.pathname === '/api/monitor/changes' && req.method === 'GET') {
-    sendJson(res, { changes: db.recentObservations({
+    sendJson(res, { changes: monitorDb.recentObservations({
       event: url.searchParams.get('event') || '',
       domain: url.searchParams.get('domain') || '',
       limit: Number(url.searchParams.get('limit')) || 200,
@@ -1117,7 +1125,7 @@ const server = http.createServer((req, res) => {
       const sm = payload && String(payload.sitemapUrl || '').trim();
       const status = payload && String(payload.status || '').trim();
       if (!sm || (status !== 'active' && status !== 'paused')) return jsonErr(res, 400, 'sitemapUrl + status required');
-      sendJson(res, { ok: db.setWatchStatus(sm, status) });
+      sendJson(res, { ok: monitorDb.setWatchStatus(sm, status) });
     });
     return;
   }
@@ -1127,7 +1135,7 @@ const server = http.createServer((req, res) => {
     readJsonBody(req, (payload) => {
       const sm = payload && String(payload.sitemapUrl || '').trim();
       if (!sm) return jsonErr(res, 400, 'sitemapUrl required');
-      sendJson(res, { ok: db.removeWatch(sm) });
+      sendJson(res, { ok: monitorDb.removeWatch(sm) });
     });
     return;
   }
@@ -1246,11 +1254,11 @@ const server = http.createServer((req, res) => {
   }
 
   // ---- central database (SQLite, server-side paginated) ----
-  if (url.pathname === '/api/db/stats' && req.method === 'GET') { sendJson(res, db.stats()); return; }
-  if (url.pathname === '/api/db/facets' && req.method === 'GET') { sendJson(res, db.facets()); return; }
+  if (url.pathname === '/api/db/stats' && req.method === 'GET') { sendJson(res, await db.stats()); return; }
+  if (url.pathname === '/api/db/facets' && req.method === 'GET') { sendJson(res, await db.facets()); return; }
   if (url.pathname === '/api/db/query' && req.method === 'GET') {
     const q = url.searchParams;
-    sendJson(res, db.query({
+    sendJson(res, await db.query({
       page: q.get('page'), pageSize: q.get('pageSize'),
       search: q.get('search') || '', directory: q.get('directory') || '',
       emailType: q.get('emailType') || '', phoneType: q.get('phoneType') || '',
@@ -1277,7 +1285,7 @@ const server = http.createServer((req, res) => {
     });
     res.write(COLUMNS.join(',') + '\n');
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    db.each(opts, (rec) => { res.write(COLUMNS.map((c) => esc(rec[c])).join(',') + '\n'); });
+    await db.each(opts, (rec) => { res.write(COLUMNS.map((c) => esc(rec[c])).join(',') + '\n'); });
     res.end();
     return;
   }
@@ -1287,14 +1295,14 @@ const server = http.createServer((req, res) => {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     let body = '';
     req.on('data', (c) => { body += c; });
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const payload = JSON.parse(body || '{}');
         const edits = Array.isArray(payload.edits) ? payload.edits : [];
-        const results = edits.map((e) => {
-          try { return { email: e.email, ...db.updateRecord(e.email, e.updates || {}) }; }
+        const results = await Promise.all(edits.map(async (e) => {
+          try { return { email: e.email, ...(await db.updateRecord(e.email, e.updates || {})) }; }
           catch (err) { return { email: e.email, ok: false, error: err.message || 'update failed' }; }
-        });
+        }));
         sendJson(res, { results });
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -1309,7 +1317,7 @@ const server = http.createServer((req, res) => {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     let body = '';
     req.on('data', (c) => { body += c; });
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const payload = JSON.parse(body || '{}');
         const emails = (Array.isArray(payload.emails) ? payload.emails : [])
@@ -1319,9 +1327,9 @@ const server = http.createServer((req, res) => {
           res.end(JSON.stringify({ error: 'No records selected' }));
           return;
         }
-        const before = db.count();
-        for (const e of emails) db.deleteByEmail(e);
-        sendJson(res, { deleted: before - db.count() });
+        const before = await db.count();
+        for (const e of emails) await db.deleteByEmail(e);
+        sendJson(res, { deleted: before - await db.count() });
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ error: e.message || 'Bad request' }));
@@ -1351,7 +1359,7 @@ const server = http.createServer((req, res) => {
           return;
         }
         // Load fresh records from the DB (don't trust client-sent field values).
-        const records = emails.map((e) => db.getByEmail(e)).filter(Boolean);
+        const records = (await Promise.all(emails.map((e) => db.getByEmail(e)))).filter(Boolean);
         const enriched = await aiEnrich.enrichMany(records, { concurrency: 4 });
         const results = [];
         for (let k = 0; k < records.length; k++) {
@@ -1362,7 +1370,7 @@ const server = http.createServer((req, res) => {
           const fields = Object.keys(en.updates || {});
           if (!fields.length) { results.push({ email, ok: true, changed: 0, changes: {} }); continue; }
           try {
-            const upd = db.updateRecord(email, en.updates);   // auto-apply
+            const upd = await db.updateRecord(email, en.updates);   // auto-apply
             results.push({
               email, ok: upd.ok, changed: fields.length, changes: en.changes,
               newEmail: en.updates['Email Address'] || undefined,
@@ -1441,6 +1449,20 @@ const server = http.createServer((req, res) => {
 
 loadJobs();
 pruneOldJobs();
+// Bring up the contacts backend (Postgres if CONTACTS_PG) BEFORE accepting traffic, so the first
+// request reads the right store. Falls back to SQLite if the PG connection fails (never hard-down).
+(async () => {
+  if (CONTACTS_PG) {
+    try {
+      db = await makeContactsPg({ connectionString: process.env.DATABASE_URL, ssl: !!process.env.PGSSL });
+      console.log('Contacts store: Postgres (CONTACTS_PG=1).');
+    } catch (e) {
+      console.error('Postgres contacts init FAILED — falling back to SQLite:', e.message);
+      db = sqliteDb;
+    }
+  } else {
+    console.log('Contacts store: SQLite.');
+  }
 server.listen(PORT, async () => {
   console.log(`UI server running at http://localhost:${PORT}`);
   if(!DEMO_MODE) { try { await resolveLatestCrawl(); } catch (e) { console.error('Latest-crawl resolve failed:', e.message); } }  // always read the freshest CC corpus
@@ -1474,7 +1496,7 @@ server.listen(PORT, async () => {
   if (process.env.POSITION_FIX_VALUE && (process.env.POSITION_FIX_DOMAIN || process.env.POSITION_FIX_EMAIL_DOMAIN || process.env.POSITION_FIX_PREFIX)) {
     try {
       const match = { domain: process.env.POSITION_FIX_DOMAIN || '', emailDomain: process.env.POSITION_FIX_EMAIL_DOMAIN || '', prefix: process.env.POSITION_FIX_PREFIX || '' };
-      const r = db.bulkSetPosition(match, process.env.POSITION_FIX_VALUE);
+      const r = sqliteDb.bulkSetPosition(match, process.env.POSITION_FIX_VALUE);
       console.log(`Position/Title fix: ${r.matched} record(s) matching ${JSON.stringify(match)} -> Position+Title "${process.env.POSITION_FIX_VALUE}".`);
       console.log(`  source domains: ${JSON.stringify(r.domains)}`);
       console.log(`  was: ${JSON.stringify(r.samples)}`);
@@ -1486,7 +1508,7 @@ server.listen(PORT, async () => {
   (async () => {
     if (process.env.ANGOLA_MAINT === '1') {
       try {
-        const affected = db.fixAngola();
+        const affected = sqliteDb.fixAngola();
         console.log(`Angola fix: ${affected.length} record(s) -> +44 / United Kingdom.`);
         const keep = (l) => (l && !/angola/i.test(l)) ? l : '';        // never re-write an Angola value
         const items = [];
@@ -1495,7 +1517,7 @@ server.listen(PORT, async () => {
           const loc2 = keep(a.phone_2 ? await geocodePhone(a.phone_2) : '');
           if (loc1 || loc2) items.push({ email: a.email, loc1, loc2 });
         }
-        const wrote = db.backfillLocations(items);
+        const wrote = sqliteDb.backfillLocations(items);
         console.log(`Angola fix: re-geocoded ${affected.length} corrected number set(s); refined ${wrote} location field(s).`);
       } catch (e) { console.error('Angola maint failed:', e.message); }
     }
@@ -1512,7 +1534,7 @@ server.listen(PORT, async () => {
         if (applied === c21Token) {
           console.log(`Century21 deletion: token "${c21Token}" already applied — skipping.`);
         } else {
-          const out = db.deleteByDomain('century21.com');
+          const out = sqliteDb.deleteByDomain('century21.com');
           const withEmail = out.rows.filter((r) => String(r['Email Address'] || '').trim()).length;
           const withPhone = out.rows.filter((r) => String(r['Phone'] || '').trim()).length;
           if (out.rows.length) {
@@ -1521,7 +1543,7 @@ server.listen(PORT, async () => {
             console.log(`Century21 deletion: backed up ${out.rows.length} row(s) -> ${bak}`);
           }
           fs.writeFileSync(marker, c21Token);
-          console.log(`Century21 deletion (token "${c21Token}"): removed ${out.deleted}; deleted set had email=${withEmail}, phone=${withPhone}; central DB total now ${db.count()}.`);
+          console.log(`Century21 deletion (token "${c21Token}"): removed ${out.deleted}; deleted set had email=${withEmail}, phone=${withPhone}; central DB total now ${sqliteDb.count()}.`);
         }
       } catch (e) { console.error('Century21 deletion failed:', e.message); }
     }
@@ -1536,11 +1558,11 @@ server.listen(PORT, async () => {
         if (applied === c21JunkToken) {
           console.log(`Century21 junk-clean: token "${c21JunkToken}" already applied — skipping.`);
         } else {
-          const out = db.deleteByDomain('century21.com', { exceptSource: 'Site API' });
+          const out = sqliteDb.deleteByDomain('century21.com', { exceptSource: 'Site API' });
           fs.writeFileSync(marker, c21JunkToken);
-          console.log(`Century21 junk-clean (token "${c21JunkToken}"): removed ${out.deleted} non-Site-API record(s); central DB total now ${db.count()}.`);
-          const cs = db.domainStats('century21.com');
-          const rs = db.domainStats('remax.com');
+          console.log(`Century21 junk-clean (token "${c21JunkToken}"): removed ${out.deleted} non-Site-API record(s); central DB total now ${sqliteDb.count()}.`);
+          const cs = sqliteDb.domainStats('century21.com');
+          const rs = sqliteDb.domainStats('remax.com');
           console.log(`Coverage — century21: ${cs.total} records (${cs.withEmail} email, ${cs.withPhone} phone); remax: ${rs.total} records (${rs.withEmail} email, ${rs.withPhone} phone).`);
         }
       } catch (e) { console.error('Century21 junk-clean failed:', e.message); }
@@ -1584,7 +1606,7 @@ server.listen(PORT, async () => {
             { name: 'century21-full', sitemap: 'https://www.century21.com/xml-sitemaps/sitemapindex-agents-detail.xml', domain: 'century21.com', skipExisting: false, cap: 300000, max: 600000 },
           ];
           for (const t of targets) {
-            const existing = t.skipExisting ? db.existingUrls(t.domain) : null;
+            const existing = t.skipExisting ? sqliteDb.existingUrls(t.domain) : null;
             let started = 0, kept = 0, skipped = 0;
             const out = await extractBioUrlGroups({
               urls: [t.sitemap], genderMap: GENDER_MAP, candidateCap: t.cap, maxUrls: t.max,
@@ -1612,7 +1634,7 @@ server.listen(PORT, async () => {
           console.log(`Remax loc-fix: token "${remaxLocToken}" already applied — skipping.`);
         } else {
           const { remaxLocationFromUrl } = require('./site-apis');
-          const r = db.fixRemaxLocations(remaxLocationFromUrl);
+          const r = sqliteDb.fixRemaxLocations(remaxLocationFromUrl);
           fs.writeFileSync(marker, remaxLocToken);
           console.log(`Remax loc-fix (token "${remaxLocToken}"): scanned ${r.scanned} 'Denver, CO' record(s), corrected ${r.fixed}, unparsed ${r.unparsed}.`);
           if (r.samples && r.samples.length) for (const s of r.samples) console.log(`  loc-fix unparsed: ${s}`);
@@ -1637,4 +1659,5 @@ server.listen(PORT, async () => {
     } catch (e) { console.error('Resume interrupted jobs failed:', e.message); }
   })();
 });
+})();   // end contacts-backend bootstrap
 
