@@ -1,0 +1,149 @@
+/**
+ * crawl-queue.js — Postgres work queue for the extraction worker fleet.
+ * ---------------------------------------------------------------------
+ * One row per bio URL to extract, carrying its Common Crawl WARC pointer so a worker can fetch the
+ * archived page directly (the free WARC fast path — no per-URL index lookup, no proxy). Many worker
+ * machines pull concurrently via `FOR UPDATE SKIP LOCKED`, so no two workers ever grab the same URL.
+ *
+ * This is the Phase-2 keystone of SCALING-ROADMAP: the unit of work is ONE URL. Built to ingest the
+ * full columnar harvest (3.73M bio URLs) by scaling worker machines horizontally.
+ *
+ *   const q = await makeQueue(pool);            // share db-pg's pool
+ *   await q.enqueueMany(pointers);              // {url,filename,offset,length,timestamp}[]
+ *   const batch = await q.claimBatch(200, id);  // atomic, skip-locked
+ *   await q.markDoneMany([{url, records}]);     // or q.markError(url, msg)
+ */
+
+const STATUSES = ['pending', 'claimed', 'done', 'error'];
+
+async function makeQueue(pool, opts = {}) {
+  if (!pool) throw new Error('makeQueue: a pg Pool is required');
+  const maxAttempts = Number(opts.maxAttempts) || 3;
+  const q = (text, params) => pool.query(text, params);
+
+  // --- schema (idempotent) ---
+  await q(`CREATE TABLE IF NOT EXISTS crawl_queue (
+    url            TEXT PRIMARY KEY,
+    warc_filename  TEXT,
+    warc_offset    TEXT,
+    warc_length    TEXT,
+    warc_timestamp TEXT,
+    status         TEXT NOT NULL DEFAULT 'pending',
+    attempts       INT  NOT NULL DEFAULT 0,
+    worker_id      TEXT,
+    claimed_at     TIMESTAMPTZ,
+    done_at        TIMESTAMPTZ,
+    records        INT  DEFAULT 0,
+    error          TEXT,
+    created_at     TIMESTAMPTZ DEFAULT now()
+  )`);
+  // Partial index keeps claim() fast: it only ever scans pending rows.
+  await q(`CREATE INDEX IF NOT EXISTS idx_queue_pending ON crawl_queue (created_at) WHERE status = 'pending'`);
+  await q(`CREATE INDEX IF NOT EXISTS idx_queue_status  ON crawl_queue (status)`);
+
+  // Insert pointers, skipping URLs already queued (idempotent re-loads). Chunked to stay under the
+  // 65535-param cap. pointers: [{url, filename, offset, length, timestamp}]. Returns { inserted }.
+  async function enqueueMany(pointers) {
+    const rows = [];
+    const seen = new Set();
+    for (const p of (pointers || [])) {
+      const url = String(p && p.url || '').trim();
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      rows.push([url, p.filename || null,
+        p.offset == null ? null : String(p.offset),
+        p.length == null ? null : String(p.length),
+        p.timestamp || null]);
+    }
+    if (!rows.length) return { inserted: 0 };
+    const perRow = 5;
+    const maxRows = Math.floor(60000 / perRow);
+    let inserted = 0;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (let i = 0; i < rows.length; i += maxRows) {
+        const chunk = rows.slice(i, i + maxRows);
+        const vals = [];
+        const tuples = chunk.map((r) => '(' + r.map((v) => { vals.push(v); return '$' + vals.length; }).join(',') + ')');
+        const res = await client.query(
+          `INSERT INTO crawl_queue (url, warc_filename, warc_offset, warc_length, warc_timestamp)
+           VALUES ${tuples.join(',')} ON CONFLICT (url) DO NOTHING`, vals);
+        inserted += res.rowCount;
+      }
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK'); throw e; }
+    finally { client.release(); }
+    return { inserted };
+  }
+
+  // Atomically claim up to `n` pending URLs for this worker. FOR UPDATE SKIP LOCKED lets many workers
+  // claim disjoint batches with zero coordination. Returns [{url, filename, offset, length, timestamp}].
+  async function claimBatch(n, workerId) {
+    const lim = Math.max(1, Math.min(1000, Number(n) || 100));
+    const res = await q(
+      `UPDATE crawl_queue SET status='claimed', worker_id=$1, claimed_at=now(), attempts=attempts+1
+       WHERE url IN (
+         SELECT url FROM crawl_queue WHERE status='pending'
+         ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT ${lim}
+       )
+       RETURNING url, warc_filename, warc_offset, warc_length, warc_timestamp`,
+      [String(workerId || 'worker')]);
+    return res.rows.map((r) => ({
+      url: r.url, filename: r.warc_filename, offset: r.warc_offset,
+      length: r.warc_length, timestamp: r.warc_timestamp,
+    }));
+  }
+
+  // Mark a batch done (status='done'), recording how many records each URL yielded.
+  async function markDoneMany(items) {
+    const list = (items || []).filter((it) => it && it.url);
+    if (!list.length) return 0;
+    const client = await pool.connect();
+    let n = 0;
+    try {
+      await client.query('BEGIN');
+      for (const it of list) {
+        n += (await client.query(
+          `UPDATE crawl_queue SET status='done', done_at=now(), records=$2, error=NULL WHERE url=$1`,
+          [it.url, it.records | 0])).rowCount;
+      }
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK'); throw e; }
+    finally { client.release(); }
+    return n;
+  }
+
+  // A URL failed. Retry (back to 'pending') until maxAttempts, then park it as 'error'.
+  async function markError(url, message) {
+    if (!url) return;
+    await q(
+      `UPDATE crawl_queue
+       SET status = CASE WHEN attempts >= $2 THEN 'error' ELSE 'pending' END,
+           error = $3, worker_id = NULL, claimed_at = NULL
+       WHERE url = $1`,
+      [url, maxAttempts, String(message || '').slice(0, 500)]);
+  }
+
+  // Reclaim rows stuck in 'claimed' (a worker died mid-batch) older than `minutes` -> back to pending.
+  async function requeueStale(minutes = 30) {
+    const res = await q(
+      `UPDATE crawl_queue SET status='pending', worker_id=NULL, claimed_at=NULL
+       WHERE status='claimed' AND claimed_at < now() - ($1 || ' minutes')::interval`,
+      [String(Math.max(1, minutes | 0))]);
+    return res.rowCount;
+  }
+
+  // Counts by status + total records extracted (for progress/throughput reporting).
+  async function stats() {
+    const rows = (await q(`SELECT status, COUNT(*) c FROM crawl_queue GROUP BY status`)).rows;
+    const out = { pending: 0, claimed: 0, done: 0, error: 0, total: 0 };
+    for (const r of rows) { out[r.status] = Number(r.c); out.total += Number(r.c); }
+    out.records = Number((await q(`SELECT COALESCE(SUM(records),0) s FROM crawl_queue WHERE status='done'`)).rows[0].s);
+    return out;
+  }
+
+  return { enqueueMany, claimBatch, markDoneMany, markError, requeueStale, stats, _pool: pool, STATUSES };
+}
+
+module.exports = { makeQueue, STATUSES };
