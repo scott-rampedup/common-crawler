@@ -56,7 +56,7 @@ function makeDb(dir) {
     score INTEGER,
     updated_at TEXT
   );`);
-  for (const c of ['directory', 'domain', 'gender', 'phone_type', 'email_type', 'last', 'first']) {
+  for (const c of ['directory', 'domain', 'gender', 'phone_type', 'email_type', 'last', 'first', 'updated_at']) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_contacts_${c} ON contacts("${c}");`);
   }
 
@@ -213,12 +213,17 @@ function makeDb(dir) {
 
     let sortCol = colName(opts.sort || '');
     if (opts.sort === 'Domain') sortCol = 'domain';
-    if (!SORT_COLS.has(sortCol)) sortCol = 'last';
-    const dir = Number(opts.dir) === -1 ? 'DESC' : 'ASC';
     const offset = (page - 1) * pageSize;
+    // Default (no explicit column): newest-scanned first — order by last-updated timestamp, descending.
+    let orderBy;
+    if (!SORT_COLS.has(sortCol)) {
+      orderBy = `updated_at ${Number(opts.dir) === -1 ? 'ASC' : 'DESC'}`;
+    } else {
+      orderBy = `"${sortCol}"='' , "${sortCol}" COLLATE NOCASE ${Number(opts.dir) === -1 ? 'DESC' : 'ASC'}`;
+    }
 
     const rows = db.prepare(
-      `SELECT * FROM contacts ${whereSql} ORDER BY "${sortCol}"='' , "${sortCol}" COLLATE NOCASE ${dir} LIMIT ? OFFSET ?`
+      `SELECT * FROM contacts ${whereSql} ORDER BY ${orderBy} LIMIT ? OFFSET ?`
     ).all(...params, pageSize, offset);
 
     return { rows: rows.map(rowToRecord), total, page, pageSize };

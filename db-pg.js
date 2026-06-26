@@ -81,6 +81,7 @@ async function makeDb(opts = {}) {
   }
   await q(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
   await q(`CREATE INDEX IF NOT EXISTS idx_contacts_search_trgm ON contacts USING gin (search gin_trgm_ops)`);
+  await q(`CREATE INDEX IF NOT EXISTS idx_contacts_updated_at ON contacts(updated_at)`);   // default sort: newest first
 
   // --- WHERE builder (PG $N placeholders); mirrors db.js whereFor ---
   function whereFor(o = {}) {
@@ -164,11 +165,17 @@ async function makeDb(opts = {}) {
     const { sql: whereSql, params } = whereFor(o);
     const total = Number((await q(`SELECT COUNT(*) c FROM contacts ${whereSql}`, params)).rows[0].c);
     let sortCol = colName(o.sort || ''); if (o.sort === 'Domain') sortCol = 'domain';
-    if (!SORT_COLS.has(sortCol)) sortCol = 'last';
-    const dir = Number(o.dir) === -1 ? 'DESC' : 'ASC';
     const offset = (page - 1) * pageSize;
+    let orderBy;
+    if (!SORT_COLS.has(sortCol)) {
+      // Default (no explicit column): newest-scanned first. updated_at is an ISO string so it sorts
+      // lexicographically = chronologically, and is index-backed (idx_contacts_updated_at).
+      orderBy = `updated_at ${Number(o.dir) === -1 ? 'ASC' : 'DESC'}`;
+    } else {
+      orderBy = `("${sortCol}" = '') ASC, lower("${sortCol}") ${Number(o.dir) === -1 ? 'DESC' : 'ASC'}`;
+    }
     const rows = (await q(
-      `SELECT * FROM contacts ${whereSql} ORDER BY ("${sortCol}" = '') ASC, lower("${sortCol}") ${dir} LIMIT ${pageSize} OFFSET ${offset}`,
+      `SELECT * FROM contacts ${whereSql} ORDER BY ${orderBy} LIMIT ${pageSize} OFFSET ${offset}`,
       params)).rows;
     return { rows: rows.map(rowToRecord), total, page, pageSize };
   }
