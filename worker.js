@@ -12,8 +12,9 @@
  *   node worker.js --stats        # print queue stats and exit
  *   node worker.js --selftest     # offline orchestration test
  *
- * Env: DATABASE_URL, WORKER_CONCURRENCY (default 16), WORKER_BATCH (default 200),
- *      WORKER_ID (default hostname), PGSSL=1 to enable TLS.
+ * Env: DATABASE_URL, WORKER_CONCURRENCY (default 8), WORKER_BATCH (default 200),
+ *      WARC_RPS (default 10 — polite per-worker fetch rate; CC 403s a hammering IP),
+ *      WARC_RETRIES (default 4), WORKER_ID (default hostname), PGSSL=1 to enable TLS.
  */
 const path = require('path');
 
@@ -29,6 +30,43 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
+// Token-paced gate: spaces fetch STARTS to <= rps per second (across all concurrent fetches). The
+// Common Crawl WARC store 403s a single IP that hammers it, so politeness is required — concurrency
+// alone isn't enough; the request RATE is what gets throttled.
+function makeRateLimiter(rps) {
+  const interval = rps > 0 ? 1000 / rps : 0;
+  let next = 0;
+  return async function take() {
+    if (!interval) return;
+    const at = Math.max(Date.now(), next);
+    next = at + interval;
+    const wait = at - Date.now();
+    if (wait > 0) await sleep(wait);
+  };
+}
+
+// Errors worth retrying: CC throttle/availability (403/429/5xx) + transient network faults.
+const TRANSIENT = /\b(403|408|425|429|500|502|503|504)\b|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up|network|timeout/i;
+
+// Fetch one WARC record politely: pace via `rate`, and on a transient error back off (exponential +
+// jitter) and retry. A persistent failure rethrows so the URL is requeued for a calmer pass later.
+async function politeFetch(ptr, { fetchWarc, rate, retries, baseDelay }) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (rate) await rate();
+    try { return await fetchWarc({ url: ptr.url, filename: ptr.filename, offset: ptr.offset, length: ptr.length, timestamp: ptr.timestamp }); }
+    catch (e) {
+      lastErr = e;
+      if (attempt < retries && TRANSIENT.test(String(e && e.message || ''))) {
+        await sleep(baseDelay * Math.pow(2, attempt) + Math.floor(Math.random() * 250));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr;
+}
+
 // Build a worker from injected deps (so the orchestration is offline-testable):
 //   queue        - makeQueue(pool)
 //   dbpg         - makeDb(...) (uses .upsertMany)
@@ -41,16 +79,18 @@ function makeWorker(deps = {}) {
   const {
     queue, dbpg, fetchWarc, extractRecord, analyzePhones, geocodeRecords,
     wireless, genderMap = {}, log = () => {},
-    workerId = 'worker', concurrency = 16, batchSize = 200,
+    workerId = 'worker', concurrency = 8, batchSize = 200,
+    warcRps = 10, fetchRetries = 4, baseDelay = 1000,
   } = deps;
   if (!queue || !dbpg || !fetchWarc || !extractRecord) throw new Error('makeWorker: queue, dbpg, fetchWarc, extractRecord required');
+  const rate = makeRateLimiter(warcRps);
 
   // Fetch one archived page via its WARC pointer and extract a record. A thrown error (network/
-  // transient) -> {ok:false} so the queue retries; empty HTML (page gone from the archive) -> a
-  // clean {ok:true, rec:null} so it's marked done, not retried forever.
+  // transient, after retries) -> {ok:false} so the queue requeues it; empty HTML (page gone from the
+  // archive) -> a clean {ok:true, rec:null} so it's marked done, not retried forever.
   async function extractOne(ptr) {
     try {
-      const html = await fetchWarc({ url: ptr.url, filename: ptr.filename, offset: ptr.offset, length: ptr.length, timestamp: ptr.timestamp });
+      const html = await politeFetch(ptr, { fetchWarc, rate, retries: fetchRetries, baseDelay });
       if (!html) return { url: ptr.url, ok: true, rec: null };
       const ts = String(ptr.timestamp || '').slice(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3');
       const rec = extractRecord(html, ptr.url, { wireless, genderMap, directoryRules: {}, source: 'Common Crawl', timestamp: ts, allowNoEmail: true });
@@ -139,8 +179,10 @@ async function runMain() {
     fetchWarc: engine.fetchWarc, extractRecord: extractor.extractRecord,
     analyzePhones: extractor.analyzePhones, geocodeRecords: extractor.geocodeRecords,
     wireless, genderMap, workerId,
-    concurrency: Number(process.env.WORKER_CONCURRENCY) || 16,
+    concurrency: Number(process.env.WORKER_CONCURRENCY) || 8,
     batchSize: Number(process.env.WORKER_BATCH) || 200,
+    warcRps: Number(process.env.WARC_RPS) || 10,         // polite per-worker fetch rate (CC 403s a hammering IP)
+    fetchRetries: Number(process.env.WARC_RETRIES) || 4,
     log: (m) => console.log(`[${workerId}] ${m}`),
   });
 
@@ -188,7 +230,7 @@ async function runSelftest() {
   const worker = makeWorker({
     queue, dbpg, fetchWarc, extractRecord,
     analyzePhones: (recs) => recs, geocodeRecords: async (recs) => { geocoded += recs.length; },
-    concurrency: 2, batchSize: 10, log: () => {},
+    concurrency: 2, batchSize: 10, warcRps: 0, fetchRetries: 0, log: () => {},   // no pacing/retry in the test
   });
 
   const totals = await worker.runLoop({ drain: true });
