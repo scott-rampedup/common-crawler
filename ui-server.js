@@ -134,6 +134,20 @@ async function runMonitorPassGuarded(opts = {}) {
   finally { monitorRunning = false; }
 }
 
+// Filter facets are DISTINCT scans over the whole contacts table — tens of seconds on a 500k+ row
+// Postgres under fleet write-load. They change slowly, so cache them and refresh in the background;
+// /api/db/facets then always serves instantly and never blocks a /search page load.
+let facetsCache = { directory: [], emailType: [], phoneType: [], type: [] };
+let facetsAt = 0, facetsRefreshing = false;
+const FACETS_TTL_MS = 10 * 60 * 1000;
+async function refreshFacets() {
+  if (facetsRefreshing) return;
+  facetsRefreshing = true;
+  try { facetsCache = await db.facets(); facetsAt = Date.now(); }
+  catch (e) { console.error('facets refresh failed:', e.message); }
+  finally { facetsRefreshing = false; }
+}
+
 // ---- Google Sheet -> Master DB scheduled sync (one-way, import-only) ----
 // SHEET_SYNC_URL = the sheet to import; SHEET_SYNC_HOURS = interval (default 24).
 const SHEET_SYNC_URL = process.env.SHEET_SYNC_URL || '';
@@ -1226,7 +1240,11 @@ const server = http.createServer(async (req, res) => {
 
   // ---- central database (SQLite, server-side paginated) ----
   if (url.pathname === '/api/db/stats' && req.method === 'GET') { sendJson(res, await db.stats()); return; }
-  if (url.pathname === '/api/db/facets' && req.method === 'GET') { sendJson(res, await db.facets()); return; }
+  if (url.pathname === '/api/db/facets' && req.method === 'GET') {
+    if (Date.now() - facetsAt > FACETS_TTL_MS) refreshFacets();   // stale -> refresh in the background (don't block)
+    sendJson(res, facetsCache);
+    return;
+  }
   if (url.pathname === '/api/db/query' && req.method === 'GET') {
     const q = url.searchParams;
     sendJson(res, await db.query({
@@ -1434,6 +1452,8 @@ pruneOldJobs();
   } else {
     console.log('Contacts store: SQLite.');
   }
+  refreshFacets();                                      // warm the filter-facets cache in the background
+  setInterval(() => refreshFacets(), FACETS_TTL_MS);    // keep it fresh
 server.listen(PORT, async () => {
   console.log(`UI server running at http://localhost:${PORT}`);
   if(!DEMO_MODE) { try { await resolveLatestCrawl(); } catch (e) { console.error('Latest-crawl resolve failed:', e.message); } }  // always read the freshest CC corpus

@@ -840,6 +840,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   attachEvents();
   createHeader();
   updateSelectedInfo();
-  await loadFacets();
-  query();
+  query();          // load the results table immediately
+  loadFacets();     // fill the filter dropdowns in the background (don't block the table)
 });
