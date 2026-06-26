@@ -16,18 +16,37 @@ primary_region = 'ewr'   # must match the existing 'data' volume's region
   HTML_MAX_KB = '1024'          # cap HTML page size we download/parse (KB)
   FIX_REMAX_LOC = '3'           # one-off (re-run, positional parser): fix remaining remax 'Denver, CO' locations from the slug. REMOVE after it runs.
 
+# Two process groups: the existing web app (KEEP the name 'app' so its machine + 'data' volume are
+# untouched) and the extraction worker fleet (worker.js, pulls from the Postgres crawl_queue).
+[processes]
+  app = 'node ui-server.js'
+  worker = 'node worker.js'
+
+# Only the web group mounts the SQLite volume; workers are stateless (they use Postgres).
 [[mounts]]
   source = 'data'
   destination = '/data'
+  processes = ['app']
 
+# HTTP traffic only goes to the web group; workers serve nothing.
 [http_service]
   internal_port = 3000          # our Node server listens on 3000 (NOT Fly's default 8080)
   force_https = true
   auto_stop_machines = 'off'    # keep the machine on so background jobs keep running
   auto_start_machines = true
   min_machines_running = 1
+  processes = ['app']
 
+# web: dedicated 4-vCPU / 8GB for sustained crawl + the wireless-block table.
 [[vm]]
-  memory = '8gb'               # headroom for high concurrency + the wireless-block table
-  cpu_kind = 'performance'     # dedicated vCPUs (not throttled) for sustained crawl throughput
+  processes = ['app']
+  memory = '8gb'
+  cpu_kind = 'performance'
+  cpus = 4
+
+# worker: cheaper shared 4-vCPU / 4GB; extraction is network-bound (WARC fetch) so shared CPUs are fine.
+[[vm]]
+  processes = ['worker']
+  memory = '4gb'
+  cpu_kind = 'shared'
   cpus = 4
