@@ -137,6 +137,12 @@ function makeWorker(deps = {}) {
       totals.batches++; totals.claimed += r.claimed; totals.extracted += r.extracted;
       totals.added += r.added; totals.errors += r.errors;
       log(`batch #${totals.batches}: claimed ${r.claimed}, extracted ${r.extracted}, +${r.added} new, ${r.errors} err  (cum +${totals.added})`);
+      // Periodically reclaim work orphaned by a dead/removed worker (claims only auto-recover at boot
+      // otherwise) so the run always finishes — idempotent; 15-min threshold never touches live batches.
+      if (queue.requeueStale && totals.batches % 50 === 0) {
+        const stale = await queue.requeueStale(15);
+        if (stale) log(`requeued ${stale} stale claim(s)`);
+      }
     }
     return totals;
   }
