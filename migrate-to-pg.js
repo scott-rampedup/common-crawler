@@ -26,20 +26,37 @@ const path = require('path');
   console.log(`SQLite contacts: ${sqliteTotal.toLocaleString()} | Postgres before: ${pgBefore.toLocaleString()}`);
   if (verifyOnly) { await pg.close(); return; }
 
+  // Some legacy rows hold invalid UTF-8 (lone UTF-16 surrogates from bad source encoding) that a
+  // UTF-8 Postgres rejects. Round-tripping each string through a Buffer replaces those with U+FFFD,
+  // yielding valid UTF-8 without dropping the record.
+  const scrub = (rec) => {
+    const o = {};
+    for (const k of Object.keys(rec)) { const v = rec[k]; o[k] = typeof v === 'string' ? Buffer.from(v, 'utf8').toString('utf8') : v; }
+    return o;
+  };
   // SQLite each() is synchronous — collect rows, then upsert in async batches.
   const all = [];
-  sqlite.each({}, (rec) => all.push(rec));
+  sqlite.each({}, (rec) => all.push(scrub(rec)));
   console.log(`Read ${all.length.toLocaleString()} record(s) from SQLite; upserting into Postgres (chunk ${chunkSize})…`);
 
   const t0 = Date.now();
-  let processed = 0, added = 0;
+  let processed = 0, added = 0, skipped = 0;
   for (let i = 0; i < all.length; i += chunkSize) {
-    const r = await pg.upsertMany(all.slice(i, i + chunkSize));
-    processed += r.processed; added += r.added;
-    if (i % (chunkSize * 10) === 0) console.log(`  ${i.toLocaleString()}/${all.length.toLocaleString()} … (pg +${added.toLocaleString()} new)`);
+    const chunk = all.slice(i, i + chunkSize);
+    try {
+      const r = await pg.upsertMany(chunk);
+      processed += r.processed; added += r.added;
+    } catch (e) {
+      // one bad row shouldn't abort the whole migration — retry the chunk row-by-row, skip offenders
+      for (const rec of chunk) {
+        try { const r = await pg.upsertMany([rec]); processed += r.processed; added += r.added; }
+        catch (e2) { skipped++; if (skipped <= 10) console.warn(`  skipped 1 row: ${String(e2.message).slice(0, 90)}`); }
+      }
+    }
+    if (i % (chunkSize * 10) === 0) console.log(`  ${i.toLocaleString()}/${all.length.toLocaleString()} … (pg +${added.toLocaleString()} new, ${skipped} skipped)`);
   }
   const pgAfter = await pg.count();
   const secs = Math.round((Date.now() - t0) / 1000);
-  console.log(`Done: upserted ${processed.toLocaleString()} row(s), +${added.toLocaleString()} new. Postgres now ${pgAfter.toLocaleString()} (was ${pgBefore.toLocaleString()}). ${secs}s.`);
+  console.log(`Done: upserted ${processed.toLocaleString()} row(s), +${added.toLocaleString()} new, ${skipped} skipped. Postgres now ${pgAfter.toLocaleString()} (was ${pgBefore.toLocaleString()}). ${secs}s.`);
   await pg.close();
 })().catch((e) => { console.error('migrate-to-pg failed:', e); process.exit(1); });
