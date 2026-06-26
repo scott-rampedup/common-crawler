@@ -10,6 +10,7 @@ const RESULTS_CSV = path.join(__dirname, 'cc-results.csv');
 const { runDomains, COLUMNS, extractBioUrlsFromSitemaps, extractBioUrlGroups, isBioOrContactUrl, discoverBioUrlsFromCC, resolveLatestCrawl } = require('./cc-engine');
 const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords, geocodePhone, classifyEmail, cleanEmail, findPosition } = require('./extractor');
 const { modelEmail } = require('./email-pattern');
+const emailModel = require('./email-model');   // shared email-modelling (also used by the worker fleet)
 const { importSheet } = require('./sheet-import');
 const { siteSearch, bioRowsToRecords } = require('./serper');
 const vcard = require('./vcard');
@@ -435,43 +436,13 @@ function pruneOldJobs() {
 // Core: model an email for each email-less record that has a name + Gender, learning the format
 // from that company's Professional emails (the given records + the central DB). Result is
 // labelled Email Type "Modelled". Mutates records in place; returns how many were modelled.
+// Model emails for email-less bios from each company's known Professional-email pattern. Delegates to
+// the shared email-model module (the worker fleet uses the same logic); the central-DB sample lookup
+// goes through whichever contacts backend is active.
 async function modelMissingEmailsForRecords(records) {
-  const missing = records.filter((r) =>
-    !cleanEmail(r['Email Address']) && r['First'] && r['Last'] && r['Gender']);
-  if (!missing.length) return 0;
-
-  // group the email-less people by company domain
-  const byDomain = new Map();
-  for (const r of missing) {
-    const d = String(r['Domain'] || '').toLowerCase();
-    if (!d) continue;
-    if (!byDomain.has(d)) byDomain.set(d, []);
-    byDomain.get(d).push(r);
-  }
-
-  let modelled = 0;
-  for (const [domain, people] of byDomain) {
-    // pattern seed: Professional emails for THIS domain — from these records + the central DB
-    const samples = [];
-    const addSample = (r) => {
-      const email = cleanEmail(r['Email Address']);
-      if (email && r['First'] && r['Last'] && classifyEmail(email) === 'Professional') {
-        samples.push({ first: r['First'], last: r['Last'], email });
-      }
-    };
-    for (const r of records) if (String(r['Domain'] || '').toLowerCase() === domain) addSample(r);
-    try {
-      const res = await db.query({ domain, emailType: 'Professional', pageSize: 500 });
-      for (const r of (res.rows || [])) addSample(r);
-    } catch (e) { /* central DB lookup is best-effort */ }
-
-    if (!samples.length) continue;                            // no pattern to learn from
-    for (const r of people) {
-      const email = modelEmail(samples, r['First'], r['Last']);
-      if (email) { r['Email Address'] = email; r['Email Type'] = 'Modelled'; modelled++; }
-    }
-  }
-  return modelled;
+  return emailModel.modelMissingEmails(records, {
+    dbQuery: (domain) => db.query({ domain, emailType: 'Professional', pageSize: 500 }).then((r) => r.rows || []),
+  });
 }
 
 async function modelMissingEmails(job) {

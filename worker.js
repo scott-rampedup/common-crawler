@@ -14,7 +14,8 @@
  *
  * Env: DATABASE_URL, WORKER_CONCURRENCY (default 8), WORKER_BATCH (default 200),
  *      WARC_RPS (default 10 — polite per-worker fetch rate; CC 403s a hammering IP),
- *      WARC_RETRIES (default 4), WORKER_ID (default hostname), PGSSL=1 to enable TLS.
+ *      WARC_RETRIES (default 4), WORKER_MODEL_EMAILS (default on — model email-less bios from the
+ *      company pattern so they aren't dropped), WORKER_ID (default hostname), PGSSL=1 to enable TLS.
  */
 const path = require('path');
 
@@ -81,6 +82,7 @@ function makeWorker(deps = {}) {
     wireless, genderMap = {}, log = () => {},
     workerId = 'worker', concurrency = 8, batchSize = 200,
     warcRps = 10, fetchRetries = 4, baseDelay = 1000,
+    modelMissingEmails = null, modelEmails = false,
   } = deps;
   if (!queue || !dbpg || !fetchWarc || !extractRecord) throw new Error('makeWorker: queue, dbpg, fetchWarc, extractRecord required');
   const rate = makeRateLimiter(warcRps);
@@ -105,6 +107,12 @@ function makeWorker(deps = {}) {
     const results = await mapLimit(batch, concurrency, extractOne);
     let recs = results.filter((r) => r.ok && r.rec).map((r) => r.rec);
     if (recs.length) {
+      // Model emails for email-less bios from the company's pattern (same-batch + central DB), so they
+      // aren't dropped at the email-keyed upsert. Best-effort; the DB lookup is light + indexed.
+      if (modelEmails && modelMissingEmails) {
+        try { await modelMissingEmails(recs, { dbQuery: (domain) => dbpg.sampleProfessionalEmails(domain) }); }
+        catch (e) { /* best-effort modelling */ }
+      }
       if (analyzePhones) recs = analyzePhones(recs) || recs;   // dedupe Phone 2, relabel Direct->Office
       if (geocodeRecords) await geocodeRecords(recs);          // fill Phone Location (City, Region, Country)
     }
@@ -189,6 +197,8 @@ async function runMain() {
     batchSize: Number(process.env.WORKER_BATCH) || 200,
     warcRps: Number(process.env.WARC_RPS) || 10,         // polite per-worker fetch rate (CC 403s a hammering IP)
     fetchRetries: Number(process.env.WARC_RETRIES) || 4,
+    modelMissingEmails: require('./email-model').modelMissingEmails,
+    modelEmails: !/^(0|false|no|off)$/i.test(process.env.WORKER_MODEL_EMAILS || '1'),   // model email-less bios (default on)
     log: (m) => console.log(`[${workerId}] ${m}`),
   });
 
@@ -232,10 +242,11 @@ async function runSelftest() {
   const upserts = [];
   const dbpg = { async upsertMany(recs) { upserts.push(...recs); return { processed: recs.length, added: recs.length, total: recs.length }; } };
   const extractRecord = (html, url) => html ? { 'Email Address': 'jane.roe@a.com', 'Web Source URL': url } : null;
-  let geocoded = 0;
+  let geocoded = 0, modelledCalled = 0;
   const worker = makeWorker({
     queue, dbpg, fetchWarc, extractRecord,
     analyzePhones: (recs) => recs, geocodeRecords: async (recs) => { geocoded += recs.length; },
+    modelEmails: true, modelMissingEmails: async (recs) => { modelledCalled += recs.length; },
     concurrency: 2, batchSize: 10, warcRps: 0, fetchRetries: 0, log: () => {},   // no pacing/retry in the test
   });
 
@@ -244,6 +255,7 @@ async function runSelftest() {
   ok('claims and processes every pending URL', fetched.length === 3);
   ok('extracts the page that has HTML, skips the empty one', upserts.length === 1 && upserts[0]['Email Address'] === 'jane.roe@a.com');
   ok('geocodes the extracted batch', geocoded === 1);
+  ok('runs email modelling on the batch when enabled', modelledCalled === 1);
   ok('marks fetched URLs done (records=1 for the hit, 0 for the empty)',
     marks.done.length === 2 &&
     marks.done.find((d) => d.url.endsWith('/jane')).records === 1 &&

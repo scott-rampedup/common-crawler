@@ -246,6 +246,18 @@ async function makeDb(opts = {}) {
     return { total: await n(''), withEmail: await n(` AND email_address <> ''`), withPhone: await n(` AND phone <> ''`) };
   }
 
+  // A few Professional-email samples for a domain — to learn its email pattern (worker email modelling).
+  // Light + indexed (domain index): minimal columns, no count, capped — cheap to call per batch at scale.
+  async function sampleProfessionalEmails(domain, limit = 25) {
+    const d = String(domain || '').toLowerCase().replace(/^www\./, '').trim();
+    if (!d) return [];
+    const rows = (await q(
+      `SELECT first, last, email_address FROM contacts
+       WHERE domain = $1 AND email_type = 'Professional' AND email_address <> '' LIMIT $2`,
+      [d, Math.max(1, limit | 0)])).rows;
+    return rows.map((r) => ({ First: r.first, Last: r.last, 'Email Address': r.email_address }));
+  }
+
   async function existingUrls(domain) {
     const d = String(domain || '').toLowerCase().replace(/^www\./, '').trim();
     const set = new Set(); if (!d) return set;
@@ -336,7 +348,7 @@ async function makeDb(opts = {}) {
   console.log(`Central DB (Postgres): ${(await count()).toLocaleString()} contact(s)`);
   return { upsertMany, query, each, stats, count, facets, getByEmail, updateRecord, deleteByEmail, deleteByDomain,
     domainStats, existingUrls, fixRemaxLocations, backfillLocations, updatePositionByPrefix, bulkSetPosition, fixAngola,
-    putForce, _pool: pool, close: () => pool.end() };
+    putForce, sampleProfessionalEmails, _pool: pool, close: () => pool.end() };
 }
 
 module.exports = { makeDb, rowValues, FIELDS, COLS, INSERT_COLS };
