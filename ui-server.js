@@ -115,11 +115,21 @@ const ccEngine = require('./cc-engine');
 const { makeMonitor } = require('./sitemap-monitor');
 const MONITOR_ENABLED = /^(1|true|yes|on)$/i.test(process.env.MONITOR_ENABLED || '');
 const MONITOR_INTERVAL_HOURS = Math.max(1, Number(process.env.MONITOR_INTERVAL_HOURS) || 24);
+// Known people/bio sitemap filenames (agents-sitemap.xml, attorneys-sitemap.xml, loan-officer-sitemap.xml, …):
+// a child sitemap whose name matches is treated as bio-dedicated by monitor discovery, and ALL its URLs
+// are captured. Curated in "Sitemap extensions.csv" (ships in the image).
+let BIO_SITEMAP_NAMES = new Set();
+try {
+  const csv = fs.readFileSync(path.join(__dirname, 'Sitemap extensions.csv'), 'utf8');
+  BIO_SITEMAP_NAMES = new Set(csv.split(/\r?\n/).map((s) => s.trim().toLowerCase()).filter((l, i) => l && !(i === 0 && l === 'name')));
+  console.log(`Loaded ${BIO_SITEMAP_NAMES.size} bio-sitemap filename pattern(s).`);
+} catch (e) { /* optional */ }
 const monitor = makeMonitor({
   db: monitorDb,                   // monitor tables are in SQLite; its deltas extract into `db` (contacts) via startJob
   engine: ccEngine,
   fetchDoc: ccEngine.fetchDoc,
   genderMap: GENDER_MAP,
+  bioSitemapNames: BIO_SITEMAP_NAMES,
   // delta extraction reuses the normal CC-first webpage pipeline (-> Master DB upsert)
   extract: (urls, label) => { startJob(urls, '', false, 'webpage', 'Monitor', label || 'Monitor: new bios', null); },
   log: (m) => console.log(`[monitor] ${m}`),

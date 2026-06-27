@@ -780,10 +780,15 @@ async function extractBioUrlGroups(opts = {}){
 // domain,bioUrls:[{url,lastmod}]}], sitemapsFetched, totalUrls }. (offline-testable via opts._fetchDoc)
 async function discoverBioSitemaps(opts = {}){
   const { content = "", urls = [], directoryRules = {}, genderMap = {}, _fetchDoc = fetchDoc,
-          minBioRatio = 0.30, minBioCount = 3, maxSitemaps = 200, maxUrls = 500000 } = opts;
+          minBioRatio = 0.30, minBioCount = 3, maxSitemaps = 200, maxUrls = 500000,
+          bioSitemapNames = null, sourceUrl = "" } = opts;
+  // A child sitemap whose FILENAME is a known people/bio sitemap (e.g. agents-sitemap.xml) is treated
+  // as bio-dedicated regardless of its bio-ratio, and ALL its <loc>s are captured (the slug may not
+  // match the generic detector). bioSitemapNames is a Set of lowercased filenames.
+  const fileNameOf = (u) => String(u || "").split("?")[0].split("#")[0].split("/").pop().toLowerCase();
   const seenSm = new Set();
   const queue = [];
-  if(String(content || "").trim()) queue.push({ inline: content, url: "(pasted sitemap)", parent: null, lastmod: null });
+  if(String(content || "").trim()) queue.push({ inline: content, url: sourceUrl || "(pasted sitemap)", parent: null, lastmod: null });
   for(const u of urls){ if(u) queue.push({ url: String(u).trim(), parent: null, lastmod: null }); }
   const watches = [];
   let fetched = 0, totalUrls = 0;
@@ -810,19 +815,23 @@ async function discoverBioSitemaps(opts = {}){
       }
       continue;
     }
-    // leaf urlset -> score how bio-dedicated it is
+    // leaf urlset -> score how bio-dedicated it is (or accept outright if its filename is a known bio sitemap)
+    const nameHit = !!(bioSitemapNames && bioSitemapNames.has(fileNameOf(item.url)));
     let total = 0; const bio = [];
     for(const e of entries){
       total++; totalUrls++;
       let abs; try{ abs = new URL(e.loc); }catch{ continue; }
       if(abs.protocol !== "http:" && abs.protocol !== "https:") continue;
       if(LINK_SKIP_EXT.test(abs.pathname)) continue;
-      if(!isBioOrContactUrl(abs.toString(), directoryRules, genderMap) && !findSiteApi(abs.toString())) continue;
+      // name-matched sitemap: keep every page URL (the sitemap IS the people directory); otherwise keep
+      // only the ones the generic bio detector / a site adapter recognizes.
+      if(!nameHit && !isBioOrContactUrl(abs.toString(), directoryRules, genderMap) && !findSiteApi(abs.toString())) continue;
       abs.hash = "";
       bio.push({ url: abs.toString(), lastmod: e.lastmod });
     }
     const ratio = total ? bio.length / total : 0;
-    if(bio.length >= minBioCount && ratio >= minBioRatio){
+    const qualifies = nameHit ? bio.length >= 1 : (bio.length >= minBioCount && ratio >= minBioRatio);
+    if(qualifies){
       watches.push({
         sitemapUrl: item.url,
         parentUrl: item.parent || null,
@@ -830,6 +839,7 @@ async function discoverBioSitemaps(opts = {}){
         urlCount: total,
         bioCount: bio.length,
         bioRatio: ratio,
+        byName: nameHit,
         domain: bio.length ? hostOf(bio[0].url) : (item.url ? hostOf(item.url) : ""),
         bioUrls: bio,
       });
@@ -1876,6 +1886,31 @@ if(require.main === module){
         dbsOut.watches[0].bioUrls[0].url === `https://${dbsHost}/agents/jane-doe/` &&
         dbsOut.watches[0].bioUrls[0].lastmod === "2026-06-20" &&
         dbsOut.watches[0].bioUrls[1].lastmod === null);
+
+      // 7b-5) filename fast-path: a known-bio sitemap name qualifies + captures ALL its URLs even when
+      // the generic detector wouldn't recognize the slugs.
+      const nmHost = "lender.com";
+      const nmDocs = {
+        [`https://${nmHost}/loan-officer-sitemap.xml`]:
+          `<urlset><url><loc>https://${nmHost}/lo/jsmith-90210</loc></url>` +    // opaque slug: detector misses it
+          `<url><loc>https://${nmHost}/lo/bjones-30303</loc></url></urlset>`,
+      };
+      const nmFetch = async (u) => nmDocs[u] || "";
+      const noName = await discoverBioSitemaps({ urls: [`https://${nmHost}/loan-officer-sitemap.xml`], _fetchDoc: nmFetch });
+      ok("without the name list, an opaque-slug sitemap does NOT qualify", noName.watches.length === 0);
+      const byName = await discoverBioSitemaps({
+        urls: [`https://${nmHost}/loan-officer-sitemap.xml`], _fetchDoc: nmFetch,
+        bioSitemapNames: new Set(["loan-officer-sitemap.xml"]),
+      });
+      ok("a known-bio sitemap filename qualifies + captures all its URLs",
+        byName.watches.length === 1 && byName.watches[0].byName === true && byName.watches[0].bioUrls.length === 2);
+
+      // 7b-6) sourceUrl lets inline content be name-matched (used by the monitor's per-pass extraction)
+      const inlineByName = await discoverBioSitemaps({
+        content: nmDocs[`https://${nmHost}/loan-officer-sitemap.xml`], sourceUrl: `https://${nmHost}/loan-officer-sitemap.xml`,
+        bioSitemapNames: new Set(["loan-officer-sitemap.xml"]),
+      });
+      ok("sourceUrl makes inline content name-matchable", inlineByName.watches.length === 1 && inlineByName.watches[0].bioUrls.length === 2);
 
       // 7c) discoverBioUrlsFromCC: a domain's CC index -> keep only bio-looking captures
       const ccHost = "ccfirm.com";

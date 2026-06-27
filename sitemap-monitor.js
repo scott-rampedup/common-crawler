@@ -31,6 +31,7 @@ function makeMonitor(deps = {}) {
     extract = null,                                  // async (urls, label) => void  (prod: start a webpage job)
     directoryRules = {},
     genderMap = {},
+    bioSitemapNames = null,                          // Set of known people/bio sitemap filenames (fast-path)
     log = () => {},
     hash = djb2,
     now = () => new Date().toISOString(),
@@ -67,7 +68,7 @@ function makeMonitor(deps = {}) {
     for (const d of domains) for (const sm of await resolveSitemaps(d)) seeds.add(sm);
     if (!seeds.size) return { added: 0, watches: [] };
 
-    const opts = { urls: [...seeds], directoryRules, genderMap, _fetchDoc: fetchDoc };
+    const opts = { urls: [...seeds], directoryRules, genderMap, bioSitemapNames, _fetchDoc: fetchDoc };
     if (minBioRatio != null) opts.minBioRatio = minBioRatio;
     if (minBioCount != null) opts.minBioCount = minBioCount;
     const { watches } = await engine.discoverBioSitemaps(opts);
@@ -88,9 +89,10 @@ function makeMonitor(deps = {}) {
 
   // Compute one watched child's CURRENT bio URLs from already-fetched XML (reuses the engine's
   // exact URL filtering/normalization by feeding the XML inline).
-  async function bioEntriesFromXml(xml) {
+  async function bioEntriesFromXml(xml, sitemapUrl = '') {
     const r = await engine.discoverBioSitemaps({
-      content: xml, minBioCount: 0, minBioRatio: 0, directoryRules, genderMap, _fetchDoc: fetchDoc,
+      content: xml, sourceUrl: sitemapUrl, bioSitemapNames,   // sourceUrl lets a known-bio filename match inline content
+      minBioCount: 0, minBioRatio: 0, directoryRules, genderMap, _fetchDoc: fetchDoc,
     });
     return r.watches.length ? r.watches[0].bioUrls : [];
   }
@@ -131,7 +133,7 @@ function makeMonitor(deps = {}) {
             db.setWatchState(w.sitemap_url, { lastLastmod: curLastmod || w.last_lastmod, lastHash: contentHash, lastFetched: now() });
             summary.skipped++; continue;
           }
-          const currentEntries = await bioEntriesFromXml(xml);
+          const currentEntries = await bioEntriesFromXml(xml, w.sitemap_url);
           const diff = db.syncSitemapUrls(w.sitemap_url, w.domain, currentEntries);
           if (diff.newUrls.length || diff.reappearedUrls.length || diff.departedUrls.length) summary.changed++;
           summary.newBios += diff.newUrls.length;
