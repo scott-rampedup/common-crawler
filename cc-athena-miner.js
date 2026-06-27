@@ -75,6 +75,37 @@ WHERE crawl='${crawl}' AND subset='warc'
   AND NOT regexp_like(url_path, '${exc}')`;
 }
 
+// --- bio/people SITEMAP finder ---
+// Match the url's FINAL path segment against a list of well-known people-directory sitemap filenames
+// (agents-sitemap.xml, attorneys-sitemap.xml, team-sitemap.xml, loan-officer-sitemap.xml …). No mime
+// filter — sitemaps are served as xml/text/octet-stream; fetch_status=200 keeps live captures.
+const sitemapRegexSql = (names) => "(?i)/(" + names.map(escAlt).join("|") + ")(\\?|$)";
+function buildSitemapCountSql({ crawl, tlds, names }) {
+  const re = sitemapRegexSql(names).replace(/'/g, "''");
+  return `SELECT count(DISTINCT url) AS sitemaps, count(DISTINCT url_host_registered_domain) AS domains
+FROM ${DB}.ccindex
+WHERE crawl='${crawl}' AND subset='warc'
+  AND fetch_status=200
+  AND url_host_tld IN (${sqlStrList(tlds)})
+  AND regexp_like(url_path, '${re}')`;
+}
+function buildSitemapSql({ crawl, tlds, names, limit }) {
+  const re = sitemapRegexSql(names).replace(/'/g, "''");
+  let sql = `SELECT DISTINCT url_host_registered_domain AS domain, url
+FROM ${DB}.ccindex
+WHERE crawl='${crawl}' AND subset='warc'
+  AND fetch_status=200
+  AND url_host_tld IN (${sqlStrList(tlds)})
+  AND regexp_like(url_path, '${re}')`;
+  if (limit > 0) sql += `\nLIMIT ${limit}`;
+  return sql;
+}
+// Read the sitemap-filename list from a one-column CSV (skips a leading 'name' header).
+function readSitemapNames(file) {
+  return require("fs").readFileSync(file, "utf8").split(/\r?\n/).map((s) => s.trim())
+    .filter((l, i) => l && !(i === 0 && /^name$/i.test(l)));
+}
+
 // Parse Athena's CSV result (every field quoted, "" escapes a literal "). State machine -> rows of fields.
 // Handles embedded commas/quotes; emits each row to onRow so we never hold the whole result twice.
 function parseCsv(text, onRow) {
@@ -201,6 +232,38 @@ async function main() {
 
   if (flag("setup")) { console.error("setup complete (db/table/partition ready)."); return; }
 
+  // --- sitemap-finder mode: find CC-archived sitemaps whose filename is a known people/bio sitemap ---
+  const sitemapNamesFile = arg("sitemap-names", "");
+  if (sitemapNamesFile) {
+    const names = readSitemapNames(sitemapNamesFile);
+    const sitemapsOut = arg("sitemaps-out", "");
+    console.error(`Sitemap finder: ${names.length} filename pattern(s); tlds: ${tlds.join(",")}`);
+    if (flag("count") || !sitemapsOut) {
+      const { id } = await runAthena(A, buildSitemapCountSql({ crawl, tlds, names }), output, "sitemap-count");
+      const csv = await s3Text(A, (await A.athena.send(new A.GetQueryExecutionCommand({ QueryExecutionId: id }))).QueryExecution.ResultConfiguration.OutputLocation);
+      const rows = []; parseCsv(csv, (r) => rows.push(r));
+      const [sm, dom] = rows[1] || [];
+      console.error(`\n${crawl}: ${Number(sm).toLocaleString()} matching sitemap URL(s) across ${Number(dom).toLocaleString()} domain(s).`);
+      if (!sitemapsOut) { console.error("(no --sitemaps-out given; count only.)"); return; }
+    }
+    console.error(`\nListing sitemap URLs -> ${sitemapsOut} ...`);
+    const { id } = await runAthena(A, buildSitemapSql({ crawl, tlds, names, limit }), output, "sitemaps");
+    const loc = (await A.athena.send(new A.GetQueryExecutionCommand({ QueryExecutionId: id }))).QueryExecution.ResultConfiguration.OutputLocation;
+    const ws = fs.createWriteStream(sitemapsOut);
+    let seen = 0, written = 0;
+    await s3StreamRows(A, loc, async (r) => {
+      if (seen++ === 0 && r[0] === "domain") return;       // header
+      const url = r[1];
+      if (!url) return;
+      written++;
+      if (!ws.write(url + "\n")) await new Promise((res) => ws.once("drain", res));
+    });
+    await new Promise((res) => ws.end(res));
+    console.error(`Wrote ${written.toLocaleString()} sitemap URL(s) -> ${sitemapsOut}`);
+    console.error(`Next: feed to the monitor via POST /api/monitor/watch  { sitemaps: [...] }.`);
+    return;
+  }
+
   if (flag("count") || !warcOut) {
     const { id } = await runAthena(A, buildCountSql({ crawl, tlds }), output, "count");
     const csv = await s3Text(A, (await A.athena.send(new A.GetQueryExecutionCommand({ QueryExecutionId: id }))).QueryExecution.ResultConfiguration.OutputLocation);
@@ -228,7 +291,7 @@ async function main() {
   console.error(`Next: DATABASE_URL=… node load-queue.js ${warcOut}`);
 }
 
-module.exports = { buildDiscoverySql, buildCountSql, bioRegexSql, excludeRegexSql, parseCsv, parseCsvLine, DEFAULT_TLDS };
+module.exports = { buildDiscoverySql, buildCountSql, bioRegexSql, excludeRegexSql, sitemapRegexSql, buildSitemapSql, buildSitemapCountSql, parseCsv, parseCsvLine, DEFAULT_TLDS };
 
 // ---- offline self-test: node cc-athena-miner.js --selftest ----
 if (require.main === module && process.argv.includes("--selftest")) {
@@ -248,6 +311,16 @@ if (require.main === module && process.argv.includes("--selftest")) {
   const pl = parseCsvLine('"https://x.com/a,b","f.warc.gz","10","20","20260601000000"');
   ok("parseCsvLine streams one row, quoted comma intact", pl[0] === "https://x.com/a,b" && pl[1] === "f.warc.gz" && pl[4] === "20260601000000");
   ok("count sql has no row_number/cap", !/row_number/.test(buildCountSql({ crawl: "X", tlds: ["com"] })));
+  // sitemap finder
+  ok("sitemap regex matches the final path segment, escaping dots",
+    sitemapRegexSql(["agents-sitemap.xml", "People.xml"]) === "(?i)/(agents-sitemap\\.xml|people\\.xml)(\\?|$)");
+  const smSql = buildSitemapSql({ crawl: "CC-MAIN-2026-25", tlds: ["com", "org"], names: ["team-sitemap.xml"], limit: 0 });
+  ok("sitemap sql selects distinct domain+url, no html-mime filter",
+    /SELECT DISTINCT url_host_registered_domain AS domain, url/.test(smSql) && !/content_mime_detected/.test(smSql));
+  ok("sitemap sql matches url_path on the filename + keeps fetch_status=200",
+    /regexp_like\(url_path, '\(\?i\)\/\(team-sitemap\\\.xml\)\(\\\?\|\$\)'\)/.test(smSql) && /fetch_status=200/.test(smSql));
+  ok("sitemap count sql counts distinct sitemaps + domains",
+    /count\(DISTINCT url\) AS sitemaps/.test(buildSitemapCountSql({ crawl: "X", tlds: ["com"], names: ["x.xml"] })));
   console.log(`\ncc-athena-miner self-test: ${p} passed, ${f} failed`);
   process.exit(f ? 1 : 0);
 } else if (require.main === module) {
