@@ -18,6 +18,7 @@
     "selftest:monitor": "node sitemap-monitor.js --selftest",
     "selftest:worker": "node worker.js --selftest",
     "selftest:loadqueue": "node load-queue.js --selftest",
+    "selftest:seed": "node seed-monitor.js --selftest",
     "worker": "node worker.js"
   },
   "engines": {
