@@ -45,7 +45,10 @@ function score(r) { let s = 0; for (const f of SCORE_FIELDS) if (String(r[f] || 
 function makeDb(dir) {
   const file = path.join(dir, 'contacts.db');
   const db = new DatabaseSync(file);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;');
+  // WAL: readers never block the writer. busy_timeout: a 2nd process/connection (e.g. seed-monitor.js
+  // running on the same box as the web app, or two seeders) WAITS up to 5s for a write lock instead of
+  // failing with SQLITE_BUSY — our write transactions are short, so this makes concurrent writers safe.
+  db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;');
 
   const colDefs = COLS.map((c) => `"${c}" TEXT`).join(', ');
   db.exec(`CREATE TABLE IF NOT EXISTS contacts (
