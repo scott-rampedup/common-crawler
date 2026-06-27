@@ -6,12 +6,50 @@
  * next import). Encoding the rule here makes it durable: it runs at the single write chokepoint,
  * so re-imports, crawls, and Site Search all produce the corrected value. Add rules to RULES.
  */
-const { lastPathFromUrl, nameSlugFromUrl, lastPathSeg, splitExtension } = require('./extractor');
+const path = require('path');
+const { lastPathFromUrl, nameSlugFromUrl, lastPathSeg, splitExtension, classifyEmail, loadGenderMap } = require('./extractor');
 const { countryForDomain } = require('./tld-lookup');
 const { classifyLineType, blockLocation, loadPhoneBlocks, nanpDigits, PHONE_BLOCKS_CSV } = require('./wireless-block-classifier');
 
 // memoized phone-block dataset { wireless:Set, location:Map } (see wireless-block-classifier.js)
 const blocks = () => loadPhoneBlocks(PHONE_BLOCKS_CSV);
+
+// memoized first-name -> "M"|"F" map (the same committed census CSV the crawler/UI use). Loaded
+// lazily so requiring normalize.js stays cheap; '' map if the file isn't present (Gender just won't fill).
+let _genderMap = null;
+function genderMap() {
+  if (_genderMap) return _genderMap;
+  try { _genderMap = loadGenderMap(path.join(__dirname, 'names-genders.csv')); }
+  catch { _genderMap = {}; }
+  return _genderMap;
+}
+
+// Title-case a name token, preserving internal hyphens/apostrophes: "smith-jones" -> "Smith-Jones".
+const properName = (s) => String(s || '').toLowerCase().replace(/(^|[-'’ ])([a-z])/g, (_, b, c) => b + c.toUpperCase());
+
+// For a record with NO Gender: if its email is Professional and the local part is a dotted name
+// (first.last, first.m.last, …), split on "." and look the FIRST token up in the census gender map.
+// Returns { first, last, gender } only when a gender is found; null otherwise. (Pure — no mutation.)
+function emailNameGender(r) {
+  const email = String(r['Email Address'] || '').trim().toLowerCase();
+  const at = email.indexOf('@');
+  if (at < 1) return null;
+  // "professional" per the stored Email Type, else classify the address (skips Role-Based / free Personal).
+  const storedType = String(r['Email Type'] || '').trim();
+  const isProfessional = storedType ? /^professional$/i.test(storedType) : classifyEmail(email) === 'Professional';
+  if (!isProfessional) return null;
+  const local = email.slice(0, at);
+  if (local.indexOf('.') < 0) return null;                                 // must have a "." to split on
+  const segs = local.split('.').map((s) => s.trim()).filter(Boolean);
+  if (segs.length < 2) return null;
+  const firstTok = segs[0];
+  const lastTok = segs[segs.length - 1];
+  if (!/^[a-z]{2,}$/.test(firstTok)) return null;                          // first name: plain alpha, >=2 (clean census key)
+  if (!/^[a-z]{2,}([-'’][a-z]+)*$/.test(lastTok)) return null;             // last name: alpha, allow internal -/'
+  const gender = genderMap()[firstTok] || '';                             // map is keyed by lowercased first name
+  if (gender !== 'M' && gender !== 'F') return null;                       // ONLY proceed when a gender is found
+  return { first: properName(firstTok), last: properName(lastTok), gender };
+}
 const mainNumber = (p) => splitExtension(String(p || '')).main;   // drop " ext. N" before classify/geocode
 
 // US states + DC/PR and Canadian provinces, full names (lowercased). Used to recognize a COARSE
@@ -111,6 +149,20 @@ const RULES = [
     match: (r) => !String(r['Phone Location'] || '').trim(),
     apply: (r) => { const c = countryForDomain(r['Domain'] || r['Web Source URL'] || ''); if (c) r['Phone Location'] = c; },
   },
+  {
+    // Gender (+ name) from a professional email's dotted local part. ONLY for records with no Gender:
+    // if first.last is parseable from the email and the FIRST name is in the census gender map, write
+    // that Gender and (over)write First/Last from the email. No gender found -> record left untouched.
+    name: 'gender-from-professional-email',
+    match: (r) => !String(r['Gender'] || '').trim() && !!emailNameGender(r),
+    apply: (r) => {
+      const g = emailNameGender(r);
+      if (!g) return;
+      r['First'] = g.first;
+      r['Last'] = g.last;
+      r['Gender'] = g.gender;
+    },
+  },
 ];
 
 // Block-table line type for a stored phone, or "" when it shouldn't override the existing type
@@ -145,7 +197,7 @@ function normalizeContact(rec) {
   return rec;
 }
 
-module.exports = { normalizeContact, RULES, isCoarseLocation, blockType, typeUpgrade };
+module.exports = { normalizeContact, RULES, isCoarseLocation, blockType, typeUpgrade, emailNameGender };
 
 // ---- offline self-test: node normalize.js --selftest ----
 if (require.main === module && process.argv.includes('--selftest')) {
@@ -198,6 +250,46 @@ if (require.main === module && process.argv.includes('--selftest')) {
   const r6 = { Phone: '+12012012345', 'Phone Location': 'East Stroudsburg, PA' };
   normalizeContact(r6);
   ok('real city location preserved', r6['Phone Location'] === 'East Stroudsburg, PA');
+
+  // gender-from-professional-email: dotted professional local part, no Gender -> infer name + gender
+  const g1 = { 'Email Address': 'james.smith@acme.com', 'Email Type': 'Professional', Gender: '' };
+  normalizeContact(g1);
+  ok('prof email first.last fills First/Last/Gender', g1.First === 'James' && g1.Last === 'Smith' && g1.Gender === 'M');
+
+  // OVERWRITES existing First/Last when a gender is derived (per spec)
+  const g2 = { First: 'Bob', Last: 'Jones', Gender: '', 'Email Address': 'jennifer.poppins@acme.com', 'Email Type': 'Professional' };
+  normalizeContact(g2);
+  ok('overwrites First/Last from email when gender found', g2.First === 'Jennifer' && g2.Last === 'Poppins' && g2.Gender === 'F');
+
+  // 3-segment local (first.middle.last) -> first + last; hyphenated last kept + cased
+  const g3 = { 'Email Address': 'mary.a.smith-jones@acme.com', 'Email Type': 'Professional', Gender: '' };
+  normalizeContact(g3);
+  ok('first.middle.last -> first+last, hyphen last cased', g3.First === 'Mary' && g3.Last === 'Smith-Jones' && g3.Gender === 'F');
+
+  // a record that ALREADY has a Gender is left untouched (First/Last preserved)
+  const g4 = { First: 'Bob', Last: 'Jones', Gender: 'M', 'Email Address': 'jennifer.poppins@acme.com', 'Email Type': 'Professional' };
+  normalizeContact(g4);
+  ok('record with a Gender is untouched', g4.First === 'Bob' && g4.Last === 'Jones' && g4.Gender === 'M');
+
+  // first name NOT in the census -> no gender, nothing overwritten
+  const g5 = { First: 'Sibel', Last: 'Yilmaz', Gender: '', 'Email Address': 'zzxq.yilmaz@acme.com', 'Email Type': 'Professional' };
+  normalizeContact(g5);
+  ok('unknown first name -> no change', g5.First === 'Sibel' && g5.Last === 'Yilmaz' && g5.Gender === '');
+
+  // gates: no dot, single initial, non-professional email -> all skipped
+  const g6 = { 'Email Address': 'jsmith@acme.com', 'Email Type': 'Professional', Gender: '' };
+  normalizeContact(g6);
+  ok('no dot in local -> skip', g6.Gender === '' && !g6.First);
+  const g7 = { 'Email Address': 'j.smith@acme.com', 'Email Type': 'Professional', Gender: '' };
+  normalizeContact(g7);
+  ok('single-initial first -> skip', g7.Gender === '' && !g7.First);
+  const g8 = { 'Email Address': 'james.smith@gmail.com', 'Email Type': 'Personal', Gender: '' };
+  normalizeContact(g8);
+  ok('non-professional email -> skip', g8.Gender === '' && !g8.First);
+  // Email Type blank -> classifies the address itself (gmail = Personal -> skip)
+  const g9 = { 'Email Address': 'james.smith@gmail.com', Gender: '' };
+  normalizeContact(g9);
+  ok('blank Email Type, free domain classified Personal -> skip', g9.Gender === '');
 
   console.log(`\nnormalize self-test: ${p} passed, ${f} failed`);
   process.exit(f ? 1 : 0);
