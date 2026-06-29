@@ -17,6 +17,11 @@ tmp-*.js
 *.xlsx
 *-run-output.txt
 pipeline_run_output.txt
+# Large data artifacts — harvest dumps + staged URL lists. Never needed in the
+# image (they're build/staging inputs), and baking them in made the build context
+# ~1GB and the upload crawl. phone-blocks.csv / Sitemap*.csv stay (loaded at runtime).
+*.jsonl
+BIO URL Repository.txt
 .env
 .env.local
 .claude/
