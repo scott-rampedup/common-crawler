@@ -159,11 +159,31 @@ async function makeDb(opts = {}) {
     return { processed, added, total: await count() };
   }
 
+  // Exact COUNT(*) over a multi-million-row table is a full scan on EVERY page load — the main
+  // reason Search felt slow (and, once a query crossed Fly's request timeout, surfaced as
+  // "unable to connect to the API"). Make the total cheap instead:
+  //   - no filter  -> the planner's row estimate (instant); exact-count fallback if never analyzed.
+  //   - filtered   -> count, but stop at COUNT_CAP so a broad keyword can't scan the whole table.
+  // `approx` tells the UI whether to render the number as estimated ('~') or capped ('+').
+  const COUNT_CAP = 10000;   // matches the UI's MAX_SELECT_ALL ceiling
+  async function totalFor(whereSql, params) {
+    if (!whereSql) {
+      const est = Number((await q(
+        `SELECT reltuples::bigint AS c FROM pg_class WHERE oid = 'contacts'::regclass`)).rows[0].c);
+      if (est > 0) return { total: est, approx: 'estimate' };
+      return { total: Number((await q('SELECT COUNT(*) c FROM contacts')).rows[0].c), approx: null };
+    }
+    const c = Number((await q(
+      `SELECT COUNT(*) c FROM (SELECT 1 FROM contacts ${whereSql} LIMIT ${COUNT_CAP + 1}) t`,
+      params)).rows[0].c);
+    return c > COUNT_CAP ? { total: COUNT_CAP, approx: 'capped' } : { total: c, approx: null };
+  }
+
   async function query(o = {}) {
     const pageSize = Math.min(500, Math.max(1, Number(o.pageSize) || 50));
     const page = Math.max(1, Number(o.page) || 1);
     const { sql: whereSql, params } = whereFor(o);
-    const total = Number((await q(`SELECT COUNT(*) c FROM contacts ${whereSql}`, params)).rows[0].c);
+    const { total, approx } = await totalFor(whereSql, params);
     let sortCol = colName(o.sort || ''); if (o.sort === 'Domain') sortCol = 'domain';
     const offset = (page - 1) * pageSize;
     let orderBy;
@@ -177,7 +197,7 @@ async function makeDb(opts = {}) {
     const rows = (await q(
       `SELECT * FROM contacts ${whereSql} ORDER BY ${orderBy} LIMIT ${pageSize} OFFSET ${offset}`,
       params)).rows;
-    return { rows: rows.map(rowToRecord), total, page, pageSize };
+    return { rows: rows.map(rowToRecord), total, approx, page, pageSize };
   }
 
   async function facets() {

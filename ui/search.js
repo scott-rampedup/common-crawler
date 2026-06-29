@@ -69,6 +69,7 @@ const SOCIAL = { 'Facebook': { svg: FB_SVG, cls: 'fb-link', title: 'Facebook' },
 const state = {
   rows: [],                  // current page of records
   total: 0,                  // server-reported match count
+  approx: null,              // null = exact; 'estimate' (~) for unfiltered total; 'capped' (+) past 10k
   page: 1,
   sort: { column: null, dir: 1 },   // dir: 1 asc, -1 desc
   selected: new Map(),       // email(lower) -> record, persists across pages
@@ -506,8 +507,13 @@ function updateSummary() {
   const total = state.total;
   const start = total ? (state.page - 1) * PAGE_SIZE + 1 : 0;
   const end = Math.min(state.page * PAGE_SIZE, total);
+  // total may be inexact: 'estimate' = planner row estimate for the unfiltered view (~),
+  // 'capped' = more than the 10k count cap (+). Both keep Search fast on a huge table.
+  const label = state.approx === 'estimate' ? `~${total.toLocaleString()}`
+    : state.approx === 'capped' ? `${total.toLocaleString()}+`
+    : total.toLocaleString();
   el.summary.innerHTML = total
-    ? `<strong>${total.toLocaleString()}</strong> contacts match · showing <strong>${start.toLocaleString()}–${end.toLocaleString()}</strong>`
+    ? `<strong>${label}</strong> contacts match · showing <strong>${start.toLocaleString()}–${end.toLocaleString()}</strong>`
     : 'No contacts match your search.';
 }
 
@@ -519,6 +525,7 @@ async function query() {
     const out = await res.json();
     state.rows = out.rows || [];
     state.total = out.total || 0;
+    state.approx = out.approx || null;
     // clamp page if filters shrank the result set
     const pages = totalPages();
     if (state.page > pages) { state.page = pages; }
