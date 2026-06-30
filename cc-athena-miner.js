@@ -325,17 +325,28 @@ async function main() {
     // 3) JOIN -> stream the matched WARC pointers to the JSONL the fleet's load-queue consumes.
     const { id } = await runAthena(A, buildResolveSql({ crawls, keysTable }), output, "resolve");
     const loc = (await A.athena.send(new A.GetQueryExecutionCommand({ QueryExecutionId: id }))).QueryExecution.ResultConfiguration.OutputLocation;
-    const ws = fs.createWriteStream(warcOut);
+    // A large S3 result read can drop mid-body (transient socket reset). The Athena result is immutable,
+    // so on failure retry the whole stream from the start (createWriteStream truncates warcOut each try).
     let seen = 0, written = 0;
-    await s3StreamRows(A, loc, async (r) => {
-      if (seen++ === 0 && r[0] === "url") return;            // header
-      const [url, filename, offset, length, timestamp] = r;
-      if (!url || !filename) return;
-      written++;
-      if (!ws.write(JSON.stringify({ url, filename, offset, length, timestamp }) + "\n"))
-        await new Promise((resolve) => ws.once("drain", resolve));
-    });
-    await new Promise((resolve) => ws.end(resolve));
+    for (let attempt = 1; ; attempt++) {
+      try {
+        seen = 0; written = 0;
+        const ws = fs.createWriteStream(warcOut);
+        await s3StreamRows(A, loc, async (r) => {
+          if (seen++ === 0 && r[0] === "url") return;            // header
+          const [url, filename, offset, length, timestamp] = r;
+          if (!url || !filename) return;
+          written++;
+          if (!ws.write(JSON.stringify({ url, filename, offset, length, timestamp }) + "\n"))
+            await new Promise((resolve) => ws.once("drain", resolve));
+        });
+        await new Promise((resolve) => ws.end(resolve));
+        break;
+      } catch (e) {
+        if (attempt >= 3) throw e;
+        console.error(`  result stream attempt ${attempt} failed (${(e && e.message) || e}); retrying…`);
+      }
+    }
     const pct = keys.size ? ((written / keys.size) * 100).toFixed(1) : "0";
     console.error(`\nResolved ${written.toLocaleString()} / ${keys.size.toLocaleString()} URL(s) in CC (${pct}% hit) -> ${warcOut}`);
     console.error(`Next: DATABASE_URL=… node load-queue.js ${warcOut}   (the 12-region fleet then drains it)`);
@@ -453,5 +464,5 @@ if (require.main === module && process.argv.includes("--selftest")) {
   console.log(`\ncc-athena-miner self-test: ${p} passed, ${f} failed`);
   process.exit(f ? 1 : 0);
 } else if (require.main === module) {
-  main().catch((e) => { console.error("ERROR:", e.message); process.exit(1); });
+  main().catch((e) => { console.error("ERROR:", (e && e.stack) || e); process.exit(1); });
 }
