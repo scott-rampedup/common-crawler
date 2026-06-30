@@ -22,6 +22,7 @@ pipeline_run_output.txt
 # ~1GB and the upload crawl. phone-blocks.csv / Sitemap*.csv stay (loaded at runtime).
 *.jsonl
 BIO URL Repository.txt
+bio-url-splits/
 .env
 .env.local
 .claude/

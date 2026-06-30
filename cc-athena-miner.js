@@ -75,6 +75,50 @@ WHERE crawl='${crawl}' AND subset='warc'
   AND NOT regexp_like(url_path, '${exc}')`;
 }
 
+// --- exact-URL resolution mode (resolve a GIVEN bio-URL list -> WARC pointers) ---
+// Normalize a URL to the JOIN key used on both sides: lowercased host (leading "www." stripped) + "|" +
+// lowercased path with trailing slashes trimmed. MUST stay byte-identical to the SQL expression in
+// buildResolveSql, or the JOIN silently misses. Query string + fragment are dropped (CC's url_path is
+// the path only). Returns null for anything that isn't an http(s) URL.
+function normalizeKey(urlStr) {
+  let u;
+  try { u = new URL(String(urlStr).trim()); } catch { return null; }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+  const host = u.hostname.toLowerCase().replace(/^www\./, "");
+  const path = (u.pathname || "").toLowerCase().replace(/\/+$/, "");   // "/" and "" both -> ""
+  return host + "|" + path;
+}
+
+// External table over the uploaded one-column keys file (one normalized key per line). The "|" in keys
+// is data, not a delimiter, so a tab field-terminator keeps each whole line as the single column k.
+function buildKeysTableSql({ keysTable, bucket, prefix, db = DB }) {
+  return `CREATE EXTERNAL TABLE IF NOT EXISTS ${db}.${keysTable} (k STRING)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY '\\t'
+LOCATION 's3://${bucket}/${prefix}'`;
+}
+
+// JOIN the keys table against ccindex on the normalized key, across one or more crawls, and keep the
+// FRESHEST capture per key (row_number over fetch_time). Output is the load-queue/--warc-file shape.
+function buildResolveSql({ crawls, keysTable, db = DB }) {
+  const crawlList = crawls.map((c) => `'${String(c).replace(/'/g, "''")}'`).join(",");
+  return `SELECT url, filename, "offset", length, "timestamp"
+FROM (
+  SELECT i.url AS url,
+         i.warc_filename AS filename,
+         i.warc_record_offset AS "offset",
+         i.warc_record_length AS length,
+         date_format(i.fetch_time, '%Y%m%d%H%i%s') AS "timestamp",
+         row_number() OVER (PARTITION BY r.k ORDER BY i.fetch_time DESC) AS rn
+  FROM ${db}.ccindex i
+  JOIN ${db}.${keysTable} r
+    ON r.k = concat(regexp_replace(lower(i.url_host_name), '^www\\.', ''), '|', lower(rtrim(i.url_path, '/')))
+  WHERE i.crawl IN (${crawlList}) AND i.subset='warc'
+    AND i.fetch_status=200
+    AND i.content_mime_detected IN ('text/html','application/xhtml+xml')
+)
+WHERE rn = 1`;
+}
+
 // --- bio/people SITEMAP finder ---
 // Match the url's FINAL path segment against a list of well-known people-directory sitemap filenames
 // (agents-sitemap.xml, attorneys-sitemap.xml, team-sitemap.xml, loan-officer-sitemap.xml …). No mime
@@ -127,9 +171,9 @@ function parseCsv(text, onRow) {
 // ---- AWS plumbing (lazy-required so --selftest needs no SDK/creds) ----
 function aws() {
   const { STSClient, GetCallerIdentityCommand } = require("@aws-sdk/client-sts");
-  const { S3Client, HeadBucketCommand, CreateBucketCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
+  const { S3Client, HeadBucketCommand, CreateBucketCommand, GetObjectCommand, PutObjectCommand } = require("@aws-sdk/client-s3");
   const { AthenaClient, StartQueryExecutionCommand, GetQueryExecutionCommand } = require("@aws-sdk/client-athena");
-  return { STSClient, GetCallerIdentityCommand, S3Client, HeadBucketCommand, CreateBucketCommand, GetObjectCommand,
+  return { STSClient, GetCallerIdentityCommand, S3Client, HeadBucketCommand, CreateBucketCommand, GetObjectCommand, PutObjectCommand,
     AthenaClient, StartQueryExecutionCommand, GetQueryExecutionCommand,
     sts: new STSClient({ region: REGION }), s3: new S3Client({ region: REGION }), athena: new AthenaClient({ region: REGION }) };
 }
@@ -141,6 +185,22 @@ function latestCrawl(fallback = "CC-MAIN-2026-25") {
     const req = https.get("https://index.commoncrawl.org/collinfo.json", { headers: { "User-Agent": "cc-athena-miner" }, timeout: 8000 }, (res) => {
       let b = ""; res.on("data", (d) => b += d); res.on("end", () => {
         try { const a = JSON.parse(b); const id = a && a[0] && a[0].id; resolve(/^CC-MAIN-\d{4}-\d+$/.test(id) ? id : fallback); } catch { resolve(fallback); }
+      });
+    });
+    req.on("error", () => resolve(fallback)); req.on("timeout", () => { req.destroy(); resolve(fallback); });
+  });
+}
+
+// The latest N CC corpus ids (collinfo.json is newest-first) — for scanning several recent crawls when
+// resolving a URL list (a bio page may only be in an older crawl).
+function latestCrawls(n = 1, fallback = ["CC-MAIN-2026-25"]) {
+  return new Promise((resolve) => {
+    const req = https.get("https://index.commoncrawl.org/collinfo.json", { headers: { "User-Agent": "cc-athena-miner" }, timeout: 8000 }, (res) => {
+      let b = ""; res.on("data", (d) => b += d); res.on("end", () => {
+        try {
+          const ids = JSON.parse(b).map((x) => x && x.id).filter((id) => /^CC-MAIN-\d{4}-\d+$/.test(id)).slice(0, Math.max(1, n));
+          resolve(ids.length ? ids : fallback);
+        } catch { resolve(fallback); }
       });
     });
     req.on("error", () => resolve(fallback)); req.on("timeout", () => { req.destroy(); resolve(fallback); });
@@ -232,6 +292,56 @@ async function main() {
 
   if (flag("setup")) { console.error("setup complete (db/table/partition ready)."); return; }
 
+  // --- exact-URL resolution mode: resolve a given bio-URL list -> WARC pointers for the worker fleet ---
+  const resolveFile = arg("resolve-urls", "");
+  if (resolveFile) {
+    if (!warcOut) { console.error("--resolve-urls requires --warc-out <file>"); return; }
+    const lastN = Number(arg("last-n", "1")) || 1;
+    const crawls = arg("crawl", "") ? [crawl] : await latestCrawls(lastN);
+    console.error(`Resolve mode: ${resolveFile} -> ${warcOut}; crawls: ${crawls.join(", ")}`);
+
+    // 1) Build the normalized, de-duplicated key set from the URL file (streamed; the file is ~95MB).
+    const keys = new Set();
+    let read = 0, skipped = 0;
+    await new Promise((res, rej) => {
+      const rl = readline.createInterface({ input: fs.createReadStream(resolveFile), crlfDelay: Infinity });
+      rl.on("line", (line) => { const t = line.trim(); if (!t) return; read++; const k = normalizeKey(t); if (k) keys.add(k); else skipped++; });
+      rl.on("close", res); rl.on("error", rej);
+    });
+    console.error(`  ${read.toLocaleString()} URL(s) read -> ${keys.size.toLocaleString()} distinct key(s) (${skipped} non-URL skipped)`);
+    if (!keys.size) { console.error("no usable URLs — nothing to resolve."); return; }
+
+    // 2) Upload the keys as a single S3 object under a per-run prefix, then define an external table over it.
+    const tag = (arg("resolve-tag", "") || String(Date.now())).replace(/[^a-z0-9]/gi, "").slice(0, 24);
+    const keysTable = "bio_resolve_keys_" + tag;
+    const prefix = `bio-resolve/${tag}/`;
+    const body = Buffer.from([...keys].join("\n") + "\n", "utf8");
+    console.error(`  uploading keys (${(body.length / 1048576).toFixed(1)} MB) -> s3://${bucket}/${prefix}keys.txt ...`);
+    await A.s3.send(new A.PutObjectCommand({ Bucket: bucket, Key: prefix + "keys.txt", Body: body }));
+    for (const c of crawls) await ensureTable(A, c, output);   // make sure every scanned crawl's partition exists
+    await runAthena(A, `DROP TABLE IF EXISTS ${DB}.${keysTable}`, output, "drop keys tbl");
+    await runAthena(A, buildKeysTableSql({ keysTable, bucket, prefix }), output, "create keys tbl");
+
+    // 3) JOIN -> stream the matched WARC pointers to the JSONL the fleet's load-queue consumes.
+    const { id } = await runAthena(A, buildResolveSql({ crawls, keysTable }), output, "resolve");
+    const loc = (await A.athena.send(new A.GetQueryExecutionCommand({ QueryExecutionId: id }))).QueryExecution.ResultConfiguration.OutputLocation;
+    const ws = fs.createWriteStream(warcOut);
+    let seen = 0, written = 0;
+    await s3StreamRows(A, loc, async (r) => {
+      if (seen++ === 0 && r[0] === "url") return;            // header
+      const [url, filename, offset, length, timestamp] = r;
+      if (!url || !filename) return;
+      written++;
+      if (!ws.write(JSON.stringify({ url, filename, offset, length, timestamp }) + "\n"))
+        await new Promise((resolve) => ws.once("drain", resolve));
+    });
+    await new Promise((resolve) => ws.end(resolve));
+    const pct = keys.size ? ((written / keys.size) * 100).toFixed(1) : "0";
+    console.error(`\nResolved ${written.toLocaleString()} / ${keys.size.toLocaleString()} URL(s) in CC (${pct}% hit) -> ${warcOut}`);
+    console.error(`Next: DATABASE_URL=… node load-queue.js ${warcOut}   (the 12-region fleet then drains it)`);
+    return;
+  }
+
   // --- sitemap-finder mode: find CC-archived sitemaps whose filename is a known people/bio sitemap ---
   const sitemapNamesFile = arg("sitemap-names", "");
   if (sitemapNamesFile) {
@@ -291,7 +401,7 @@ async function main() {
   console.error(`Next: DATABASE_URL=… node load-queue.js ${warcOut}`);
 }
 
-module.exports = { buildDiscoverySql, buildCountSql, bioRegexSql, excludeRegexSql, sitemapRegexSql, buildSitemapSql, buildSitemapCountSql, parseCsv, parseCsvLine, DEFAULT_TLDS };
+module.exports = { buildDiscoverySql, buildCountSql, bioRegexSql, excludeRegexSql, sitemapRegexSql, buildSitemapSql, buildSitemapCountSql, parseCsv, parseCsvLine, normalizeKey, buildKeysTableSql, buildResolveSql, DEFAULT_TLDS };
 
 // ---- offline self-test: node cc-athena-miner.js --selftest ----
 if (require.main === module && process.argv.includes("--selftest")) {
@@ -321,6 +431,25 @@ if (require.main === module && process.argv.includes("--selftest")) {
     /regexp_like\(url_path, '\(\?i\)\/\(team-sitemap\\\.xml\)\(\\\?\|\$\)'\)/.test(smSql) && /fetch_status=200/.test(smSql));
   ok("sitemap count sql counts distinct sitemaps + domains",
     /count\(DISTINCT url\) AS sitemaps/.test(buildSitemapCountSql({ crawl: "X", tlds: ["com"], names: ["x.xml"] })));
+  // exact-URL resolution
+  ok("normalizeKey strips www + trailing slash, lowercases",
+    normalizeKey("https://www.11kbw.com/Barristers/Aileen-McColgan/") === "11kbw.com|/barristers/aileen-mccolgan");
+  ok("normalizeKey: root path -> empty path component",
+    normalizeKey("https://www.x.com/") === "x.com|" && normalizeKey("https://x.com") === "x.com|");
+  ok("normalizeKey: keeps non-www subdomains, drops query/fragment",
+    normalizeKey("http://agents.farmers.com/ca/jane-doe?ref=1#bio") === "agents.farmers.com|/ca/jane-doe");
+  ok("normalizeKey: rejects non-http(s) and junk", normalizeKey("ftp://x.com/a") === null && normalizeKey("not a url") === null);
+  const rsql = buildResolveSql({ crawls: ["CC-MAIN-2026-25", "CC-MAIN-2026-21"], keysTable: "bio_resolve_keys_t1" });
+  ok("resolve sql joins keys table to ccindex on the normalized key",
+    /JOIN ccindex_db\.bio_resolve_keys_t1 r/.test(rsql) &&
+    /r\.k = concat\(regexp_replace\(lower\(i\.url_host_name\), '\^www\\\.', ''\), '\|', lower\(rtrim\(i\.url_path, '\/'\)\)\)/.test(rsql));
+  ok("resolve sql scans the given crawls and keeps the freshest capture per key",
+    /i\.crawl IN \('CC-MAIN-2026-25','CC-MAIN-2026-21'\)/.test(rsql) &&
+    /row_number\(\) OVER \(PARTITION BY r\.k ORDER BY i\.fetch_time DESC\)/.test(rsql) && /WHERE rn = 1$/.test(rsql));
+  ok("resolve sql keeps 200 + html only", /i\.fetch_status=200/.test(rsql) && /content_mime_detected IN \('text\/html'/.test(rsql));
+  ok("keys table sql defines a one-column external table at the run prefix",
+    /CREATE EXTERNAL TABLE IF NOT EXISTS ccindex_db\.kt \(k STRING\)/.test(buildKeysTableSql({ keysTable: "kt", bucket: "b", prefix: "bio-resolve/t/" })) &&
+    /LOCATION 's3:\/\/b\/bio-resolve\/t\/'/.test(buildKeysTableSql({ keysTable: "kt", bucket: "b", prefix: "bio-resolve/t/" })));
   console.log(`\ncc-athena-miner self-test: ${p} passed, ${f} failed`);
   process.exit(f ? 1 : 0);
 } else if (require.main === module) {

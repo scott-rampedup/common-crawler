@@ -43,3 +43,5 @@ Thumbs.db
 
 cc-bio-urls*.txt
 cc-warc*.jsonl
+bio-url-splits/
+BIO URL Repository.txt
