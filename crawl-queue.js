@@ -41,8 +41,15 @@ async function makeQueue(pool, opts = {}) {
   await q(`CREATE INDEX IF NOT EXISTS idx_queue_pending ON crawl_queue (created_at) WHERE status = 'pending'`);
   await q(`CREATE INDEX IF NOT EXISTS idx_queue_status  ON crawl_queue (status)`);
 
-  // Insert pointers, skipping URLs already queued (idempotent re-loads). Chunked to stay under the
-  // 65535-param cap. pointers: [{url, filename, offset, length, timestamp}]. Returns { inserted }.
+  // Insert pointers, skipping URLs already queued (idempotent re-loads). pointers:
+  // [{url, filename, offset, length, timestamp}]. Returns { inserted }.
+  //
+  // Bulk path: load into a SESSION-LOCAL temp staging table (uncontended — no index, invisible to the
+  // fleet), then do ONE `INSERT ... SELECT ... ON CONFLICT` merge into crawl_queue. This replaces
+  // thousands of small INSERTs that each fought the 12 workers' claims/marks for locks on the live
+  // table — the load-vs-drain contention that capped bulk loads at ~150/s. Staging rows go in via
+  // native `unnest` arrays (5 array params, no 65535-param cap → big batches). Call with a large
+  // LOAD_CHUNK (e.g. 100000) so the merge runs few, big passes.
   async function enqueueMany(pointers) {
     const rows = [];
     const seen = new Set();
@@ -56,25 +63,29 @@ async function makeQueue(pool, opts = {}) {
         p.timestamp || null]);
     }
     if (!rows.length) return { inserted: 0 };
-    const perRow = 5;
-    const maxRows = Math.floor(60000 / perRow);
-    let inserted = 0;
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      for (let i = 0; i < rows.length; i += maxRows) {
-        const chunk = rows.slice(i, i + maxRows);
-        const vals = [];
-        const tuples = chunk.map((r) => '(' + r.map((v) => { vals.push(v); return '$' + vals.length; }).join(',') + ')');
-        const res = await client.query(
-          `INSERT INTO crawl_queue (url, warc_filename, warc_offset, warc_length, warc_timestamp)
-           VALUES ${tuples.join(',')} ON CONFLICT (url) DO NOTHING`, vals);
-        inserted += res.rowCount;
+      await client.query(`CREATE TEMP TABLE _stage_q (url TEXT, warc_filename TEXT, warc_offset TEXT,
+        warc_length TEXT, warc_timestamp TEXT) ON COMMIT DROP`);
+      const CH = 50000;                                        // keep each unnest array a sane size
+      for (let i = 0; i < rows.length; i += CH) {
+        const chunk = rows.slice(i, i + CH);
+        const c0 = [], c1 = [], c2 = [], c3 = [], c4 = [];
+        for (const r of chunk) { c0.push(r[0]); c1.push(r[1]); c2.push(r[2]); c3.push(r[3]); c4.push(r[4]); }
+        await client.query(
+          `INSERT INTO _stage_q (url, warc_filename, warc_offset, warc_length, warc_timestamp)
+           SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[])`,
+          [c0, c1, c2, c3, c4]);
       }
+      const res = await client.query(
+        `INSERT INTO crawl_queue (url, warc_filename, warc_offset, warc_length, warc_timestamp)
+         SELECT url, warc_filename, warc_offset, warc_length, warc_timestamp FROM _stage_q
+         ON CONFLICT (url) DO NOTHING`);
       await client.query('COMMIT');
+      return { inserted: res.rowCount };
     } catch (e) { await client.query('ROLLBACK'); throw e; }
     finally { client.release(); }
-    return { inserted };
   }
 
   // Atomically claim up to `n` pending URLs for this worker. FOR UPDATE SKIP LOCKED lets many workers
