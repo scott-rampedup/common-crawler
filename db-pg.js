@@ -138,7 +138,10 @@ async function makeDb(opts = {}) {
       const sIdx = INSERT_COLS.indexOf('score');
       if (!prev || v[sIdx] >= prev[sIdx]) byEmail.set(v[0], v);
     }
-    const rows = [...byEmail.values()];
+    // Sort by the ON CONFLICT key (email) so every worker acquires row locks in the SAME order.
+    // Without this, concurrent upserts touching overlapping emails deadlock — a storm once the
+    // S3-direct fetch made writes fast + near-simultaneous across the 12-region fleet.
+    const rows = [...byEmail.values()].sort((a, b) => { const x = String(a[0]), y = String(b[0]); return x < y ? -1 : x > y ? 1 : 0; });
     if (!rows.length) return { processed: 0, added: 0, total: await count() };
 
     const colList = INSERT_COLS.map((c) => `"${c}"`).join(', ');
@@ -148,24 +151,38 @@ async function makeDb(opts = {}) {
     const client = await pool.connect();
     let added = 0, processed = 0;
     try {
-      await client.query('BEGIN');
-      for (let i = 0; i < rows.length; i += maxRows) {
-        const chunk = rows.slice(i, i + maxRows);
-        const values = [];
-        const tuples = chunk.map((row) => {
-          const ph = row.map((val) => { values.push(pgSafe(val)); return '$' + values.length; });
-          return '(' + ph.join(', ') + ')';
-        });
-        const sql = `INSERT INTO contacts (${colList}) VALUES ${tuples.join(', ')}
-          ON CONFLICT (email) DO UPDATE SET ${setList} WHERE EXCLUDED.score >= contacts.score
-          RETURNING (xmax = 0) AS inserted`;
-        const res = await client.query(sql, values);
-        processed += chunk.length;
-        for (const r of res.rows) if (r.inserted) added++;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          added = 0; processed = 0;
+          await client.query('BEGIN');
+          for (let i = 0; i < rows.length; i += maxRows) {
+            const chunk = rows.slice(i, i + maxRows);
+            const values = [];
+            const tuples = chunk.map((row) => {
+              const ph = row.map((val) => { values.push(pgSafe(val)); return '$' + values.length; });
+              return '(' + ph.join(', ') + ')';
+            });
+            const sql = `INSERT INTO contacts (${colList}) VALUES ${tuples.join(', ')}
+              ON CONFLICT (email) DO UPDATE SET ${setList} WHERE EXCLUDED.score >= contacts.score
+              RETURNING (xmax = 0) AS inserted`;
+            const res = await client.query(sql, values);
+            processed += chunk.length;
+            for (const r of res.rows) if (r.inserted) added++;
+          }
+          await client.query('COMMIT');
+          break;
+        } catch (e) {
+          try { await client.query('ROLLBACK'); } catch (_) { /* already aborted */ }
+          // Deadlock (40P01) is transient — with the sort it should be rare; retry a few times before
+          // bubbling up (the worker requeues on a final failure).
+          if (attempt < 4 && (e.code === '40P01' || /deadlock/i.test(String(e.message || '')))) {
+            await new Promise((r) => setTimeout(r, 40 * attempt + Math.floor(Math.random() * 40)));
+            continue;
+          }
+          throw e;
+        }
       }
-      await client.query('COMMIT');
-    } catch (e) { await client.query('ROLLBACK'); throw e; }
-    finally { client.release(); }
+    } finally { client.release(); }
     return { processed, added, total: await count() };
   }
 
