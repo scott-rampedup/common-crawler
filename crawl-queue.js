@@ -95,22 +95,31 @@ async function makeQueue(pool, opts = {}) {
     }));
   }
 
-  // Mark a batch done (status='done'), recording how many records each URL yielded.
+  // Mark a batch done (status='done'), recording how many records each URL yielded. ONE bulk UPDATE
+  // from a VALUES list instead of 200 round-trips/batch — the fetch was cross-region-latency-bound on
+  // these per-row UPDATEs once the S3 fetch path removed the download bottleneck.
   async function markDoneMany(items) {
-    const list = (items || []).filter((it) => it && it.url);
-    if (!list.length) return 0;
-    const client = await pool.connect();
+    const byUrl = new Map();
+    for (const it of (items || [])) if (it && it.url) byUrl.set(it.url, it.records | 0);
+    const entries = [...byUrl.entries()];
+    if (!entries.length) return 0;
+    const maxRows = 30000;   // 2 params/row, stay under the 65535 bind-param cap
     let n = 0;
-    try {
-      await client.query('BEGIN');
-      for (const it of list) {
-        n += (await client.query(
-          `UPDATE crawl_queue SET status='done', done_at=now(), records=$2, error=NULL WHERE url=$1`,
-          [it.url, it.records | 0])).rowCount;
-      }
-      await client.query('COMMIT');
-    } catch (e) { await client.query('ROLLBACK'); throw e; }
-    finally { client.release(); }
+    for (let i = 0; i < entries.length; i += maxRows) {
+      const chunk = entries.slice(i, i + maxRows);
+      const params = [];
+      const tuples = chunk.map(([url, records]) => {
+        params.push(url, records);
+        // cast the FIRST tuple so Postgres infers the VALUES column types (text, int)
+        return params.length === 2 ? `($1::text, $2::int)` : `($${params.length - 1}, $${params.length})`;
+      });
+      const res = await q(
+        `UPDATE crawl_queue AS c SET status='done', done_at=now(), records=v.records, error=NULL
+         FROM (VALUES ${tuples.join(', ')}) AS v(url, records)
+         WHERE c.url = v.url`,
+        params);
+      n += res.rowCount;
+    }
     return n;
   }
 
