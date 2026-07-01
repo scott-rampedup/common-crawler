@@ -12,10 +12,12 @@
  *   node worker.js --stats        # print queue stats and exit
  *   node worker.js --selftest     # offline orchestration test
  *
- * Env: DATABASE_URL, WORKER_CONCURRENCY (default 8), WORKER_BATCH (default 200),
- *      WARC_RPS (default 10 — polite per-worker fetch rate; CC 403s a hammering IP),
- *      WARC_RETRIES (default 4), WORKER_MODEL_EMAILS (default on — model email-less bios from the
- *      company pattern so they aren't dropped), WORKER_ID (default hostname), PGSSL=1 to enable TLS.
+ * Env: DATABASE_URL, WORKER_CONCURRENCY (default 8, or 32 when WARC_S3), WORKER_BATCH (default 200),
+ *      WARC_S3=1 (fetch signed s3://commoncrawl direct instead of CloudFront — bypasses the ~10 req/s
+ *      per-IP throttle; needs AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY in env),
+ *      WARC_RPS (default 10, or 200 when WARC_S3), WARC_RETRIES (default 4),
+ *      WORKER_MODEL_EMAILS (default on — model email-less bios from the company pattern so they aren't
+ *      dropped), WORKER_ID (default hostname), PGSSL=1 to enable TLS.
  */
 const path = require('path');
 
@@ -188,14 +190,20 @@ async function runMain() {
   const wireless = loadWirelessBlocks(path.join(__dirname, 'phone-blocks.csv'));
   const genderMap = extractor.loadGenderMap(path.join(__dirname, 'names-genders.csv'));
   const workerId = process.env.WORKER_ID || os.hostname();
+  // Fetch path. Default = data.commoncrawl.org (CloudFront), which rate-shapes ~10 req/s per egress IP.
+  // WARC_S3=1 = signed s3://commoncrawl direct (cc-s3): NOT per-IP throttled, so each worker can pull
+  // far more — needs AWS creds in env (Fly secrets). S3 gets its own higher concurrency/rate defaults.
+  const useS3 = /^(1|true|yes|on)$/i.test(process.env.WARC_S3 || '');
+  const fetchWarc = useS3 ? require('./cc-s3').makeCcS3() : engine.fetchWarc;
+  console.log(`[${workerId}] WARC fetch path: ${useS3 ? 's3://commoncrawl (direct, signed)' : 'data.commoncrawl.org (CloudFront)'}`);
   const worker = makeWorker({
     queue, dbpg,
-    fetchWarc: engine.fetchWarc, extractRecord: extractor.extractRecord,
+    fetchWarc, extractRecord: extractor.extractRecord,
     analyzePhones: extractor.analyzePhones, geocodeRecords: extractor.geocodeRecords,
     wireless, genderMap, workerId,
-    concurrency: Number(process.env.WORKER_CONCURRENCY) || 8,
+    concurrency: Number(process.env.WORKER_CONCURRENCY) || (useS3 ? 32 : 8),
     batchSize: Number(process.env.WORKER_BATCH) || 200,
-    warcRps: Number(process.env.WARC_RPS) || 10,         // polite per-worker fetch rate (CC 403s a hammering IP)
+    warcRps: Number(process.env.WARC_RPS) || (useS3 ? 200 : 10),   // S3 direct isn't per-IP shaped like CloudFront
     fetchRetries: Number(process.env.WARC_RETRIES) || 4,
     modelMissingEmails: require('./email-model').modelMissingEmails,
     modelEmails: !/^(0|false|no|off)$/i.test(process.env.WORKER_MODEL_EMAILS || '1'),   // model email-less bios (default on)

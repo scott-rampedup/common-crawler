@@ -53,7 +53,16 @@ function makeCcS3(opts = {}) {
       Range: `bytes=${start}-${end}`,
       ...(requestPays ? { RequestPayer: 'requester' } : {}),
     });
-    const res = await s3.send(cmd);
+    let res;
+    try {
+      res = await s3.send(cmd);
+    } catch (e) {
+      const code = (e && e.$metadata && e.$metadata.httpStatusCode) || 0;
+      const name = (e && (e.name || e.Code)) || 'error';
+      if (code === 404 || /NoSuchKey|InvalidRange/i.test(name)) return '';   // record gone -> caller marks done
+      // surface the HTTP status so the worker's transient-retry (403/429/5xx) backs off + retries throttles
+      throw new Error(`s3 ${code || name} for ${ptr.url}: ${e && e.message}`);
+    }
     const gz = await streamToBuffer(res.Body);
     // WARC records are per-record gzip members; gunzipSync stops at the first member's end.
     let raw;
