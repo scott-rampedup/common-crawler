@@ -143,7 +143,17 @@ function makeWorker(deps = {}) {
         continue;
       }
       emptyPolls = 0;
-      const r = await runBatch(batch);
+      let r;
+      try {
+        r = await runBatch(batch);
+      } catch (e) {
+        // A batch-level failure (e.g. a PG write error) must NOT crash the worker into a restart loop
+        // on the same poison batch. Log, requeue the batch's URLs (markError -> retry, park after
+        // maxAttempts), and move on so the fleet keeps draining.
+        log(`batch error: ${e && e.message}; requeuing ${batch.length} url(s)`);
+        for (const p of batch) { try { await queue.markError(p.url, 'batch: ' + String(e && e.message || 'error').slice(0, 200)); } catch (_) { /* best effort */ } }
+        continue;
+      }
       totals.batches++; totals.claimed += r.claimed; totals.extracted += r.extracted;
       totals.added += r.added; totals.errors += r.errors;
       log(`batch #${totals.batches}: claimed ${r.claimed}, extracted ${r.extracted}, +${r.added} new, ${r.errors} err  (cum +${totals.added})`);

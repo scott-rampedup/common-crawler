@@ -22,6 +22,16 @@ const FIELDS = ['Time Stamp', 'Source', 'Web Source URL', 'Directory', 'Path ID'
   'Email Address', 'Email Type', 'LinkedIn URL', 'Facebook', 'Twitter', 'WhatsApp', 'Google Maps', 'vCard', 'Phone', 'Phone Type',
   'Phone Location', 'Phone 2', 'Phone 2 Type', 'Phone 2 Location', 'Type'];
 const colName = (f) => f.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+
+// Postgres text can't hold a NUL byte (0x00) — one in an extracted bio aborts the whole INSERT with
+// "invalid byte sequence for encoding UTF8: 0x00", which used to crash the worker on a poison batch.
+// Strip NULs and drop unpaired UTF-16 surrogates (also invalid UTF-8). Non-strings pass through.
+function pgSafe(v) {
+  if (typeof v !== 'string') return v;
+  if (v.indexOf('\x00') === -1 && !/[\uD800-\uDFFF]/.test(v)) return v;
+  return v.replace(/\x00/g, '')
+          .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+}
 const COLS = FIELDS.map(colName);
 const FIELD_BY_COL = Object.fromEntries(FIELDS.map((f) => [colName(f), f]));
 const SORT_COLS = new Set([...COLS, 'domain']);
@@ -143,7 +153,7 @@ async function makeDb(opts = {}) {
         const chunk = rows.slice(i, i + maxRows);
         const values = [];
         const tuples = chunk.map((row) => {
-          const ph = row.map((val) => { values.push(val); return '$' + values.length; });
+          const ph = row.map((val) => { values.push(pgSafe(val)); return '$' + values.length; });
           return '(' + ph.join(', ') + ')';
         });
         const sql = `INSERT INTO contacts (${colList}) VALUES ${tuples.join(', ')}
