@@ -63,21 +63,27 @@ async function makeQueue(pool, opts = {}) {
         p.timestamp || null]);
     }
     if (!rows.length) return { inserted: 0 };
+    const { from: copyFrom } = require('pg-copy-streams');
+    // COPY text-format escaping: NULL -> \N; escape backslash/newline/CR/tab in values.
+    const esc = (v) => (v == null ? '\\N' : String(v).replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t'));
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       await client.query(`CREATE TEMP TABLE _stage_q (url TEXT, warc_filename TEXT, warc_offset TEXT,
         warc_length TEXT, warc_timestamp TEXT) ON COMMIT DROP`);
-      const CH = 50000;                                        // keep each unnest array a sane size
-      for (let i = 0; i < rows.length; i += CH) {
-        const chunk = rows.slice(i, i + CH);
-        const c0 = [], c1 = [], c2 = [], c3 = [], c4 = [];
-        for (const r of chunk) { c0.push(r[0]); c1.push(r[1]); c2.push(r[2]); c3.push(r[3]); c4.push(r[4]); }
-        await client.query(
-          `INSERT INTO _stage_q (url, warc_filename, warc_offset, warc_length, warc_timestamp)
-           SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[])`,
-          [c0, c1, c2, c3, c4]);
-      }
+      // Stream rows into staging via COPY — no per-row bind params or array-literal parsing (the cap
+      // on the unnest path). Then ONE ON CONFLICT merge into crawl_queue.
+      const cp = client.query(copyFrom(`COPY _stage_q (url, warc_filename, warc_offset, warc_length, warc_timestamp) FROM STDIN`));
+      await new Promise((resolve, reject) => {
+        cp.on('error', reject);
+        cp.on('finish', resolve);
+        (async () => {
+          for (const r of rows) {
+            if (!cp.write(r.map(esc).join('\t') + '\n')) await new Promise((res) => cp.once('drain', res));
+          }
+          cp.end();
+        })().catch(reject);
+      });
       const res = await client.query(
         `INSERT INTO crawl_queue (url, warc_filename, warc_offset, warc_length, warc_timestamp)
          SELECT url, warc_filename, warc_offset, warc_length, warc_timestamp FROM _stage_q
