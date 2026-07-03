@@ -38,8 +38,8 @@ const sqlStrList = (arr) => arr.map((t) => `'${String(t).toLowerCase().replace(/
 const bioRegexSql = (terms) => "(?i)/(" + terms.map(escAlt).join("|") + ")(/|$)";
 const excludeRegexSql = (terms) => "(?i)/(" + terms.map(escAlt).join("|") + ")/";
 
-function buildDiscoverySql({ crawl, tlds, perDomain, limit }) {
-  const bio = bioRegexSql(DEFAULT_BIO).replace(/'/g, "''");
+function buildDiscoverySql({ crawl, tlds, perDomain, limit, bioTerms }) {
+  const bio = bioRegexSql(bioTerms && bioTerms.length ? bioTerms : DEFAULT_BIO).replace(/'/g, "''");
   const exc = excludeRegexSql(EXCLUDE_TERMS).replace(/'/g, "''");
   const capCol = perDomain > 0 ? `,\n         row_number() OVER (PARTITION BY url_host_registered_domain ORDER BY url_path) AS rn` : "";
   const inner =
@@ -62,8 +62,8 @@ function buildDiscoverySql({ crawl, tlds, perDomain, limit }) {
   return sql;
 }
 
-function buildCountSql({ crawl, tlds }) {
-  const bio = bioRegexSql(DEFAULT_BIO).replace(/'/g, "''");
+function buildCountSql({ crawl, tlds, bioTerms }) {
+  const bio = bioRegexSql(bioTerms && bioTerms.length ? bioTerms : DEFAULT_BIO).replace(/'/g, "''");
   const exc = excludeRegexSql(EXCLUDE_TERMS).replace(/'/g, "''");
   return `SELECT count(*) AS pages, count(DISTINCT url_host_registered_domain) AS domains
 FROM ${DB}.ccindex
@@ -286,6 +286,13 @@ async function main() {
   const perDomain = Number(arg("per-domain", "30")) || 0;
   const limit = Number(arg("limit", "0")) || 0;
   const warcOut = arg("warc-out", "");
+  // --bio-terms-file: override DEFAULT_BIO with a bigger path-pattern set (one term/line), e.g. the
+  // People+Company Path IDs from Directories.xlsx — widens bio-URL discovery.
+  const bioTermsFile = arg("bio-terms-file", "");
+  const bioTerms = bioTermsFile
+    ? require("fs").readFileSync(bioTermsFile, "utf8").split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+    : null;
+  if (bioTerms) console.error(`bio terms: ${bioTerms.length} from ${bioTermsFile} (vs ${DEFAULT_BIO.length} default)`);
 
   await ensureBucket(A, bucket);
   await ensureTable(A, crawl, output);
@@ -297,7 +304,11 @@ async function main() {
   if (resolveFile) {
     if (!warcOut) { console.error("--resolve-urls requires --warc-out <file>"); return; }
     const lastN = Number(arg("last-n", "1")) || 1;
-    const crawls = arg("crawl", "") ? [crawl] : await latestCrawls(lastN);
+    // --crawls c1,c2,... scans an EXACT crawl set (e.g. only older crawls, to widen coverage without
+    // re-scanning ones already resolved). Else --crawl (single) or the latest N.
+    const crawlsArg = arg("crawls", "");
+    const crawls = crawlsArg ? crawlsArg.split(",").map((s) => s.trim()).filter(Boolean)
+      : (arg("crawl", "") ? [crawl] : await latestCrawls(lastN));
     console.error(`Resolve mode: ${resolveFile} -> ${warcOut}; crawls: ${crawls.join(", ")}`);
 
     // 1) Build the normalized, de-duplicated key set from the URL file (streamed; the file is ~95MB).
@@ -386,7 +397,7 @@ async function main() {
   }
 
   if (flag("count") || !warcOut) {
-    const { id } = await runAthena(A, buildCountSql({ crawl, tlds }), output, "count");
+    const { id } = await runAthena(A, buildCountSql({ crawl, tlds, bioTerms }), output, "count");
     const csv = await s3Text(A, (await A.athena.send(new A.GetQueryExecutionCommand({ QueryExecutionId: id }))).QueryExecution.ResultConfiguration.OutputLocation);
     const rows = []; parseCsv(csv, (r) => rows.push(r));
     const [pages, domains] = rows[1] || [];
@@ -395,7 +406,7 @@ async function main() {
   }
 
   console.error(`\nDiscovering pointers -> ${warcOut} (per-domain<=${perDomain || "∞"}${limit ? `, limit ${limit}` : ""}) ...`);
-  const { id } = await runAthena(A, buildDiscoverySql({ crawl, tlds, perDomain, limit }), output, "discover");
+  const { id } = await runAthena(A, buildDiscoverySql({ crawl, tlds, perDomain, limit, bioTerms }), output, "discover");
   const loc = (await A.athena.send(new A.GetQueryExecutionCommand({ QueryExecutionId: id }))).QueryExecution.ResultConfiguration.OutputLocation;
   const ws = fs.createWriteStream(warcOut);
   let seen = 0, written = 0;
