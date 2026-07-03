@@ -123,7 +123,13 @@ async function makeDb(opts = {}) {
   }
 
   async function count() { return Number((await q('SELECT COUNT(*) c FROM contacts')).rows[0].c); }
-  async function stats() { return { total: await count() }; }
+  // O(1) planner estimate — an EXACT count(*) on the multi-million-row contacts table is a full scan;
+  // calling it per upsert batch across the fleet created a self-reinforcing IO storm that melted the DB.
+  async function countApprox() {
+    const est = Number((await q(`SELECT reltuples::bigint c FROM pg_class WHERE oid = 'contacts'::regclass`)).rows[0].c);
+    return est > 0 ? est : await count();          // fall back to exact only if never analyzed
+  }
+  async function stats() { return { total: await countApprox() }; }
 
   // Multi-row, score-gated upsert. Dedupe within the batch (max score wins; ties keep the last,
   // matching db.js's sequential overwrite), then chunk to stay under PG's param limit, INSERT ...
@@ -142,7 +148,7 @@ async function makeDb(opts = {}) {
     // Without this, concurrent upserts touching overlapping emails deadlock — a storm once the
     // S3-direct fetch made writes fast + near-simultaneous across the 12-region fleet.
     const rows = [...byEmail.values()].sort((a, b) => { const x = String(a[0]), y = String(b[0]); return x < y ? -1 : x > y ? 1 : 0; });
-    if (!rows.length) return { processed: 0, added: 0, total: await count() };
+    if (!rows.length) return { processed: 0, added: 0, total: await countApprox() };
 
     const colList = INSERT_COLS.map((c) => `"${c}"`).join(', ');
     const setList = INSERT_COLS.filter((c) => c !== 'email').map((c) => `"${c}" = EXCLUDED."${c}"`).join(', ');
@@ -183,7 +189,7 @@ async function makeDb(opts = {}) {
         }
       }
     } finally { client.release(); }
-    return { processed, added, total: await count() };
+    return { processed, added, total: await countApprox() };
   }
 
   // Exact COUNT(*) over a multi-million-row table is a full scan on EVERY page load — the main
