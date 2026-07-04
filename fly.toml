@@ -7,6 +7,7 @@ primary_region = 'ewr'   # must match the existing 'data' volume's region
 [env]
   DATA_DIR = '/data'
   DEMO_MODE = 'false'
+  SEARCH_BACKEND = 'opensearch'   # serve the Master DB read path from the OpenSearch production store (needs OPENSEARCH_ENDPOINT secret)
   NODE_OPTIONS = '--max-old-space-size=6144'   # let V8 use the 8GB box (default ~2GB caused SIGABRT)
   LIVE_MAX_PAGES = '300'        # max pages the live crawler fetches per domain (sitemap-driven)
   DOMAIN_CONCURRENCY = '48'     # total domains/URLs in flight (safe now: rotating proxy IPs)
