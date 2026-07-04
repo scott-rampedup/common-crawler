@@ -119,8 +119,11 @@ function makeOsReader(endpoint) {
     each: (o, cb) => openSearch.each(client, o, cb),
     facets: () => openSearch.facets(client),
     stats: () => openSearch.stats(client),
+    put: (docs) => openSearch.indexDocs(client, docs),           // authoritative edit write-through
+    del: (emails) => openSearch.bulkDelete(client, emails),      // delete write-through
   };
 }
+let osSync = null;   // background delta syncer handle (fleet-ingested contacts -> OpenSearch)
 const monitorDb = sqliteDb;        // sitemap-monitor tables always live in SQLite
 const aiEnrich = require('./ai-enrich');
 
@@ -1318,6 +1321,21 @@ const server = http.createServer(async (req, res) => {
           try { return { email: e.email, ...(await db.updateRecord(e.email, e.updates || {})) }; }
           catch (err) { return { email: e.email, ok: false, error: err.message || 'update failed' }; }
         }));
+        // Write-through edits to OpenSearch so they reflect immediately (authoritative, bypasses the
+        // score gate). On an email change, also delete the stale old-email doc.
+        if (reader._os) {
+          const docs = [], dels = [], nowIso = new Date().toISOString();
+          for (const r of results) {
+            if (!r.ok || !r.record) continue;
+            docs.push(openSearch.recordToDoc(r.record, nowIso));
+            const newEmail = String(r.record['Email Address'] || '').trim().toLowerCase();
+            if (r.email && String(r.email).trim().toLowerCase() !== newEmail) dels.push(r.email);
+          }
+          try {
+            if (docs.length) await reader.put(docs);
+            if (dels.length) await reader.del(dels);
+          } catch (e) { console.error('OpenSearch edit write-through failed:', e.message); }
+        }
         sendJson(res, { results });
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -1344,6 +1362,8 @@ const server = http.createServer(async (req, res) => {
         }
         const before = await db.count();
         for (const e of emails) await db.deleteByEmail(e);
+        // Write-through the deletes to OpenSearch (a delta scan can't see a removed row).
+        if (reader._os) { try { await reader.del(emails); } catch (e) { console.error('OpenSearch delete write-through failed:', e.message); } }
         sendJson(res, { deleted: before - await db.count() });
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -1484,6 +1504,15 @@ pruneOldJobs();
     try {
       reader = makeOsReader(process.env.OPENSEARCH_ENDPOINT);
       console.log('Search backend: OpenSearch (SEARCH_BACKEND=opensearch).');
+      // Keep OpenSearch current with the processing DB: stream fleet-ingested/edited contacts across.
+      // Only meaningful when the source of truth is Postgres (DATABASE_URL); SQLite fallback has no fleet.
+      if (process.env.DATABASE_URL && process.env.OS_SYNC !== '0') {
+        osSync = require('./opensearch-sync').startSync({
+          endpoint: process.env.OPENSEARCH_ENDPOINT,
+          connectionString: process.env.DATABASE_URL, ssl: !!process.env.PGSSL,
+        });
+        console.log('OpenSearch delta sync: ON.');
+      }
     } catch (e) {
       console.error('OpenSearch reader init FAILED — search falls back to the DB:', e.message);
       reader = db;

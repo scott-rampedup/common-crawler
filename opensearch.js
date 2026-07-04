@@ -245,7 +245,48 @@ async function count(client, o) {
 }
 async function stats(client) { return { total: await count(client) }; }
 
+// ---- authoritative writes (UI edits / deletes) — bypass the score gate, the analyst's change wins ----
+const SCORE_FIELDS_D = ['First', 'Last', 'Title', 'Position', 'Phone', 'Phone 2', 'LinkedIn URL',
+  'Gender', 'Phone Location', 'Image URL', 'Description', 'Google Maps'];
+function recordScore(rec) { let s = 0; for (const f of SCORE_FIELDS_D) if (String(rec[f] || '').trim()) s++; return s; }
+
+// display-field record (rowToRecord shape) -> OpenSearch doc. Inverse of docToRecord.
+function recordToDoc(rec, updatedAt) {
+  const first = rec['First'] || '', last = rec['Last'] || '';
+  const doc = {};
+  for (const f in FIELD_TO_DOC) doc[FIELD_TO_DOC[f]] = rec[f] || '';
+  doc.name = `${first} ${last}`.trim();
+  doc.domain = rec['Domain'] || '';
+  doc.company = rec['Domain'] || doc.company || '';
+  doc.score = recordScore(rec);
+  doc.updated_at = updatedAt || null;
+  return doc;
+}
+
+// Unconditional bulk index (_id = email). Use for UI edits so they always overwrite regardless of score.
+async function indexDocs(client, docs) {
+  const body = [];
+  for (const d of docs) { if (!d.email) continue; body.push({ index: { _index: INDEX, _id: String(d.email).toLowerCase() } }, d); }
+  if (!body.length) return { indexed: 0, errors: 0 };
+  const res = await client.bulk({ body, refresh: false });
+  let errors = 0;
+  if (res.body.errors) for (const it of res.body.items) if (it.index && it.index.error) errors++;
+  return { indexed: docs.length, errors };
+}
+
+// Bulk delete by email (_id). Deletes can't be captured by an updated_at delta scan — the row is gone.
+async function bulkDelete(client, emails) {
+  const body = [];
+  for (const e of emails) { const id = String(e || '').trim().toLowerCase(); if (id) body.push({ delete: { _index: INDEX, _id: id } }); }
+  if (!body.length) return { deleted: 0 };
+  const res = await client.bulk({ body, refresh: false });
+  let deleted = 0;
+  if (res.body.items) for (const it of res.body.items) if (it.delete && (it.delete.result === 'deleted' || it.delete.status === 200)) deleted++;
+  return { deleted };
+}
+
 module.exports = {
   makeClient, ensureIndex, rowToDoc, bulkUpsert, INDEX, MAPPING,
   search, each, facets, count, stats, docToRecord, buildQuery,
+  recordToDoc, indexDocs, bulkDelete,
 };
