@@ -30,7 +30,11 @@ function makeClient(endpoint) {
 
 // Index mapping: text for search, keyword for filters/facets/export/sort, integer score for ranking.
 const MAPPING = {
-  settings: { number_of_shards: 2, number_of_replicas: 1, 'index.mapping.total_fields.limit': 200 },
+  settings: {
+    number_of_shards: 2, number_of_replicas: 1,
+    'index.mapping.total_fields.limit': 200,
+    'index.max_result_window': 50000,   // allow deeper paging than the 10k default
+  },
   mappings: { properties: {
     email:          { type: 'keyword' },
     first:          { type: 'text', fields: { kw: { type: 'keyword' } } },
@@ -41,6 +45,8 @@ const MAPPING = {
     company:        { type: 'text', fields: { kw: { type: 'keyword' } } },
     domain:         { type: 'keyword' },
     description:    { type: 'text' },
+    path_id:        { type: 'keyword' },
+    last_path:      { type: 'keyword' },
     email_type:     { type: 'keyword' },
     gender:         { type: 'keyword' },
     phone:          { type: 'keyword' },
@@ -83,6 +89,7 @@ function rowToDoc(r) {
     title: r.title || '', position: r.position || '',
     company: r.company || r.domain || '', domain: r.domain || '',
     description: r.description || '',
+    path_id: r.path_id || '', last_path: r.last_path || '',
     email_type: r.email_type || '', gender: r.gender || '',
     phone: r.phone || '', phone_type: r.phone_type || '', phone_location: r.phone_location || '',
     phone_2: r.phone_2 || '', phone_2_type: r.phone_2_type || '', phone_2_location: r.phone_2_location || '',
@@ -116,4 +123,129 @@ async function bulkUpsert(client, docs) {
   return { indexed: docs.length, errors };
 }
 
-module.exports = { makeClient, ensureIndex, rowToDoc, bulkUpsert, INDEX, MAPPING };
+// ---------------------------------------------------------------------------------------------------
+// READ PATH — the UI's Master DB tab (search / filter / export / facets) served from OpenSearch.
+// Mirrors db-pg.js query()/each()/facets()/stats() so ui-server can swap backends behind a flag:
+// same filter semantics, same {rows,total,approx,page,pageSize} shape, same display-field records.
+// ---------------------------------------------------------------------------------------------------
+const colName = (f) => String(f).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+
+// doc (snake_case) -> display record ('Email Address', 'First', ...), the shape the front-end expects.
+const FIELD_TO_DOC = {
+  'Time Stamp': 'time_stamp', 'Source': 'source', 'Web Source URL': 'web_source_url', 'Directory': 'directory',
+  'Path ID': 'path_id', 'Last Path': 'last_path', 'Bio Check': 'bio_check', 'First': 'first', 'Last': 'last',
+  'Gender': 'gender', 'Title': 'title', 'Position': 'position', 'Description': 'description', 'Image URL': 'image_url',
+  'Email Address': 'email', 'Email Type': 'email_type', 'LinkedIn URL': 'linkedin_url', 'Facebook': 'facebook',
+  'Twitter': 'twitter', 'WhatsApp': 'whatsapp', 'Google Maps': 'google_maps', 'vCard': 'vcard', 'Phone': 'phone',
+  'Phone Type': 'phone_type', 'Phone Location': 'phone_location', 'Phone 2': 'phone_2', 'Phone 2 Type': 'phone_2_type',
+  'Phone 2 Location': 'phone_2_location', 'Type': 'type',
+};
+function docToRecord(doc) {
+  const rec = {};
+  for (const f in FIELD_TO_DOC) rec[f] = doc[FIELD_TO_DOC[f]] || '';
+  rec.Domain = doc.domain || '';
+  return rec;
+}
+
+// Columns we can sort on server-side (keyword / .kw subfield). Mirrors db-pg SORT_COLS best-effort.
+const SORTABLE = {
+  first: 'first.kw', last: 'last.kw', title: 'title.kw', company: 'company.kw',
+  directory: 'directory', email_type: 'email_type', phone_type: 'phone_type', gender: 'gender',
+  domain: 'domain', position: 'position', phone: 'phone', type: 'type', source: 'source', email: 'email',
+};
+
+// Translate the UI filter opts into an OpenSearch query. Same semantics as db-pg whereFor():
+// exact (case-insensitive) for facet dropdowns, substring for position/location, subdomain match for
+// domains[], non-empty for linkedin, M/F buckets for gender, and free-text search across the person fields.
+function buildQuery(o = {}) {
+  const filter = [], must = [];
+  const ciTerm = (field, value) => ({ term: { [field]: { value: String(value), case_insensitive: true } } });
+  const ciWild = (field, value) => ({ wildcard: { [field]: { value: '*' + String(value).toLowerCase() + '*', case_insensitive: true } } });
+  if (o.directory) filter.push(ciTerm('directory', o.directory));
+  if (o.emailType) filter.push(ciTerm('email_type', o.emailType));
+  if (o.phoneType) filter.push(ciTerm('phone_type', o.phoneType));
+  if (o.type) filter.push(ciTerm('type', o.type));
+  if (o.domain) filter.push({ term: { domain: String(o.domain).toLowerCase() } });
+  if (o.position) filter.push(ciWild('position', o.position));
+  if (o.location) filter.push({ bool: { minimum_should_match: 1, should: [ciWild('phone_location', o.location), ciWild('phone_2_location', o.location)] } });
+  if (Array.isArray(o.domains) && o.domains.length) {
+    const should = [];
+    for (const d of o.domains) {
+      const dl = String(d || '').trim().toLowerCase().replace(/^www\./, '');
+      if (!dl) continue;
+      should.push({ term: { domain: dl } }, { wildcard: { domain: { value: '*.' + dl } } });
+    }
+    if (should.length) filter.push({ bool: { minimum_should_match: 1, should } });
+  }
+  if (o.linkedin) filter.push({ bool: { must_not: [{ term: { linkedin_url: '' } }] } });
+  switch (o.gender) {
+    case 'male': filter.push(ciTerm('gender', 'M')); break;
+    case 'female': filter.push(ciTerm('gender', 'F')); break;
+    case 'all': filter.push({ terms: { gender: ['M', 'F', 'm', 'f'] } }); break;
+    case 'none': filter.push({ bool: { must_not: [{ terms: { gender: ['M', 'F', 'm', 'f'] } }] } }); break;
+    default: break;
+  }
+  if (o.search) must.push({ multi_match: { query: String(o.search), type: 'cross_fields', operator: 'and',
+    fields: ['name^2', 'first', 'last', 'title', 'company', 'description', 'position', 'email', 'domain', 'phone'] } });
+  if (!filter.length && !must.length) return { match_all: {} };
+  const bool = {};
+  if (filter.length) bool.filter = filter;
+  if (must.length) bool.must = must;
+  return { bool };
+}
+
+function sortFor(o = {}) {
+  let col = colName(o.sort || ''); if (o.sort === 'Domain') col = 'domain';
+  if (SORTABLE[col]) return [{ [SORTABLE[col]]: { order: Number(o.dir) === -1 ? 'desc' : 'asc', missing: '_last' } }];
+  // Default: newest-scanned first (updated_at is an ISO string / date).
+  return [{ updated_at: { order: Number(o.dir) === -1 ? 'asc' : 'desc', missing: '_last' } }];
+}
+
+async function search(client, o = {}) {
+  const pageSize = Math.min(500, Math.max(1, Number(o.pageSize) || 50));
+  const page = Math.max(1, Number(o.page) || 1);
+  let from = (page - 1) * pageSize;
+  const WINDOW = 50000;
+  if (from + pageSize > WINDOW) from = Math.max(0, WINDOW - pageSize);   // stay within max_result_window
+  const res = await client.search({ index: INDEX, body: {
+    track_total_hits: 10000, from, size: pageSize, query: buildQuery(o), sort: sortFor(o) } });
+  const h = res.body.hits;
+  const total = typeof h.total === 'object' ? h.total.value : h.total;
+  const approx = (typeof h.total === 'object' && h.total.relation === 'gte') ? 'capped' : null;
+  return { rows: h.hits.map((x) => docToRecord(x._source)), total, approx, page, pageSize };
+}
+
+// Stream every matching record to cb, keyset-paginated by email via search_after (efficient at scale).
+async function each(client, o, cb) {
+  const query = buildQuery(o || {});
+  let after;
+  for (;;) {
+    const body = { size: 5000, query, sort: [{ email: 'asc' }] };
+    if (after) body.search_after = after;
+    const hits = (await client.search({ index: INDEX, body })).body.hits.hits;
+    if (!hits.length) break;
+    for (const x of hits) cb(docToRecord(x._source));
+    if (hits.length < 5000) break;
+    after = hits[hits.length - 1].sort;
+  }
+}
+
+async function facets(client) {
+  const agg = (field) => ({ terms: { field, size: 1000, order: { _key: 'asc' } } });
+  const res = await client.search({ index: INDEX, body: { size: 0, aggs: {
+    directory: agg('directory'), emailType: agg('email_type'), phoneType: agg('phone_type'), type: agg('type') } } });
+  const a = res.body.aggregations;
+  const vals = (k) => (a[k].buckets || []).map((b) => b.key).filter((v) => v !== '');
+  return { directory: vals('directory'), emailType: vals('emailType'), phoneType: vals('phoneType'), type: vals('type') };
+}
+
+async function count(client, o) {
+  const body = { query: o ? buildQuery(o) : { match_all: {} } };
+  return (await client.count({ index: INDEX, body })).body.count;
+}
+async function stats(client) { return { total: await count(client) }; }
+
+module.exports = {
+  makeClient, ensureIndex, rowToDoc, bulkUpsert, INDEX, MAPPING,
+  search, each, facets, count, stats, docToRecord, buildQuery,
+};

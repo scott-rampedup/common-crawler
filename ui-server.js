@@ -104,7 +104,23 @@ const { makeDb } = require('./db');
 const { makeDb: makeContactsPg } = require('./db-pg');
 const CONTACTS_PG = /^(1|true|yes|on)$/i.test(process.env.CONTACTS_PG || '');
 const sqliteDb = makeDb(DATA_DIR);
-let db = sqliteDb;                 // contacts backend — reassigned to Postgres in startup() if flagged
+let db = sqliteDb;                 // contacts backend (writes/edits) — reassigned to Postgres in startup() if flagged
+
+// Two-plane read path: the Master DB tab (search / filter / export / facets) can be served from the
+// OpenSearch production store instead of the processing DB. `reader` is what those read endpoints use;
+// it points at OpenSearch when SEARCH_BACKEND=opensearch (+ OPENSEARCH_ENDPOINT), else at `db`.
+const openSearch = require('./opensearch');
+let reader = db;                   // read backend for search/export/facets/stats — set in startup()
+function makeOsReader(endpoint) {
+  const client = openSearch.makeClient(endpoint);
+  return {
+    _os: true,
+    query: (o) => openSearch.search(client, o),
+    each: (o, cb) => openSearch.each(client, o, cb),
+    facets: () => openSearch.facets(client),
+    stats: () => openSearch.stats(client),
+  };
+}
 const monitorDb = sqliteDb;        // sitemap-monitor tables always live in SQLite
 const aiEnrich = require('./ai-enrich');
 
@@ -153,7 +169,7 @@ const FACETS_TTL_MS = 10 * 60 * 1000;
 async function refreshFacets() {
   if (facetsRefreshing) return;
   facetsRefreshing = true;
-  try { facetsCache = await db.facets(); facetsAt = Date.now(); }
+  try { facetsCache = await reader.facets(); facetsAt = Date.now(); }
   catch (e) { console.error('facets refresh failed:', e.message); }
   finally { facetsRefreshing = false; }
 }
@@ -1249,7 +1265,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ---- central database (SQLite, server-side paginated) ----
-  if (url.pathname === '/api/db/stats' && req.method === 'GET') { sendJson(res, await db.stats()); return; }
+  if (url.pathname === '/api/db/stats' && req.method === 'GET') { sendJson(res, await reader.stats()); return; }
   if (url.pathname === '/api/db/facets' && req.method === 'GET') {
     if (Date.now() - facetsAt > FACETS_TTL_MS) refreshFacets();   // stale -> refresh in the background (don't block)
     sendJson(res, facetsCache);
@@ -1257,7 +1273,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/api/db/query' && req.method === 'GET') {
     const q = url.searchParams;
-    sendJson(res, await db.query({
+    sendJson(res, await reader.query({
       page: q.get('page'), pageSize: q.get('pageSize'),
       search: q.get('search') || '', directory: q.get('directory') || '',
       emailType: q.get('emailType') || '', phoneType: q.get('phoneType') || '',
@@ -1284,7 +1300,7 @@ const server = http.createServer(async (req, res) => {
     });
     res.write(COLUMNS.join(',') + '\n');
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    await db.each(opts, (rec) => { res.write(COLUMNS.map((c) => esc(rec[c])).join(',') + '\n'); });
+    await reader.each(opts, (rec) => { res.write(COLUMNS.map((c) => esc(rec[c])).join(',') + '\n'); });
     res.end();
     return;
   }
@@ -1461,6 +1477,19 @@ pruneOldJobs();
     }
   } else {
     console.log('Contacts store: SQLite.');
+  }
+  // Read backend: OpenSearch production store if flagged, else the same store we write to.
+  reader = db;
+  if (String(process.env.SEARCH_BACKEND || '').toLowerCase() === 'opensearch' && process.env.OPENSEARCH_ENDPOINT) {
+    try {
+      reader = makeOsReader(process.env.OPENSEARCH_ENDPOINT);
+      console.log('Search backend: OpenSearch (SEARCH_BACKEND=opensearch).');
+    } catch (e) {
+      console.error('OpenSearch reader init FAILED — search falls back to the DB:', e.message);
+      reader = db;
+    }
+  } else {
+    console.log('Search backend: DB (contacts store).');
   }
   refreshFacets();                                      // warm the filter-facets cache in the background
   setInterval(() => refreshFacets(), FACETS_TTL_MS);    // keep it fresh
