@@ -207,8 +207,11 @@ async function search(client, o = {}) {
   let from = (page - 1) * pageSize;
   const WINDOW = 50000;
   if (from + pageSize > WINDOW) from = Math.max(0, WINDOW - pageSize);   // stay within max_result_window
+  // Exact total: OpenSearch counts matching docs cheaply (unlike the Postgres COUNT(*) full-scan that
+  // forced the old 10k display cap), so show the real number. Deep paging past max_result_window is still
+  // clamped above; the UI filters long before that, and export streams all matches via search_after.
   const res = await client.search({ index: INDEX, body: {
-    track_total_hits: 10000, from, size: pageSize, query: buildQuery(o), sort: sortFor(o) } });
+    track_total_hits: true, from, size: pageSize, query: buildQuery(o), sort: sortFor(o) } });
   const h = res.body.hits;
   const total = typeof h.total === 'object' ? h.total.value : h.total;
   const approx = (typeof h.total === 'object' && h.total.relation === 'gte') ? 'capped' : null;

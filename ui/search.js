@@ -490,7 +490,13 @@ function buildParams(extra) {
   return p;
 }
 
-function totalPages() { return Math.max(1, Math.ceil(state.total / PAGE_SIZE)); }
+function totalPages() {
+  // The count is exact, but OpenSearch caps from+size at max_result_window (50k) — pages beyond that
+  // aren't reachable via prev/next (narrow with filters, or export for the full set). Cap the navigable
+  // page count to the window so Next/Last stop at the last real page instead of repeating clamped rows.
+  const navMax = Math.floor(50000 / PAGE_SIZE);
+  return Math.max(1, Math.min(Math.ceil(state.total / PAGE_SIZE), navMax));
+}
 
 function renderPagination() {
   const pages = totalPages();
