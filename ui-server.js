@@ -248,7 +248,10 @@ async function runSiteSearch(input) {
 
     const bio = [];
     for (const r of sr.results) {
-      if (!isBioOrContactUrl(r.link)) continue;
+      // Site Search intentionally has NO bio-URL filter — the user already scoped the query with
+      // `site:<target>`, so every returned result is a candidate to crawl/extract (unlike sitemap /
+      // Common Crawl discovery, which still gate on isBioOrContactUrl). Keeps keyword-less people
+      // pages (/profiles/12345, /p/jdoe, unrecognized sections) that the classifier would drop.
       const text = `${r.title}\n${r.snippet}`;
       const emails = [...new Set((text.match(SS_EMAIL_RE) || []).map((e) => cleanEmail(e)).filter(Boolean))];
       const phones = [...new Set((text.match(SS_PHONE_RE) || []).map((p) => p.trim()).filter((p) => p.replace(/\D/g, '').length >= 10))].slice(0, 2);
