@@ -26,7 +26,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",
+    "@aws-sdk/client-athena": "^3.1075.0",
     "@aws-sdk/client-s3": "^3.1075.0",
+    "@aws-sdk/client-sts": "^3.1075.0",
     "@aws-sdk/credential-provider-node": "^3.972.62",
     "@opensearch-project/opensearch": "^3.6.0",
     "google-libphonenumber": "^3.2.44",
@@ -40,10 +42,8 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "@aws-sdk/client-athena": "^3.1075.0",
     "@aws-sdk/client-iam": "^3.1079.0",
     "@aws-sdk/client-lambda": "^3.1079.0",
-    "@aws-sdk/client-opensearch": "^3.1079.0",
-    "@aws-sdk/client-sts": "^3.1075.0"
+    "@aws-sdk/client-opensearch": "^3.1079.0"
   }
 }
