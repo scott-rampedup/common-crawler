@@ -45,3 +45,8 @@ cc-bio-urls*.txt
 cc-warc*.jsonl
 bio-url-splits/
 BIO URL Repository.txt
+
+# Lambda build + harvest scratch
+lambda-build/
+test-ptrs.jsonl
+ptrs-*-test.jsonl
