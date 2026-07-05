@@ -101,6 +101,7 @@ function initElements() {
   elements.applyDomainsButton = document.getElementById('applyDomainsButton');
   elements.clearDomainsButton = document.getElementById('clearDomainsButton');
   elements.liveOnlyCheckbox = document.getElementById('liveOnlyCheckbox');
+  elements.keepMonitorCheckbox = document.getElementById('keepMonitorCheckbox');
   elements.modeHint = document.getElementById('modeHint');
   elements.jobsList = document.getElementById('jobsList');
   elements.refreshJobsButton = document.getElementById('refreshJobsButton');
@@ -561,9 +562,12 @@ async function extractSitemapAndRun(body, contentType) {
     setSearchStatus('Reading sitemap(s) and starting a job per sitemap…');
     const directoryFilter = elements.directoryFilter.value.trim();
     const liveOnly = !!(elements.liveOnlyCheckbox && elements.liveOnlyCheckbox.checked);
+    // Keep the submitted sitemaps' bio child sitemaps in the Monitor (default on; unchecked -> monitor=0).
+    const keepMonitor = !elements.keepMonitorCheckbox || elements.keepMonitorCheckbox.checked;
     const qs = new URLSearchParams();
     if (directoryFilter) qs.set('directoryFilter', directoryFilter);
     if (liveOnly) qs.set('liveOnly', '1');
+    if (!keepMonitor) qs.set('monitor', '0');
     const res = await fetch('/api/sitemap/run?' + qs.toString(), {
       method: 'POST',
       headers: { 'Content-Type': contentType },
@@ -589,7 +593,8 @@ async function extractSitemapAndRun(body, contentType) {
       return;
     }
     const totalBio = data.totalBioUrls || jobs.reduce((n, j) => n + (j.bioUrls || 0), 0);
-    setSearchStatus(`Started ${jobs.length} job${jobs.length === 1 ? '' : 's'} (one per sitemap) for ${totalBio} Bio URL${totalBio === 1 ? '' : 's'}. They run on the server — you can leave this page.`);
+    const monitorNote = data.monitoring ? ' Their people/bio child sitemaps are being kept for new-hire monitoring — see the Monitor tab.' : '';
+    setSearchStatus(`Started ${jobs.length} job${jobs.length === 1 ? '' : 's'} (one per sitemap) for ${totalBio} Bio URL${totalBio === 1 ? '' : 's'}. They run on the server — you can leave this page.${monitorNote}`);
     await fetchJobs();
     if (jobs[0] && jobs[0].id) viewJob(jobs[0].id);
   } catch (error) {

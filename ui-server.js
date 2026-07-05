@@ -1185,6 +1185,7 @@ const server = http.createServer(async (req, res) => {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     const directoryFilter = (url.searchParams.get('directoryFilter') || '').trim();
     const liveOnly = /^(1|true|yes)$/i.test(url.searchParams.get('liveOnly') || '');
+    const keepForMonitor = !/^(0|false|no)$/i.test(url.searchParams.get('monitor') || '1');   // default ON
     readSitemapInput(req, async (inp) => {
       if (inp.error) return jsonErr(res, 400, inp.error);
       try {
@@ -1197,9 +1198,19 @@ const server = http.createServer(async (req, res) => {
           },
         });
         console.log(`Sitemap run: started ${startedJobs.length} job(s) across ${out.totalGroups} sitemap(s), ${out.totalBioUrls} bio URL(s) from ${out.sitemapsFetched} fetched sitemap(s)`);
+        // Keep the submitted sitemaps' bio-DEDICATED child sitemaps for new-hire monitoring. Runs in the
+        // background (re-walks the sitemaps + applies the dedicated bio-ratio filter) so it never blocks
+        // the run or risks the request timeout; the watches show up in the Monitor tab. Idempotent.
+        const willMonitor = keepForMonitor && Array.isArray(inp.urls) && inp.urls.length > 0;
+        if (willMonitor) {
+          monitor.discoverWatches({ sitemaps: inp.urls })
+            .then((r) => console.log(`Sitemap run: kept ${r.added} bio-dedicated child sitemap(s) for monitoring`))
+            .catch((e) => console.error('Sitemap run: monitor registration failed:', e.message));
+        }
         sendJson(res, {
           ok: true, jobs: startedJobs, sitemaps: out.totalGroups, totalBioUrls: out.totalBioUrls,
           totalUrls: out.totalUrls, sitemapsFetched: out.sitemapsFetched, sitemapsOk: out.sitemapsOk,
+          monitoring: willMonitor,
         });
       } catch (e) {
         jsonErr(res, 500, e.message || 'Failed to process sitemaps.');
