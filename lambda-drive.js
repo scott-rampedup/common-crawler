@@ -9,6 +9,7 @@
  *   BATCH=200 CONCURRENCY=100 RUN=2026-12 node lambda-drive.js pointers.jsonl
  */
 const fs = require('fs');
+const https = require('https');
 const readline = require('readline');
 const { LambdaClient, InvokeCommand, GetAccountSettingsCommand } = require('@aws-sdk/client-lambda');
 
@@ -18,7 +19,14 @@ const { LambdaClient, InvokeCommand, GetAccountSettingsCommand } = require('@aws
   const BATCH = Number(process.env.BATCH) || 200;
   const RUN = process.env.RUN || ('run' + Date.now());
   const region = process.env.AWS_REGION || 'us-east-1';
-  const lambda = new LambdaClient({ region, maxAttempts: 6 });   // more retries — ride out throttling near the cap
+  // The SDK's default HTTP handler caps at 50 sockets — the real ceiling on invoke concurrency. Give it
+  // a big keep-alive pool so we can actually saturate the Lambda quota.
+  let requestHandler;
+  try {
+    const { NodeHttpHandler } = require('@smithy/node-http-handler');
+    requestHandler = new NodeHttpHandler({ httpsAgent: new https.Agent({ maxSockets: 4000, keepAlive: true }) });
+  } catch (e) { /* fall back to SDK default handler */ }
+  const lambda = new LambdaClient({ region, maxAttempts: 6, requestHandler });   // more retries — ride out throttling near the cap
 
   // Auto-cap concurrency to the account's Lambda quota (leave headroom) so we don't self-throttle.
   // Raising that quota (AWS Service Quotas -> Lambda 'Concurrent executions') is what unlocks full scale.
