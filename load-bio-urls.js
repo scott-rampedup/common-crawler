@@ -75,7 +75,7 @@ async function main() {
       .map((l) => { try { return JSON.parse(l); } catch { return null; } })
       .filter((x) => x && /^https?:\/\//i.test(x.url || "") && x.filename);
   } else {
-    items = fs.readFileSync(file, "utf8").split(/\r?\n/).map((s) => s.trim())
+    items = fs.readFileSync(file, "utf8").split(/[\r\n|]+/).map((s) => s.trim())   // line- or pipe-delimited
       .filter((s) => /^https?:\/\//i.test(s)).map((u) => ({ url: u }));
   }
   const seenU = new Set();

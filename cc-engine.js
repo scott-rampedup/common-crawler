@@ -270,23 +270,27 @@ const COLUMNS = ["Time Stamp","Source","Web Source URL","Directory","Path ID","D
 // Domain mode: reduce each line to a bare host (strip protocol/www/path), dedup.
 function normalizeDomainList(lines){
   const out = []; const seen = new Set();
-  for(const raw of lines){
-    const d = (String(raw).split(",")[0]||"").trim().toLowerCase()
-      .replace(/^https?:\/\//,"").replace(/^www\./,"").replace(/\/.*$/,"");
-    if(!d || d === "domain" || !d.includes(".")) continue;   // skip header / junk
-    if(!seen.has(d)){ seen.add(d); out.push(d); }
+  for(const line of lines){
+    for(const raw of String(line).split(/[|\r\n]+/)){          // accept pipe-delimited within a line ("a || b")
+      const d = (String(raw).split(",")[0]||"").trim().toLowerCase()
+        .replace(/^https?:\/\//,"").replace(/^www\./,"").replace(/\/.*$/,"");
+      if(!d || d === "domain" || !d.includes(".")) continue;   // skip header / junk
+      if(!seen.has(d)){ seen.add(d); out.push(d); }
+    }
   }
   return out;
 }
 // Webpage mode: keep the FULL URL (path/query intact), just ensure a protocol + dedup.
 function normalizeUrlList(lines){
   const out = []; const seen = new Set();
-  for(const raw of lines){
-    let u = (String(raw).split(/,(?![^?]*=)/)[0]||"").trim();   // tolerate trailing CSV cols
-    if(!u || /^(domain|url|webpage)$/i.test(u) || !u.includes(".")) continue;
-    if(!/^https?:\/\//i.test(u)) u = "https://" + u;
-    try{ new URL(u); }catch{ continue; }
-    if(!seen.has(u)){ seen.add(u); out.push(u); }
+  for(const line of lines){
+    for(let u of String(line).split(/[|\r\n]+/)){              // pipe- OR line-delimited (commas can be in a URL)
+      u = (u.split(/,(?![^?]*=)/)[0]||"").trim();              // tolerate trailing CSV cols
+      if(!u || /^(domain|url|webpage)$/i.test(u) || !u.includes(".")) continue;
+      if(!/^https?:\/\//i.test(u)) u = "https://" + u;
+      try{ new URL(u); }catch{ continue; }
+      if(!seen.has(u)){ seen.add(u); out.push(u); }
+    }
   }
   return out;
 }

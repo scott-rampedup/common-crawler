@@ -181,19 +181,21 @@ function parseDomainList(text) {
   return Array.from(
     new Set(
       String(text || '')
-        .split(/[\r\n,]+/)
+        .split(/[\r\n,|]+/)                                // line-, comma-, OR pipe-delimited (e.g. "a || b")
         .map((line) => parseHostname(line))
         .filter(Boolean)
     )
   );
 }
 
-// Webpage mode: keep the FULL URL per line (path/query intact), one per line.
+// Webpage mode: keep the FULL URL per line (path/query intact). Accepts line- or pipe-delimited input
+// ("url1 || url2"); pipes aren't valid unencoded in URLs, so splitting on them is safe (commas aren't —
+// they can appear in a path/query, so URLs split only on newlines + pipes).
 function parseUrlList(text) {
   return Array.from(
     new Set(
       String(text || '')
-        .split(/[\r\n]+/)
+        .split(/[\r\n|]+/)
         .map((s) => s.trim())
         .filter((s) => s && s.includes('.'))
     )

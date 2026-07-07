@@ -748,7 +748,7 @@ function readSitemapInput(req, cb) {
       if (!text) return cb({ error: 'Empty sitemap input.' });
       const looksXml = /<\?xml|<urlset[\s>]|<sitemapindex[\s>]/i.test(text);
       if (looksXml) return cb({ content: text, urls: [] });
-      const urls = text.split(/[\r\n,]+/).map((s) => s.trim()).filter((s) => /^https?:\/\//i.test(s));
+      const urls = text.split(/[\r\n,|]+/).map((s) => s.trim()).filter((s) => /^https?:\/\//i.test(s));
       if (!urls.length) return cb({ error: 'No sitemap XML or sitemap URL(s) found in the input.' });
       cb({ content: '', urls });
     } catch (e) {
@@ -1228,9 +1228,9 @@ const server = http.createServer(async (req, res) => {
     readJsonBody(req, async (b) => {
       try {
         if (!b) return jsonErr(res, 400, 'Bad JSON body.');
-        const domains = Array.isArray(b.domains)
-          ? b.domains.map((d) => String(d || '').trim()).filter(Boolean)
-          : String(b.domains || '').split(/[\r\n,]+/).map((s) => s.trim()).filter(Boolean);
+        const domains = (Array.isArray(b.domains) ? b.domains : String(b.domains || '').split(/[\r\n,|]+/))
+          .flatMap((d) => String(d || '').split(/[\r\n,|]+/))   // accept pipe-delimited too ("a || b")
+          .map((s) => s.trim()).filter(Boolean);
         if (!domains.length) return jsonErr(res, 400, 'No domains provided.');
         if (domains.length > 500) return jsonErr(res, 400, 'Too many domains (max 500 per discovery).');
         // directoryRules stays {} on the server by design (see project notes); genderMap aids bio detection
