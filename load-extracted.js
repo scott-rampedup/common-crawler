@@ -19,28 +19,42 @@ const os = require('./opensearch');
   const region = process.env.AWS_REGION || 'us-east-1';
   const s3 = new S3Client({ region });
   const client = os.makeClient(process.env.OPENSEARCH_ENDPOINT);
-  console.error(`loading s3://${bucket}/${prefix} -> OpenSearch`);
+  const CONC = Number(process.env.LOAD_CONC) || 24;
+  console.error(`loading s3://${bucket}/${prefix} -> OpenSearch (conc ${CONC})`);
 
-  let token, files = 0, total = 0, errs = 0;
-  const t0 = Date.now();
+  // List every object under the prefix first, then load them through a concurrency pool — the per-file
+  // S3 GET + bulkUpsert is the pace-limiter, so parallelizing it turns a ~45-min sequential load into minutes.
+  const keys = [];
+  let token;
   do {
     const list = await s3.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, ContinuationToken: token }));
-    for (const obj of (list.Contents || [])) {
-      if (!obj.Key.endsWith('.jsonl')) continue;
-      const r = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: obj.Key }));
-      const body = await r.Body.transformToString();
-      const now = new Date().toISOString();
-      const docs = body.trim().split('\n').filter(Boolean)
-        .map((l) => { try { return os.recordToDoc(JSON.parse(l), now); } catch (e) { return null; } })
-        .filter((d) => d && d.email);
-      for (let i = 0; i < docs.length; i += 2000) {
-        const res = await os.bulkUpsert(client, docs.slice(i, i + 2000));
-        errs += res.errors;
-      }
-      files++; total += docs.length;
-      if (files % 50 === 0 || docs.length) console.error(`  ${obj.Key}: +${docs.length} (files ${files}, docs ${total})`);
-    }
+    for (const obj of (list.Contents || [])) if (obj.Key.endsWith('.jsonl')) keys.push(obj.Key);
     token = list.IsTruncated ? list.NextContinuationToken : null;
   } while (token);
-  console.error(`DONE: ${files} file(s), ${total.toLocaleString()} docs -> OpenSearch, ${errs} error(s), ${Math.round((Date.now() - t0) / 1000)}s`);
+  console.error(`${keys.length.toLocaleString()} file(s) to load`);
+
+  let idx = 0, files = 0, total = 0, errs = 0;
+  const t0 = Date.now();
+  async function worker() {
+    for (;;) {
+      const k = idx++; if (k >= keys.length) return;
+      const key = keys[k];
+      try {
+        const r = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+        const body = await r.Body.transformToString();
+        const now = new Date().toISOString();
+        const docs = body.trim().split('\n').filter(Boolean)
+          .map((l) => { try { return os.recordToDoc(JSON.parse(l), now); } catch (e) { return null; } })
+          .filter((d) => d && d.email);
+        for (let i = 0; i < docs.length; i += 2000) {
+          const res = await os.bulkUpsert(client, docs.slice(i, i + 2000));
+          errs += res.errors;
+        }
+        total += docs.length;
+      } catch (e) { errs++; }
+      if (++files % 1000 === 0) console.error(`  ${files.toLocaleString()}/${keys.length.toLocaleString()} files, ${total.toLocaleString()} docs`);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(CONC, keys.length)) }, worker));
+  console.error(`DONE: ${files.toLocaleString()} file(s), ${total.toLocaleString()} docs -> OpenSearch, ${errs} error(s), ${Math.round((Date.now() - t0) / 1000)}s`);
 })().catch((e) => { console.error('load error:', e.message); process.exit(1); });
