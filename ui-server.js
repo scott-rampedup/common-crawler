@@ -681,7 +681,9 @@ function serveStaticFile(res, filePath) {
       return;
     }
 
-    res.writeHead(200, { 'Content-Type': contentType(filePath) });
+    // no-cache: the browser revalidates before reusing a cached copy, so a deploy's new app.js/HTML
+    // loads immediately instead of a stale cached version (the bug that made pipe-splitting look broken).
+    res.writeHead(200, { 'Content-Type': contentType(filePath), 'Cache-Control': 'no-cache' });
     res.end(data);
   });
 }
@@ -1057,7 +1059,10 @@ const server = http.createServer(async (req, res) => {
     req.on('end', () => {
       try {
         const payload = JSON.parse(body || '{}');
-        const domains = Array.isArray(payload.domains) ? payload.domains.filter(Boolean) : [];
+        // Split pipe-delimited entries server-side too ("url1 || url2"), so a stale/cached frontend that
+        // sent them as one string still fans out correctly. (URLs split on newlines+pipes, not commas.)
+        const domains = (Array.isArray(payload.domains) ? payload.domains : [])
+          .flatMap((d) => String(d || '').split(/[\r\n|]+/)).map((s) => s.trim()).filter(Boolean);
         const directoryFilter = typeof payload.directoryFilter === 'string' ? payload.directoryFilter.trim() : '';
         const liveOnly = payload.liveOnly === true;
         const mode = payload.mode === 'webpage' ? 'webpage' : 'domain';
