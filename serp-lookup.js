@@ -26,8 +26,34 @@ function wirelessBlocks() {
   if (!_wirelessTried) { _wirelessTried = true; try { _wireless = loadWirelessBlocks(path.join(__dirname, 'phone-blocks.csv')); } catch (e) { _wireless = null; } }
   return _wireless;
 }
-const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_RE = /(?:\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}(?!\d)/;
+
+// How well does an email's local part match the person's name? (jane.doe / jdoe / doej / janed …)
+function emailNameScore(email, first, last) {
+  const local = (String(email).split('@')[0] || '').toLowerCase().replace(/[^a-z]/g, '');
+  const f = String(first || '').toLowerCase().replace(/[^a-z]/g, '');
+  const l = String(last || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (!local || (!f && !l)) return 0;
+  const fi = f[0] || '', li = l[0] || '';
+  let s = 0;
+  if (f && l && (local.includes(f + l) || local.includes(l + f))) s += 3;   // jane.doe / doe.jane
+  if (f.length >= 2 && local.includes(f)) s += 2;                           // first name present
+  if (l.length >= 2 && local.includes(l)) s += 2;                           // last name present
+  if (f && l && (local === fi + l || local === f + li || local === l + fi || local === li + f)) s += 2; // jdoe/janed/doej/dj-ish
+  return s;
+}
+// From all emails in the text, pick the one that belongs to THIS person. When several are present, the
+// best name match wins (not just the first). A lone email is taken as-is; several with no name match ->
+// ambiguous, so return none rather than guess wrong.
+function pickEmailByName(text, first, last) {
+  const emails = [...new Set((String(text).match(EMAIL_RE) || []).map((e) => e.toLowerCase()))];
+  if (!emails.length) return '';
+  if (emails.length === 1) return emails[0];
+  let best = '', bestScore = 0;
+  for (const e of emails) { const sc = emailNameScore(e, first, last); if (sc > bestScore) { bestScore = sc; best = e; } }
+  return bestScore > 0 ? best : '';
+}
 // Does the URL PATH contain the person's first or last name? (prefer /jane-doe over /about)
 function pathHasName(url, first, last) {
   let p = '';
@@ -102,8 +128,7 @@ async function lookupOne(row, { apiKey } = {}) {
   // against the position dictionary (findPosition); email/phone by regex, then classified (Email/Phone Type).
   const text = [linkedinSnippet, ...cands.map((o) => (o.title || '') + ' ' + (o.snippet || ''))].join(' \n ');
   const foundTitle = findPosition('', text) || '';
-  const emailM = text.match(EMAIL_RE);
-  const email = emailM ? emailM[0].toLowerCase() : '';
+  const email = pickEmailByName(text, first, last);          // name-match when several emails are present
   const emailType = email ? classifyEmail(email) : '';
   const phoneM = text.match(PHONE_RE);
   const phone = phoneM ? phoneM[0].trim() : '';
