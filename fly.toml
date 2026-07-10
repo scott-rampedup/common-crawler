@@ -21,7 +21,10 @@ primary_region = 'ewr'   # must match the existing 'data' volume's region
 # untouched) and the extraction worker fleet (worker.js, pulls from the Postgres crawl_queue).
 [processes]
   app = 'node ui-server.js'
-  worker = 'node worker.js'
+  # worker = 'node worker.js'   # FLEET RETIRED 2026-07-10: extraction moved to the Lambda pipeline
+  #   (cc-athena-miner -> lambda-drive -> cc-extract -> S3 -> load-extracted -> OpenSearch). Left commented
+  #   so `flyctl deploy` stops resurrecting workers. To bring the fleet back: uncomment this + the worker
+  #   [[vm]] block below, then `flyctl scale count worker=N`.
 
 # Only the web group mounts the SQLite volume; workers are stateless (they use Postgres).
 [[mounts]]
@@ -45,9 +48,9 @@ primary_region = 'ewr'   # must match the existing 'data' volume's region
   cpu_kind = 'performance'
   cpus = 4
 
-# worker: cheaper shared 4-vCPU / 4GB; extraction is network-bound (WARC fetch) so shared CPUs are fine.
-[[vm]]
-  processes = ['worker']
-  memory = '4gb'
-  cpu_kind = 'shared'
-  cpus = 4
+# worker VM (retired 2026-07-10 with the worker process above — uncomment both to restore the fleet):
+# [[vm]]
+#   processes = ['worker']
+#   memory = '4gb'
+#   cpu_kind = 'shared'
+#   cpus = 4
