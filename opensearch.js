@@ -102,13 +102,19 @@ function rowToDoc(r) {
   };
 }
 
+// A usable OpenSearch _id: non-empty and within the 512-byte hard cap. A malformed contact (e.g. an email
+// on a runaway "www.www.www…" domain) that exceeds it makes OpenSearch reject the WHOLE bulk request — which
+// would stall the delta-syncer on that batch forever. Skip such docs so one bad row can't block everyone.
+function validId(email) { const id = String(email || '').toLowerCase(); return id && Buffer.byteLength(id) <= 512 ? id : ''; }
+
 // Bulk index docs, _id = email. Score-gated upsert: a re-indexed email only overwrites if its score is
 // >= the stored score (mirrors the Postgres upsert), so the best record for a person wins.
 async function bulkUpsert(client, docs) {
   const body = [];
   for (const d of docs) {
-    if (!d.email) continue;
-    body.push({ update: { _index: INDEX, _id: d.email.toLowerCase() } });
+    const id = validId(d.email);
+    if (!id) continue;
+    body.push({ update: { _index: INDEX, _id: id } });
     body.push({
       scripted_upsert: true, upsert: d,
       script: { lang: 'painless',
@@ -269,7 +275,7 @@ function recordToDoc(rec, updatedAt) {
 // Unconditional bulk index (_id = email). Use for UI edits so they always overwrite regardless of score.
 async function indexDocs(client, docs) {
   const body = [];
-  for (const d of docs) { if (!d.email) continue; body.push({ index: { _index: INDEX, _id: String(d.email).toLowerCase() } }, d); }
+  for (const d of docs) { const id = validId(d.email); if (!id) continue; body.push({ index: { _index: INDEX, _id: id } }, d); }
   if (!body.length) return { indexed: 0, errors: 0 };
   const res = await client.bulk({ body, refresh: false });
   let errors = 0;
