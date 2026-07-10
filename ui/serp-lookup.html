@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SERP Look Up · Common Crawler</title>
+  <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+  <link rel="apple-touch-icon" href="/ui/logo.png" />
+  <link rel="stylesheet" href="/ui/styles.css" />
+  <style>
+    .sl-wrap { max-width: 1200px; margin: 0 auto; padding: 16px 24px 48px; }
+    .sl-hint { color: #6b7280; font-size: 12.5px; margin: 2px 0 14px; }
+    .sl-form { display: flex; flex-direction: column; gap: 10px; margin: 12px 0 6px; }
+    .sl-form textarea { width: 100%; min-height: 150px; padding: 10px 11px; font-size: 13px; font-family: ui-monospace, Menlo, Consolas, monospace; resize: vertical; box-sizing: border-box; }
+    .sl-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .sl-status { font-size: 13.5px; margin: 10px 0; padding: 10px 12px; background: #f3f4f6; border-radius: 8px; }
+    .sl-status.err { background: #fde8e8; color: #9b1c1c; }
+    .sl-stats { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; margin: 6px 0 12px; color: #374151; }
+    .sl-stats b { color: #111827; }
+    table.sl-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.sl-table th, table.sl-table td { text-align: left; padding: 7px 9px; border-bottom: 1px solid #eceef1; vertical-align: top; }
+    table.sl-table th { position: sticky; top: 0; background: #fafbfc; font-weight: 600; }
+    table.sl-table td.url a { word-break: break-all; }
+    .sl-tablewrap { max-height: 58vh; overflow: auto; border: 1px solid #eceef1; border-radius: 8px; margin-top: 8px; }
+    .sl-empty { color: #6b7280; padding: 20px; text-align: center; }
+    .sl-desc { color: #4b5563; max-width: 360px; }
+    progress { width: 240px; height: 12px; }
+  </style>
+</head>
+<body class="search-page">
+  <div class="search-shell">
+    <header class="search-header">
+      <div class="brand">
+        <img class="app-logo" src="/ui/logo.png" alt="Common Crawler logo"
+             onerror="this.onerror=null;this.src='/ui/favicon.svg';" />
+        <h1>Common Crawler</h1>
+      </div>
+      <nav class="nav-actions">
+        <a class="nav-link" href="/">⌂ Crawler</a>
+        <a class="nav-link green" href="/search">🔍 Search Database</a>
+        <a class="nav-link green" href="/site-search">🌐 Site Search</a>
+        <a class="nav-link green active" href="/serp-lookup" aria-current="page">🔎 SERP Look Up</a>
+        <a class="nav-link green" href="/monitor">🛰 Monitor</a>
+      </nav>
+    </header>
+
+    <div class="sl-wrap">
+      <h2>SERP Look Up</h2>
+      <p class="sl-hint">Paste or upload a CSV of people — columns <code>First Name, Last Name, Employer, Website, Title</code>
+        (header row optional). For each person we run one Google search (serper.dev) and return their
+        <b>LinkedIn URL</b>, a <b>Bio URL</b> (on the employer's site, else a matching bio/contact page), and the
+        result <b>snippet</b>. Then optionally push the bio URLs through extraction to get full contact records.</p>
+
+      <div class="sl-form">
+        <textarea id="slCsv" placeholder="First Name,Last Name,Employer,Website,Title&#10;Jane,Doe,Acme Corp,acme.com,VP Sales&#10;John,Smith,Globex,globex.com,Engineer"></textarea>
+        <div class="sl-row">
+          <input id="slFile" type="file" accept=".csv,text/csv,text/plain" />
+          <button id="slStart" type="button" class="primary">Run Look Up</button>
+          <span class="sl-hint" id="slConfigHint" style="margin:0"></span>
+        </div>
+      </div>
+
+      <div id="slStatus" class="sl-status" style="display:none"></div>
+      <div id="slStats" class="sl-stats" style="display:none"></div>
+      <div class="sl-row" id="slActions" style="display:none; margin:6px 0 4px">
+        <a id="slDownload" class="nav-link green" href="/api/serp-lookup/result.csv">⬇ Download CSV</a>
+        <button id="slProcessBio" type="button">Process Bio URLs → full contacts</button>
+        <span class="sl-hint" id="slProcessHint" style="margin:0"></span>
+      </div>
+
+      <div class="sl-tablewrap" id="slTableWrap" style="display:none">
+        <table class="sl-table">
+          <thead><tr><th>Name</th><th>Employer</th><th>Title</th><th>LinkedIn URL</th><th>Bio URL</th><th>Snippet</th></tr></thead>
+          <tbody id="slBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+    let poll = null;
+
+    fetch('/api/serp-lookup/status').then(r => r.json()).then(s => {
+      if (!s.configured) { $('slConfigHint').textContent = '⚠ SERPER_API_KEY is not set on the server — look-ups will fail.'; $('slConfigHint').style.color = '#9b1c1c'; }
+      if (s.status && s.status !== 'idle') render(s);
+      if (s.running) startPolling();
+    }).catch(() => {});
+
+    $('slFile').addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0]; if (!f) return;
+      const rd = new FileReader(); rd.onload = () => { $('slCsv').value = rd.result; }; rd.readAsText(f);
+    });
+
+    $('slStart').addEventListener('click', async () => {
+      const csv = $('slCsv').value.trim();
+      if (!csv) { setStatus('Paste or upload a CSV first.', true); return; }
+      setStatus('Starting…'); $('slStart').disabled = true;
+      try {
+        const r = await fetch('/api/serp-lookup/start', { method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: csv });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        setStatus('Running look-up for ' + d.total + ' people…');
+        startPolling();
+      } catch (e) { setStatus('Could not start: ' + e.message, true); $('slStart').disabled = false; }
+    });
+
+    $('slProcessBio').addEventListener('click', async () => {
+      $('slProcessBio').disabled = true; $('slProcessHint').textContent = 'Submitting…';
+      try {
+        const r = await fetch('/api/serp-lookup/process-bio', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        $('slProcessHint').innerHTML = 'Started a job for ' + d.urls + ' bio URL(s) — <a href="/">see it on the Crawler page</a> to watch progress + download full contacts.';
+      } catch (e) { $('slProcessHint').textContent = 'Failed: ' + e.message; $('slProcessBio').disabled = false; }
+    });
+
+    function startPolling() { if (poll) clearInterval(poll); poll = setInterval(tick, 1500); tick(); }
+    async function tick() {
+      try { const s = await (await fetch('/api/serp-lookup/status')).json(); render(s); if (!s.running) { clearInterval(poll); poll = null; $('slStart').disabled = false; } } catch (e) {}
+    }
+
+    function setStatus(msg, err) { const el = $('slStatus'); el.style.display = 'block'; el.className = 'sl-status' + (err ? ' err' : ''); el.textContent = msg; }
+
+    function render(s) {
+      const done = s.status === 'done' || s.status === 'error';
+      setStatus(s.error ? ('Error: ' + s.error)
+        : done ? ('Done — looked up ' + s.processed + ' people.')
+        : ('Looking up… ' + s.processed + ' / ' + s.total), s.status === 'error');
+      $('slStats').style.display = 'flex';
+      $('slStats').innerHTML =
+        '<span>People: <b>' + s.processed + '</b> / ' + s.total + '</span>' +
+        '<span>LinkedIn found: <b>' + (s.found ? s.found.linkedin : 0) + '</b></span>' +
+        '<span>Bio URLs found: <b>' + (s.found ? s.found.bio : 0) + '</b></span>' +
+        '<span>Serper credits: <b>' + s.credits + '</b></span>' +
+        (s.total ? '<progress max="' + s.total + '" value="' + s.processed + '"></progress>' : '');
+      const rows = s.sample || [];
+      if (rows.length) {
+        $('slTableWrap').style.display = 'block';
+        $('slBody').innerHTML = rows.map((r) => '<tr>' +
+          '<td>' + esc([r.first, r.last].filter(Boolean).join(' ')) + '</td>' +
+          '<td>' + esc(r.employer) + '</td>' +
+          '<td>' + esc(r.title) + '</td>' +
+          '<td class="url">' + (r.linkedin ? '<a href="' + esc(r.linkedin) + '" target="_blank" rel="noopener">LinkedIn</a>' : '<span class="sl-empty" style="padding:0">—</span>') + '</td>' +
+          '<td class="url">' + (r.bio ? '<a href="' + esc(r.bio) + '" target="_blank" rel="noopener">' + esc(r.bio.replace(/^https?:\/\//, '').slice(0, 40)) + '</a>' : '<span class="sl-empty" style="padding:0">—</span>') + '</td>' +
+          '<td class="sl-desc">' + esc((r.snippet || '').slice(0, 160)) + '</td>' +
+        '</tr>').join('');
+      }
+      if (done) { $('slActions').style.display = 'flex'; }
+    }
+  </script>
+</body>
+</html>

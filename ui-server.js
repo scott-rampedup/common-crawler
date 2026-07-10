@@ -305,6 +305,46 @@ function siteSearchStatus() {
     job: job ? { id: job.id, status: job.status, total: job.domains.length, done: job.doneDomains.length, recordCount: job.recordsByEmail.size } : null };
 }
 
+// ---- SERP Look Up (serper.dev): a people CSV -> each person's LinkedIn + bio URL + snippet ----
+// One serper query per row ("First Last" + employer + title); scan the organic results for a
+// linkedin.com/in profile and a bio page on the employer's website (else a generic bio/contact page).
+const serpLookup = require('./serp-lookup');
+let serpState = { running: false, status: 'idle', total: 0, processed: 0, credits: 0,
+  found: { linkedin: 0, bio: 0 }, results: [], startedAt: null, finishedAt: null, error: null };
+
+async function runSerpLookup(rows) {
+  serpState = { running: true, status: 'running', total: rows.length, processed: 0, credits: 0,
+    found: { linkedin: 0, bio: 0 }, results: new Array(rows.length), startedAt: new Date().toISOString(), finishedAt: null, error: null };
+  const CONC = 5;                                       // a few serper queries in flight (1 credit each)
+  let idx = 0;
+  async function worker() {
+    for (;;) {
+      const i = idx++;
+      if (i >= rows.length) return;
+      const row = rows[i];
+      let r;
+      try { r = await serpLookup.lookupOne(row, { apiKey: SERPER_API_KEY }); }
+      catch (e) { r = { linkedin: '', bio: '', snippet: '', credits: 1, error: e.message }; }
+      serpState.results[i] = { ...row, linkedin: r.linkedin || '', bio: r.bio || '', snippet: r.snippet || '' };
+      serpState.credits += r.credits || 1;
+      if (r.linkedin) serpState.found.linkedin++;
+      if (r.bio) serpState.found.bio++;
+      serpState.processed++;
+    }
+  }
+  try {
+    await Promise.all(Array.from({ length: Math.min(CONC, rows.length) }, worker));
+    serpState.status = 'done';
+  } catch (e) { serpState.status = 'error'; serpState.error = e.message; }
+  serpState.running = false;
+  serpState.finishedAt = new Date().toISOString();
+  console.log(`SERP Look Up: ${serpState.processed} people -> ${serpState.found.linkedin} LinkedIn, ${serpState.found.bio} bio (${serpState.credits} serper credit(s)).`);
+}
+function serpLookupStatus() {
+  const { results, ...rest } = serpState;
+  return { ...rest, configured: !!SERPER_API_KEY, sample: (results || []).filter(Boolean).slice(0, 25) };
+}
+
 // ---- user accounts / roles / sessions ----
 const { makeUsers } = require('./users');
 const users = makeUsers(DATA_DIR);
@@ -963,6 +1003,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/serp-lookup' || url.pathname === '/serp-lookup.html') {
+    if (!isAnalyst) { res.writeHead(302, { Location: '/search' }); res.end(); return; }   // analyst+ (spends serper credits)
+    serveStaticFile(res, path.join(PUBLIC_DIR, 'serp-lookup.html'));
+    return;
+  }
+
   if (url.pathname === '/monitor' || url.pathname === '/monitor.html') {
     if (!isAnalyst) { res.writeHead(302, { Location: '/search' }); res.end(); return; }   // analyst+ (manages watches + runs passes)
     serveStaticFile(res, path.join(PUBLIC_DIR, 'monitor.html'));
@@ -1283,6 +1329,41 @@ const server = http.createServer(async (req, res) => {
       runSiteSearch(input);                             // fire-and-forget; poll /api/site-search/status
       sendJson(res, { ok: true, started: true, input });
     });
+    return;
+  }
+
+  // ---- SERP Look Up: people CSV -> LinkedIn/bio URL + snippet, then optionally extract the bios ----
+  if (url.pathname === '/api/serp-lookup/status' && req.method === 'GET') { sendJson(res, serpLookupStatus()); return; }
+  if (url.pathname === '/api/serp-lookup/start' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!SERPER_API_KEY) { jsonErr(res, 400, 'SERPER_API_KEY is not configured on the server.'); return; }
+    if (serpState.running) { jsonErr(res, 409, 'A SERP Look Up is already running — only one at a time.'); return; }
+    let body = '';
+    req.on('data', (c) => { body += c; });                 // raw CSV (uncapped; a people list stays small)
+    req.on('end', () => {
+      try {
+        const rows = serpLookup.parseCsv(body);
+        if (!rows.length) return jsonErr(res, 400, 'No rows found. Provide a CSV with First Name, Last Name, Employer, Website, Title.');
+        runSerpLookup(rows);                                 // fire-and-forget; poll /api/serp-lookup/status
+        sendJson(res, { ok: true, started: true, total: rows.length });
+      } catch (e) { jsonErr(res, 400, e.message || 'Could not parse the CSV.'); }
+    });
+    return;
+  }
+  if (url.pathname === '/api/serp-lookup/result.csv' && req.method === 'GET') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="serp-lookup.csv"' });
+    res.end(serpLookup.toCsv((serpState.results || []).filter(Boolean)));
+    return;
+  }
+  // Feed the discovered bio URLs into the extraction pipeline (a normal webpage job) to return the
+  // full contact data (email/phone/title/etc. into the Master DB, downloadable from the job).
+  if (url.pathname === '/api/serp-lookup/process-bio' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    const uniq = [...new Set((serpState.results || []).filter(Boolean).map((r) => r.bio).filter(Boolean))];
+    if (!uniq.length) { jsonErr(res, 400, 'No bio URLs to process — run a look-up first.'); return; }
+    const job = startJob(uniq, '', false, 'webpage', 'Webpages', `SERP bios (${uniq.length})`);
+    sendJson(res, { ok: true, jobId: job.id, urls: uniq.length });
     return;
   }
 
