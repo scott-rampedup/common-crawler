@@ -14,7 +14,7 @@ const { serperSearch } = require('./serper');
 const { isBioOrContactUrl } = require('./cc-engine');
 
 const IN_COLS = ['First Name', 'Last Name', 'Employer', 'Website', 'Title'];
-const OUT_COLS = [...IN_COLS, 'LinkedIn URL', 'Bio URL', 'Snippet'];
+const OUT_COLS = [...IN_COLS, 'LinkedIn URL', 'LinkedIn Snippet', 'Bio URL', 'Bio Snippet'];
 
 function hostOf(u) {
   const t = String(u || '').trim();
@@ -24,6 +24,28 @@ function hostOf(u) {
 }
 const cleanUrl = (u) => String(u || '').split('#')[0].trim();
 const isSocial = (u) => /(^|\.)(linkedin|facebook|twitter|x|instagram|youtube|tiktok|pinterest)\.com/i.test(u);
+
+// The registrable ("root") domain of a URL — strip subdomains, keeping a compound TLD (co.uk, com.au…).
+const COMPOUND_TLD = new Set(['co.uk', 'org.uk', 'net.au', 'com.au', 'co.nz', 'co.za', 'com.br', 'co.jp', 'co.in', 'com.mx', 'co.il', 'com.sg', 'com.hk']);
+function rootDomain(u) {
+  const h = hostOf(u); if (!h) return '';
+  const parts = h.split('.');
+  if (parts.length <= 2) return h;
+  return COMPOUND_TLD.has(parts.slice(-2).join('.')) ? parts.slice(-3).join('.') : parts.slice(-2).join('.');
+}
+// Generic / legal / filler words that aren't distinctive enough to expect in a domain.
+const GENERIC = new Set(['the', 'and', 'of', 'for', 'inc', 'llc', 'ltd', 'llp', 'pllc', 'plc', 'corp', 'corporation',
+  'company', 'co', 'group', 'holdings', 'associates', 'partners', 'partnership', 'gmbh', 'sa', 'ag', 'nv', 'bv']);
+// Does the contact's Employer belong to the bio URL's domain? One of the first few company-name words
+// must appear in the bio URL's root domain (e.g. "Morgan Stanley" -> morganstanley.com). Guards against a
+// bio URL that fits the person but sits on an unrelated site (a directory, an aggregator, a wrong match).
+function companyMatchesDomain(employer, url) {
+  const root = rootDomain(url); if (!root) return false;
+  const words = String(employer || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  let cand = words.filter((w) => w.length >= 3 && !GENERIC.has(w)).slice(0, 4);
+  if (!cand.length) cand = words.filter((w) => w.length >= 2).slice(0, 4);   // short/acronym names (3M, US Bank)
+  return cand.some((w) => root.includes(w));
+}
 
 // One person -> { linkedin, bio, snippet } from a single serper query.
 async function lookupOne(row, { apiKey } = {}) {
@@ -39,23 +61,25 @@ async function lookupOne(row, { apiKey } = {}) {
   const res = await serperSearch(query, { apiKey, num: 10 });
   const organic = (res && res.organic) || [];
 
-  let linkedin = '', bio = '', snippet = '';
+  // LinkedIn: first linkedin.com/in profile, with its own snippet.
+  let linkedin = '', linkedinSnippet = '';
+  for (const o of organic) {
+    if (/(^|\.)linkedin\.com\/in\//i.test(o.link || '')) { linkedin = cleanUrl(o.link); linkedinSnippet = o.snippet || ''; break; }
+  }
+
+  // Bio URL: a page whose ROOT DOMAIN belongs to the contact's employer (companyMatchesDomain). Among the
+  // company-matching results, prefer the employer's own website, then a bio/contact-looking URL, then the
+  // first company-matching page. If nothing matches the company, return no bio (better empty than wrong).
+  let bio = '', bioSnippet = '';
   for (const o of organic) {
     const link = o.link || '';
-    if (!linkedin && /(^|\.)linkedin\.com\/in\//i.test(link)) { linkedin = cleanUrl(link); if (!snippet) snippet = o.snippet || ''; }
-    if (!bio && siteHost && hostOf(link) === siteHost) { bio = cleanUrl(link); if (!snippet) snippet = o.snippet || ''; }
-    if (linkedin && bio) break;
+    if (isSocial(link)) continue;
+    if (!companyMatchesDomain(employer, link)) continue;
+    const strong = (siteHost && hostOf(link) === siteHost) || isBioOrContactUrl(link);
+    if (strong) { bio = cleanUrl(link); bioSnippet = o.snippet || ''; break; }
+    if (!bio) { bio = cleanUrl(link); bioSnippet = o.snippet || ''; }   // weak fallback: keep the first company-domain hit
   }
-  // Fallback bio: a generic bio/contact page (not a social profile) if no employer-site match was found.
-  if (!bio) {
-    for (const o of organic) {
-      const link = o.link || '';
-      if (isSocial(link)) continue;
-      if (isBioOrContactUrl(link)) { bio = cleanUrl(link); if (!snippet) snippet = o.snippet || ''; break; }
-    }
-  }
-  if (!snippet && organic[0]) snippet = organic[0].snippet || '';
-  return { linkedin, bio, snippet, query, error: (res && res.error) || '', credits: (res && res.credits) || 0 };
+  return { linkedin, linkedinSnippet, bio, bioSnippet, query, error: (res && res.error) || '', credits: (res && res.credits) || 0 };
 }
 
 // --- CSV in/out (tolerant: header names matched loosely; quoted fields with commas/newlines supported) ---
@@ -103,7 +127,7 @@ const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
 function toCsv(results) {
   const out = [OUT_COLS.join(',')];
   for (const r of results) {
-    out.push([r.first, r.last, r.employer, r.website, r.title, r.linkedin, r.bio, r.snippet].map(esc).join(','));
+    out.push([r.first, r.last, r.employer, r.website, r.title, r.linkedin, r.linkedinSnippet, r.bio, r.bioSnippet].map(esc).join(','));
   }
   return out.join('\n') + '\n';
 }
