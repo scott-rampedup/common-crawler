@@ -324,8 +324,10 @@ async function runSerpLookup(rows) {
       const row = rows[i];
       let r;
       try { r = await serpLookup.lookupOne(row, { apiKey: SERPER_API_KEY }); }
-      catch (e) { r = { linkedin: '', linkedinSnippet: '', bio: '', bioSnippet: '', credits: 1, error: e.message }; }
-      serpState.results[i] = { ...row, linkedin: r.linkedin || '', linkedinSnippet: r.linkedinSnippet || '', bio: r.bio || '', bioSnippet: r.bioSnippet || '' };
+      catch (e) { r = { credits: 1, error: e.message }; }
+      serpState.results[i] = { ...row,
+        linkedin: r.linkedin || '', linkedinSnippet: r.linkedinSnippet || '', bio: r.bio || '', bioSnippet: r.bioSnippet || '',
+        foundTitle: r.foundTitle || '', phone: r.phone || '', phoneType: r.phoneType || '', email: r.email || '', emailType: r.emailType || '' };
       serpState.credits += r.credits || 1;
       if (r.linkedin) serpState.found.linkedin++;
       if (r.bio) serpState.found.bio++;

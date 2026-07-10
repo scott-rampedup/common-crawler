@@ -10,11 +10,31 @@
  *
  *   const { lookupOne, parseCsv, toCsv, IN_COLS, OUT_COLS } = require('./serp-lookup');
  */
+const path = require('path');
 const { serperSearch } = require('./serper');
 const { isBioOrContactUrl } = require('./cc-engine');
+const { classifyEmail, findPosition } = require('./extractor');
+const { classifyLineType, loadWirelessBlocks } = require('./wireless-block-classifier');
 
 const IN_COLS = ['First Name', 'Last Name', 'Employer', 'Website', 'Title'];
-const OUT_COLS = [...IN_COLS, 'LinkedIn URL', 'LinkedIn Snippet', 'Bio URL', 'Bio Snippet'];
+const OUT_COLS = [...IN_COLS, 'LinkedIn URL', 'LinkedIn Snippet', 'Bio URL', 'Bio Snippet',
+  'Found Title', 'Phone', 'Phone Type', 'Email', 'Email Type'];
+
+// Wireless-block table (837k NANP blocks) for phone line-type — lazy-loaded once, first look-up only.
+let _wireless = null, _wirelessTried = false;
+function wirelessBlocks() {
+  if (!_wirelessTried) { _wirelessTried = true; try { _wireless = loadWirelessBlocks(path.join(__dirname, 'phone-blocks.csv')); } catch (e) { _wireless = null; } }
+  return _wireless;
+}
+const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+const PHONE_RE = /(?:\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}(?!\d)/;
+// Does the URL PATH contain the person's first or last name? (prefer /jane-doe over /about)
+function pathHasName(url, first, last) {
+  let p = '';
+  try { p = new URL(/^https?:/i.test(url) ? url : 'https://' + url).pathname.toLowerCase(); } catch (e) { return false; }
+  const f = String(first || '').toLowerCase(), l = String(last || '').toLowerCase();
+  return (f.length >= 2 && p.includes(f)) || (l.length >= 2 && p.includes(l));
+}
 
 function hostOf(u) {
   const t = String(u || '').trim();
@@ -67,19 +87,30 @@ async function lookupOne(row, { apiKey } = {}) {
     if (/(^|\.)linkedin\.com\/in\//i.test(o.link || '')) { linkedin = cleanUrl(o.link); linkedinSnippet = o.snippet || ''; break; }
   }
 
-  // Bio URL: a page whose ROOT DOMAIN belongs to the contact's employer (companyMatchesDomain). Among the
-  // company-matching results, prefer the employer's own website, then a bio/contact-looking URL, then the
-  // first company-matching page. If nothing matches the company, return no bio (better empty than wrong).
+  // Bio URL: only pages whose ROOT DOMAIN belongs to the contact's employer (companyMatchesDomain). Among
+  // those, rank so a URL with the person's first/last name in the PATH wins first, then the employer's own
+  // website / a bio-contact-looking URL, then any company page. Empty if nothing matches the company.
+  const cands = organic.filter((o) => o.link && !isSocial(o.link) && companyMatchesDomain(employer, o.link));
+  const score = (o) => (pathHasName(o.link, first, last) ? 4 : 0)
+    + ((siteHost && hostOf(o.link) === siteHost) ? 2 : 0)
+    + (isBioOrContactUrl(o.link) ? 1 : 0);
+  cands.sort((a, b) => score(b) - score(a));                 // V8 sort is stable -> ties keep serper rank
   let bio = '', bioSnippet = '';
-  for (const o of organic) {
-    const link = o.link || '';
-    if (isSocial(link)) continue;
-    if (!companyMatchesDomain(employer, link)) continue;
-    const strong = (siteHost && hostOf(link) === siteHost) || isBioOrContactUrl(link);
-    if (strong) { bio = cleanUrl(link); bioSnippet = o.snippet || ''; break; }
-    if (!bio) { bio = cleanUrl(link); bioSnippet = o.snippet || ''; }   // weak fallback: keep the first company-domain hit
-  }
-  return { linkedin, linkedinSnippet, bio, bioSnippet, query, error: (res && res.error) || '', credits: (res && res.credits) || 0 };
+  if (cands.length) { bio = cleanUrl(cands[0].link); bioSnippet = cands[0].snippet || ''; }
+
+  // Contact fields from the relevant results' text (LinkedIn + the company-matching pages). Title is matched
+  // against the position dictionary (findPosition); email/phone by regex, then classified (Email/Phone Type).
+  const text = [linkedinSnippet, ...cands.map((o) => (o.title || '') + ' ' + (o.snippet || ''))].join(' \n ');
+  const foundTitle = findPosition('', text) || '';
+  const emailM = text.match(EMAIL_RE);
+  const email = emailM ? emailM[0].toLowerCase() : '';
+  const emailType = email ? classifyEmail(email) : '';
+  const phoneM = text.match(PHONE_RE);
+  const phone = phoneM ? phoneM[0].trim() : '';
+  const phoneType = phone ? (classifyLineType(phone, wirelessBlocks()).type || '') : '';
+
+  return { linkedin, linkedinSnippet, bio, bioSnippet, foundTitle, phone, phoneType, email, emailType,
+    query, error: (res && res.error) || '', credits: (res && res.credits) || 0 };
 }
 
 // --- CSV in/out (tolerant: header names matched loosely; quoted fields with commas/newlines supported) ---
@@ -127,7 +158,8 @@ const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
 function toCsv(results) {
   const out = [OUT_COLS.join(',')];
   for (const r of results) {
-    out.push([r.first, r.last, r.employer, r.website, r.title, r.linkedin, r.linkedinSnippet, r.bio, r.bioSnippet].map(esc).join(','));
+    out.push([r.first, r.last, r.employer, r.website, r.title, r.linkedin, r.linkedinSnippet, r.bio, r.bioSnippet,
+      r.foundTitle, r.phone, r.phoneType, r.email, r.emailType].map(esc).join(','));
   }
   return out.join('\n') + '\n';
 }

@@ -24,6 +24,7 @@
     .sl-tablewrap { max-height: 58vh; overflow: auto; border: 1px solid #eceef1; border-radius: 8px; margin-top: 8px; }
     .sl-empty { color: #6b7280; padding: 20px; text-align: center; }
     .sl-desc { color: #4b5563; max-width: 360px; }
+    .sl-pill { display: inline-block; padding: 1px 6px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: 11px; white-space: nowrap; }
     progress { width: 240px; height: 12px; }
   </style>
 </head>
@@ -70,7 +71,7 @@
 
       <div class="sl-tablewrap" id="slTableWrap" style="display:none">
         <table class="sl-table">
-          <thead><tr><th>Name</th><th>Employer</th><th>LinkedIn URL</th><th>LinkedIn Snippet</th><th>Bio URL</th><th>Bio Snippet</th></tr></thead>
+          <thead><tr><th>Name</th><th>Employer</th><th>LinkedIn</th><th>Bio URL</th><th>Title</th><th>Phone</th><th>Email</th></tr></thead>
           <tbody id="slBody"></tbody>
         </table>
       </div>
@@ -139,13 +140,15 @@
       if (rows.length) {
         $('slTableWrap').style.display = 'block';
         const dash = '<span class="sl-empty" style="padding:0">—</span>';
+        const typed = (v, t) => v ? esc(v) + (t ? ' <span class="sl-pill">' + esc(t) + '</span>' : '') : dash;
         $('slBody').innerHTML = rows.map((r) => '<tr>' +
           '<td>' + esc([r.first, r.last].filter(Boolean).join(' ')) + '</td>' +
           '<td>' + esc(r.employer) + '</td>' +
           '<td class="url">' + (r.linkedin ? '<a href="' + esc(r.linkedin) + '" target="_blank" rel="noopener">LinkedIn</a>' : dash) + '</td>' +
-          '<td class="sl-desc">' + esc((r.linkedinSnippet || '').slice(0, 140)) + '</td>' +
           '<td class="url">' + (r.bio ? '<a href="' + esc(r.bio) + '" target="_blank" rel="noopener">' + esc(r.bio.replace(/^https?:\/\//, '').slice(0, 38)) + '</a>' : dash) + '</td>' +
-          '<td class="sl-desc">' + esc((r.bioSnippet || '').slice(0, 140)) + '</td>' +
+          '<td>' + (r.foundTitle ? esc(r.foundTitle) : dash) + '</td>' +
+          '<td>' + typed(r.phone, r.phoneType) + '</td>' +
+          '<td class="url">' + typed(r.email, r.emailType) + '</td>' +
         '</tr>').join('');
       }
       if (done) { $('slActions').style.display = 'flex'; }
