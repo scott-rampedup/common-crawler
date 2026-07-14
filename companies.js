@@ -107,12 +107,31 @@ async function search(client, f, { from = 0, size = 50, sort = '', dir = 'asc' }
     },
   });
   const b = res.body || res;
-  return { total: b.hits.total.value, rows: b.hits.hits.map((h) => prettyRow(h._source)) };
+  // return RAW rows (lowercased); the UI title-cases for display + Edit shows raw values (so exact-match
+  // industry/size/country filters keep working). CSV title-cases server-side in rowToCsvLine.
+  return { total: b.hits.total.value, rows: b.hits.hits.map((h) => h._source) };
 }
 
 async function count(client, f) {
   const res = await client.count({ index: INDEX, body: { query: buildQuery(f) } });
   return (res.body || res).count;
+}
+
+// Manual edit of a company doc (partial update by id). Only whitelisted fields; website edits keep domain
+// in sync. NOTE: a full company re-load (from the source dataset) would overwrite manual edits.
+const EDITABLE = new Set(['name', 'website', 'industry', 'size', 'country', 'region', 'locality', 'founded',
+  'linkedin_url', 'phone', 'full_address', 'category', 'cid', 'sitemap_url']);
+async function update(client, id, updates) {
+  if (!id) throw new Error('id required');
+  const doc = {};
+  for (const k in (updates || {})) {
+    if (!EDITABLE.has(k)) continue;
+    doc[k] = k === 'founded' ? (updates[k] === '' || updates[k] == null ? null : Number(updates[k]) || null) : String(updates[k] == null ? '' : updates[k]);
+  }
+  if ('website' in doc) doc.domain = normDomain(doc.website);
+  if (!Object.keys(doc).length) return { updated: 0 };
+  await client.update({ index: INDEX, id, body: { doc }, refresh: true });
+  return { updated: 1, doc };
 }
 
 // Stream every matching company to onRow via search_after (for CSV export beyond the 50k window).
@@ -159,4 +178,4 @@ function rowToCsvLine(d0) {
 }
 const csvHeader = () => OUT_COLS.join(',');
 
-module.exports = { INDEX, MAPPING, OUT_COLS, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, each, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, makeClient: os.makeClient };
+module.exports = { INDEX, MAPPING, OUT_COLS, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, each, update, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, makeClient: os.makeClient };

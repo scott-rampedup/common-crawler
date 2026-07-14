@@ -119,9 +119,25 @@
     </div>
   </div>
 
+  <div id="ccEditModal" style="display:none;position:fixed;inset:0;background:rgba(17,24,39,.45);z-index:100;align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:10px;padding:20px 22px;max-width:480px;width:92%;max-height:86vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25);">
+      <h3 style="margin:0 0 12px">Edit company</h3>
+      <div id="ccEditFields" style="display:flex;flex-direction:column;gap:9px;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+        <button id="ccEditCancel" type="button">Cancel</button>
+        <button id="ccEditSave" type="button" class="primary">Save</button>
+      </div>
+      <div id="ccEditMsg" style="font-size:12.5px;color:#9b1c1c;margin-top:8px;"></div>
+    </div>
+  </div>
+
   <script>
     const $ = (id) => document.getElementById(id);
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+    // Title-case for display only (stored/edited values stay raw so exact-match filters keep working).
+    const TC_UP = new Set(['llc','inc','llp','plc','pllc','pc','ltd','usa','us','uk','uae','eu','ny','la','dc']);
+    const TC_LOW = new Set(['of','and','the','for','to','in','on','at','a','an','or','de','du']);
+    function tc(s) { s = String(s == null ? '' : s); if (!s) return ''; return s.toLowerCase().split(/(\s+|-|\/|,)/).map((w, i) => { if (/^(\s+|-|\/|,)$/.test(w) || !w) return w; if (TC_UP.has(w)) return w.toUpperCase(); if (i > 0 && TC_LOW.has(w)) return w; return w.charAt(0).toUpperCase() + w.slice(1); }).join(''); }
     const PAGE = 50;
     let from = 0, total = 0;
     const sortState = { col: '', dir: 'asc' };
@@ -171,7 +187,7 @@
           const active = sortState.col === c.sort;
           const arrow = active ? ' <span class="arrow">' + (sortState.dir === 'asc' ? '▲' : '▼') + '</span>' : '';
           return '<th class="sortable" data-sort="' + c.sort + '">' + esc(c.label) + arrow + '</th>';
-        }).join('');
+        }).join('') + '<th>Edit</th>';
       $('ccAll').addEventListener('change', (e) => togglePage(e.target.checked));
       document.querySelectorAll('#ccHead th.sortable').forEach((th) => th.addEventListener('click', () => {
         const s = th.getAttribute('data-sort');
@@ -204,7 +220,7 @@
       $('ccTableWrap').style.display = rows.length ? 'block' : 'none';
       $('ccPager').style.display = total > PAGE ? 'flex' : 'none';
       $('ccBody').innerHTML = rows.map((d) => {
-        const loc = [d.locality, d.region, d.country].filter(Boolean).join(', ');
+        const loc = [tc(d.locality), tc(d.region), tc(d.country)].filter(Boolean).join(', ');
         const fav = d.domain ? '<img class="cc-fav" loading="lazy" src="https://www.google.com/s2/favicons?domain=' + encodeURIComponent(d.domain) + '&sz=128" onerror="this.style.visibility=\'hidden\'" />' : '';
         const site = d.website ? '<a href="' + esc(abs(d.website)) + '" target="_blank" rel="noopener">' + esc(d.website) + '</a>' : dash;
         const cnt = Number(d.contact_count || 0);
@@ -218,24 +234,26 @@
         return '<tr>' +
           '<td><input type="checkbox" class="ccRow" data-id="' + esc(d.id) + '"' + checked + ' /></td>' +
           '<td>' + fav + '</td>' +
-          '<td>' + (d.name ? esc(d.name) : dash) + '</td>' +
+          '<td>' + (d.name ? esc(tc(d.name)) : dash) + '</td>' +
           '<td class="url">' + site + '</td>' +
           '<td class="cc-count">' + cntCell + '</td>' +
           '<td class="url">' + smCell + '</td>' +
-          '<td>' + (d.industry ? esc(d.industry) : dash) + '</td>' +
+          '<td>' + (d.industry ? esc(tc(d.industry)) : dash) + '</td>' +
           '<td>' + (d.size ? '<span class="cc-pill">' + esc(d.size) + '</span>' : dash) + '</td>' +
           '<td>' + (d.founded ? esc(d.founded) : dash) + '</td>' +
           '<td>' + (loc ? esc(loc) : dash) + '</td>' +
           '<td class="url">' + li + '</td>' +
+          '<td><button type="button" class="ccEdit" data-id="' + esc(d.id) + '" title="Edit">✎</button></td>' +
         '</tr>';
       }).join('');
-      // wire row checkboxes
+      // wire row checkboxes + edit buttons
       const byId = {}; rows.forEach((d) => { byId[d.id] = d; });
       document.querySelectorAll('.ccRow').forEach((cb) => cb.addEventListener('change', () => {
         const id = cb.getAttribute('data-id');
         if (cb.checked) selected.set(id, byId[id]); else selected.delete(id);
         updateSel();
       }));
+      document.querySelectorAll('.ccEdit').forEach((b) => b.addEventListener('click', () => openEdit(byId[b.getAttribute('data-id')])));
       const shownTo = Math.min(from + PAGE, total);
       $('ccPageInfo').textContent = (total ? (from + 1) : 0) + '–' + shownTo + ' of ' + total.toLocaleString();
       $('ccPrev').disabled = from <= 0;
@@ -275,6 +293,33 @@
     });
     document.querySelectorAll('.cc-form input, .cc-form select').forEach((el) =>
       el.addEventListener('keydown', (e) => { if (e.key === 'Enter') search(0); }));
+
+    // ---- Edit modal ----
+    const EDIT_FIELDS = [['name','Company name'],['website','Website'],['industry','Industry'],['size','Size'],
+      ['country','Country'],['region','Region'],['locality','Locality'],['founded','Founded'],
+      ['phone','Phone'],['full_address','Full Address'],['category','Category'],['linkedin_url','LinkedIn URL']];
+    let editId = null;
+    function openEdit(row) {
+      if (!row) return;
+      editId = row.id;
+      $('ccEditFields').innerHTML = EDIT_FIELDS.map(([k, label]) =>
+        '<label style="font-size:12px;font-weight:600;color:#374151;display:flex;flex-direction:column;gap:2px;">' + esc(label) +
+        '<input data-k="' + k + '" value="' + esc(row[k] != null ? row[k] : '') + '" style="padding:6px 8px;font-size:13px;border:1px solid #d1d5db;border-radius:6px;" /></label>').join('');
+      $('ccEditMsg').textContent = ''; $('ccEditModal').style.display = 'flex';
+    }
+    $('ccEditCancel').addEventListener('click', () => { $('ccEditModal').style.display = 'none'; });
+    $('ccEditModal').addEventListener('click', (e) => { if (e.target.id === 'ccEditModal') $('ccEditModal').style.display = 'none'; });
+    $('ccEditSave').addEventListener('click', async () => {
+      const updates = {};
+      document.querySelectorAll('#ccEditFields input').forEach((i) => { updates[i.getAttribute('data-k')] = i.value; });
+      $('ccEditSave').disabled = true; $('ccEditMsg').textContent = 'Saving…';
+      try {
+        const r = await fetch('/api/companies/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: editId, updates }) });
+        const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        $('ccEditModal').style.display = 'none'; search(from);
+      } catch (e) { $('ccEditMsg').textContent = 'Failed: ' + e.message; }
+      $('ccEditSave').disabled = false;
+    });
   </script>
 </body>
 </html>

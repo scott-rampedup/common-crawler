@@ -51,12 +51,13 @@ function adjustSize(size, count) {
 
   const INDEX = co.INDEX;
   async function bulk(actions) { for (let a = 0; ; a++) { try { const res = await client.bulk({ body: actions }); const r = res.body || res; let e = 0; if (r.errors) for (const it of r.items) if (it.update && it.update.error) e++; return e; } catch (err) { if (a >= 6) throw err; await sleep(Math.min(16000, 500 * 2 ** a)); } } }
+  async function searchRetry(body) { for (let a = 0; ; a++) { try { return await client.search({ index: INDEX, body }); } catch (err) { if (a >= 8) throw err; await sleep(Math.min(30000, 1000 * 2 ** a)); } } }
   let after = null, scanned = 0, updated = 0, errs = 0;
   const t0 = Date.now();
   for (;;) {
     const body = { size: 5000, _source: ['domain', 'country', 'industry', 'size', 'contact_count'], query: { match_all: {} }, sort: [{ id: 'asc' }] };
     if (after) body.search_after = after;
-    const res = await client.search({ index: INDEX, body });
+    const res = await searchRetry(body);
     const hits = (res.body || res).hits.hits;
     if (!hits.length) break;
     const actions = [];

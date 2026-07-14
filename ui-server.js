@@ -1395,6 +1395,16 @@ const server = http.createServer(async (req, res) => {
     catch (e) { jsonErr(res, 500, e.message); }
     return;
   }
+  if (url.pathname === '/api/companies/update' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
+    readJsonBody(req, async (b) => {
+      if (!b || !b.id) return jsonErr(res, 400, 'id + updates required');
+      try { sendJson(res, await companies.update(companiesClient, b.id, b.updates || {})); }
+      catch (e) { jsonErr(res, 500, e.message); }
+    });
+    return;
+  }
   if (url.pathname === '/api/companies/export.csv' && req.method === 'GET') {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
