@@ -134,6 +134,19 @@ async function update(client, id, updates) {
   return { updated: 1, doc };
 }
 
+// Map a SERPER Places result onto company-field updates: title->name (only if name is blank),
+// address->full_address, category, phoneNumber->phone, website->website(+domain), cid.
+function placeUpdates(p, cur) {
+  cur = cur || {}; const u = {};
+  if (p.title && !String(cur.name || '').trim()) u.name = p.title;
+  if (p.address) u.full_address = p.address;
+  if (p.category) u.category = p.category;
+  if (p.phoneNumber) u.phone = String(p.phoneNumber);
+  if (p.website) { u.website = p.website; u.domain = normDomain(p.website); }
+  if (p.cid != null && p.cid !== '') u.cid = String(p.cid);
+  return u;
+}
+
 // Stream every matching company to onRow via search_after (for CSV export beyond the 50k window).
 async function each(client, f, onRow, cap = 1000000) {
   let after = null, n = 0;
@@ -178,4 +191,4 @@ function rowToCsvLine(d0) {
 }
 const csvHeader = () => OUT_COLS.join(',');
 
-module.exports = { INDEX, MAPPING, OUT_COLS, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, each, update, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, makeClient: os.makeClient };
+module.exports = { INDEX, MAPPING, OUT_COLS, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, each, update, placeUpdates, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, makeClient: os.makeClient };

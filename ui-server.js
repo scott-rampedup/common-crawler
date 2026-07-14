@@ -125,6 +125,7 @@ function makeOsReader(endpoint) {
 }
 let osSync = null;   // background delta syncer handle (fleet-ingested contacts -> OpenSearch)
 const companies = require('./companies');
+const serperApi = require('./serper');
 let companiesClient = null;        // OpenSearch client for the `companies` index (Company Crawler), set in startup
 const monitorDb = sqliteDb;        // sitemap-monitor tables always live in SQLite
 const aiEnrich = require('./ai-enrich');
@@ -1402,6 +1403,32 @@ const server = http.createServer(async (req, res) => {
       if (!b || !b.id) return jsonErr(res, 400, 'id + updates required');
       try { sendJson(res, await companies.update(companiesClient, b.id, b.updates || {})); }
       catch (e) { jsonErr(res, 500, e.message); }
+    });
+    return;
+  }
+  // SERPER Places bulk lookup for selected companies: name+location -> address/category/cid/phone/website/title.
+  if (url.pathname === '/api/companies/places' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
+    readJsonBody(req, async (b) => {
+      const ids = (b && Array.isArray(b.ids)) ? b.ids.slice(0, 500) : [];
+      if (!ids.length) return jsonErr(res, 400, 'no ids');
+      const docs = [];
+      for (const id of ids) { try { const g = await companiesClient.get({ index: companies.INDEX, id }); docs.push({ id, s: (g.body || g)._source || {} }); } catch (e) { /* skip */ } }
+      let i = 0, processed = 0, updated = 0, credits = 0, errs = 0;
+      async function worker() {
+        for (;;) {
+          const k = i++; if (k >= docs.length) return;
+          const { id, s } = docs[k];
+          if (!s.name) { processed++; continue; }
+          const q = [s.name, [s.locality, s.region, s.country].filter(Boolean).join(' ')].filter(Boolean).join(' ');
+          const r = await serperApi.serperPlaces(q); credits += (r.credits || 1); processed++;
+          const place = (r.places || [])[0];
+          if (place) { const u = companies.placeUpdates(place, s); if (Object.keys(u).length) { try { await companies.update(companiesClient, id, u); updated++; } catch (e) { errs++; } } }
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(5, docs.length) }, worker));
+      sendJson(res, { processed, updated, credits, errors: errs });
     });
     return;
   }

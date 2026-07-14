@@ -7,6 +7,34 @@
  */
 const https = require("https");
 const SERPER_URL = "https://google.serper.dev/search";
+const SERPER_PLACES_URL = "https://google.serper.dev/places";
+
+// Google Places via serper.dev — POST { q } -> { places: [{ title, address, category, phoneNumber,
+// website, cid, rating, ... }] }. 1 credit/call. Used by Company Crawler's "Look Up Places".
+function serperPlaces(query, { apiKey } = {}) {
+  return new Promise((resolve) => {
+    const key = apiKey || process.env.SERPER_API_KEY || "";
+    if (!key) return resolve({ error: "no SERPER_API_KEY", places: [] });
+    const body = JSON.stringify({ q: query });
+    let u; try { u = new URL(SERPER_PLACES_URL); } catch { return resolve({ error: "bad url", places: [] }); }
+    const req = https.request(u, {
+      method: "POST", timeout: 30000,
+      headers: { "X-API-KEY": key, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+    }, (res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => {
+        let j = {}; try { j = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch {}
+        if (res.statusCode !== 200) return resolve({ error: `serper ${res.statusCode}: ${(j && (j.message || j.error)) || ""}`, places: [] });
+        resolve(j);
+      });
+      res.on("error", () => resolve({ error: "stream", places: [] }));
+    });
+    req.on("error", () => resolve({ error: "request", places: [] }));
+    req.on("timeout", () => { req.destroy(); resolve({ error: "timeout", places: [] }); });
+    req.write(body); req.end();
+  });
+}
 
 function serperSearch(query, { page = 1, num = 100, apiKey } = {}){
   return new Promise((resolve) => {
@@ -117,7 +145,7 @@ function bioRowsToRecords(rows, genderMap, today){
   return (rows || []).map((r) => bioRowToRecord(r, genderMap, today)).filter(Boolean);
 }
 
-module.exports = { serperSearch, siteSearch, siteTarget, bioRowToRecord, bioRowsToRecords };
+module.exports = { serperSearch, serperPlaces, siteSearch, siteTarget, bioRowToRecord, bioRowsToRecords };
 
 // ---- CLI: dry-run a site search (no DB). SERPER_API_KEY=... node serper.js <urlOrDomain> ----
 if(require.main === module){

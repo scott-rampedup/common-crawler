@@ -100,6 +100,7 @@
         <button id="ccReset" type="button">Reset</button>
         <a id="ccDownload" class="nav-link green" href="#" style="display:none">⬇ Download All (filtered)</a>
         <button id="ccDownloadSel" type="button" style="display:none">⬇ Download Selected (<span id="ccSelCount">0</span>)</button>
+        <button id="ccPlaces" type="button" style="display:none">📍 Look Up Places (Selected)</button>
         <span class="cc-sel" id="ccSelInfo"></span>
       </div>
 
@@ -272,6 +273,7 @@
       const n = selected.size;
       $('ccSelCount').textContent = n;
       $('ccDownloadSel').style.display = n ? 'inline-block' : 'none';
+      $('ccPlaces').style.display = n ? 'inline-block' : 'none';
       $('ccSelInfo').textContent = n ? (n.toLocaleString() + ' selected') : '';
     }
 
@@ -283,6 +285,20 @@
       if (!ids.length) return;
       if (ids.length > 5000) { alert('Too many selected for a direct download (max 5,000). Use Download All (filtered) instead.'); return; }
       window.location.href = '/api/companies/export.csv?ids=' + encodeURIComponent(ids.join(','));
+    });
+    $('ccPlaces').addEventListener('click', async () => {
+      const ids = [...selected.keys()];
+      if (!ids.length) return;
+      if (ids.length > 500) { alert('Places lookup is capped at 500 per run (1 serper credit each). Select fewer.'); return; }
+      if (!confirm('Look up ' + ids.length + ' company(ies) via SERPER Places? Uses ~' + ids.length + ' serper credits.')) return;
+      $('ccPlaces').disabled = true; setStatus('Looking up ' + ids.length + ' place(s) via SERPER…');
+      try {
+        const r = await fetch('/api/companies/places', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+        const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        setStatus('Places: processed ' + d.processed + ', updated ' + d.updated + ', ~' + d.credits + ' credits' + (d.errors ? ', ' + d.errors + ' error(s)' : ''));
+        search(from);
+      } catch (e) { setStatus('Places lookup failed: ' + e.message, true); }
+      $('ccPlaces').disabled = false;
     });
     $('ccReset').addEventListener('click', () => {
       ['fName','fDomain','fIndustry','fCountry','fRegion','fLocality','fFoundedMin','fFoundedMax','fContactMin','fSitemap'].forEach((i) => $(i).value = '');
