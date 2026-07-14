@@ -10,17 +10,30 @@
  *
  * Idempotent — safe to re-run. Pass a per-run prefix (e.g. cc-extracted/2026-21/) to load one run.
  */
+const https = require('https');
 const { S3Client, ListObjectsV2Command, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { NodeHttpHandler } = require('@smithy/node-http-handler');
 const os = require('./opensearch');
 
 (async () => {
   const prefix = process.argv[2] || 'cc-extracted/';
   const bucket = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${process.env.AWS_REGION || 'us-east-1'}`;
   const region = process.env.AWS_REGION || 'us-east-1';
-  const s3 = new S3Client({ region });
+  // Keep-alive so the many S3 GETs across a crawl reuse a small socket pool instead of churning
+  // short-lived TCP connections (which exhausted Windows ephemeral ports and EACCES'd the next crawl).
+  const s3 = new S3Client({ region, requestHandler: new NodeHttpHandler({ httpsAgent: new https.Agent({ keepAlive: true, maxSockets: 64 }) }) });
   const client = os.makeClient(process.env.OPENSEARCH_ENDPOINT);
-  const CONC = Number(process.env.LOAD_CONC) || 24;
+  const CONC = Number(process.env.LOAD_CONC) || 8;   // OpenSearch write-throttles above ~8 concurrent bulk streams
   console.error(`loading s3://${bucket}/${prefix} -> OpenSearch (conc ${CONC})`);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // bulkUpsert with exponential backoff: a 429 (write-queue full) throws, so retry rather than silently
+  // dropping the file's records — the failure mode that lost ~97% of a 4,847-file load run at conc 32.
+  async function upsertRetry(docs) {
+    for (let attempt = 0; ; attempt++) {
+      try { return (await os.bulkUpsert(client, docs)).errors || 0; }
+      catch (e) { if (attempt >= 6) throw e; await sleep(Math.min(16000, 500 * 2 ** attempt)); }
+    }
+  }
 
   // List every object under the prefix first, then load them through a concurrency pool — the per-file
   // S3 GET + bulkUpsert is the pace-limiter, so parallelizing it turns a ~45-min sequential load into minutes.
@@ -46,10 +59,7 @@ const os = require('./opensearch');
         const docs = body.trim().split('\n').filter(Boolean)
           .map((l) => { try { return os.recordToDoc(JSON.parse(l), now); } catch (e) { return null; } })
           .filter((d) => d && d.email);
-        for (let i = 0; i < docs.length; i += 2000) {
-          const res = await os.bulkUpsert(client, docs.slice(i, i + 2000));
-          errs += res.errors;
-        }
+        for (let i = 0; i < docs.length; i += 2000) errs += await upsertRetry(docs.slice(i, i + 2000));
         total += docs.length;
       } catch (e) { errs++; }
       if (++files % 1000 === 0) console.error(`  ${files.toLocaleString()}/${keys.length.toLocaleString()} files, ${total.toLocaleString()} docs`);

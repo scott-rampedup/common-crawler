@@ -119,6 +119,33 @@ FROM (
 WHERE rn = 1`;
 }
 
+// --- domain-restricted DISCOVERY (find bio-path pages on a GIVEN company-domain list) ---
+// Like resolve, but JOIN on the registrable domain and keep only bio-path URLs (the discovery regex), so
+// we harvest ALL archived bio pages on the seed domains across the given crawls, freshest capture per page.
+function buildDomainDiscoverySql({ crawls, domainsTable, tlds, bioTerms, db = DB }) {
+  const crawlList = crawls.map((c) => `'${String(c).replace(/'/g, "''")}'`).join(",");
+  const bio = bioRegexSql(bioTerms && bioTerms.length ? bioTerms : DEFAULT_BIO).replace(/'/g, "''");
+  const exc = excludeRegexSql(EXCLUDE_TERMS).replace(/'/g, "''");
+  return `SELECT url, filename, "offset", length, "timestamp"
+FROM (
+  SELECT i.url AS url,
+         i.warc_filename AS filename,
+         i.warc_record_offset AS "offset",
+         i.warc_record_length AS length,
+         date_format(i.fetch_time, '%Y%m%d%H%i%s') AS "timestamp",
+         row_number() OVER (PARTITION BY concat(regexp_replace(lower(i.url_host_name), '^www\\.', ''), '|', lower(rtrim(i.url_path, '/'))) ORDER BY i.fetch_time DESC) AS rn
+  FROM ${db}.ccindex i
+  JOIN ${db}.${domainsTable} d ON d.k = i.url_host_registered_domain
+  WHERE i.crawl IN (${crawlList}) AND i.subset='warc'
+    AND i.fetch_status=200
+    AND i.content_mime_detected IN ('text/html','application/xhtml+xml')
+    AND i.url_host_tld IN (${sqlStrList(tlds)})
+    AND regexp_like(i.url_path, '${bio}')
+    AND NOT regexp_like(i.url_path, '${exc}')
+)
+WHERE rn = 1`;
+}
+
 // --- bio/people SITEMAP finder ---
 // Match the url's FINAL path segment against a list of well-known people-directory sitemap filenames
 // (agents-sitemap.xml, attorneys-sitemap.xml, team-sitemap.xml, loan-officer-sitemap.xml …). No mime
@@ -361,6 +388,60 @@ async function main() {
     const pct = keys.size ? ((written / keys.size) * 100).toFixed(1) : "0";
     console.error(`\nResolved ${written.toLocaleString()} / ${keys.size.toLocaleString()} URL(s) in CC (${pct}% hit) -> ${warcOut}`);
     console.error(`Next: DATABASE_URL=… node load-queue.js ${warcOut}   (the 12-region fleet then drains it)`);
+    return;
+  }
+
+  // --- domain-restricted discovery: harvest bio pages on a given company-domain list (across --crawls) ---
+  const domainsFile = arg("discover-domains", "");
+  if (domainsFile) {
+    if (!warcOut) { console.error("--discover-domains requires --warc-out <file>"); return; }
+    const crawlsArg = arg("crawls", "");
+    const dcrawls = crawlsArg ? crawlsArg.split(",").map((s) => s.trim()).filter(Boolean)
+      : (arg("crawl", "") ? [crawl] : await latestCrawls(Number(arg("last-n", "1")) || 1));
+    console.error(`Domain-discovery: ${domainsFile} -> ${warcOut}; crawls: ${dcrawls.join(", ")}`);
+
+    const domains = new Set();
+    await new Promise((res, rej) => {
+      const rl = readline.createInterface({ input: fs.createReadStream(domainsFile), crlfDelay: Infinity });
+      rl.on("line", (line) => { const t = line.trim().toLowerCase().replace(/^www\./, ""); if (t) domains.add(t); });
+      rl.on("close", res); rl.on("error", rej);
+    });
+    console.error(`  ${domains.size.toLocaleString()} distinct domain(s)`);
+    if (!domains.size) { console.error("no domains — nothing to do."); return; }
+
+    const tag = (arg("resolve-tag", "") || String(Date.now())).replace(/[^a-z0-9]/gi, "").slice(0, 24);
+    const domainsTable = "bio_domains_" + tag;
+    const prefix = `bio-domains/${tag}/`;
+    const body = Buffer.from([...domains].join("\n") + "\n", "utf8");
+    console.error(`  uploading domains (${(body.length / 1048576).toFixed(1)} MB) -> s3://${bucket}/${prefix}domains.txt ...`);
+    await A.s3.send(new A.PutObjectCommand({ Bucket: bucket, Key: prefix + "domains.txt", Body: body }));
+    for (const c of dcrawls) await ensureTable(A, c, output);
+    await runAthena(A, `DROP TABLE IF EXISTS ${DB}.${domainsTable}`, output, "drop domains tbl");
+    await runAthena(A, buildKeysTableSql({ keysTable: domainsTable, bucket, prefix }), output, "create domains tbl");
+
+    const { id } = await runAthena(A, buildDomainDiscoverySql({ crawls: dcrawls, domainsTable, tlds, bioTerms }), output, "domain-discover");
+    const loc = (await A.athena.send(new A.GetQueryExecutionCommand({ QueryExecutionId: id }))).QueryExecution.ResultConfiguration.OutputLocation;
+    let seen = 0, written = 0;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        seen = 0; written = 0;
+        const ws = fs.createWriteStream(warcOut);
+        await s3StreamRows(A, loc, async (r) => {
+          if (seen++ === 0 && r[0] === "url") return;
+          const [url, filename, offset, length, timestamp] = r;
+          if (!url || !filename) return;
+          written++;
+          if (!ws.write(JSON.stringify({ url, filename, offset, length, timestamp }) + "\n"))
+            await new Promise((resolve) => ws.once("drain", resolve));
+        });
+        await new Promise((resolve) => ws.end(resolve));
+        break;
+      } catch (e) {
+        if (attempt >= 3) throw e;
+        console.error(`  result stream attempt ${attempt} failed (${(e && e.message) || e}); retrying…`);
+      }
+    }
+    console.error(`\nDomain-discovery wrote ${written.toLocaleString()} bio-page pointer(s) -> ${warcOut}`);
     return;
   }
 
