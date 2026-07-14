@@ -873,11 +873,26 @@ function attachEvents() {
   el.lastBtn.addEventListener('click', () => { state.page = totalPages(); query(); });
 }
 
+// Pre-populate filters from the URL query (deep-links, e.g. the Company Crawler's Contact Count ->
+// /search?domain=acme.com). Runs before the initial query so the linked-to results load straight away.
+function applyUrlParams() {
+  const p = new URLSearchParams(location.search);
+  const setVal = (key, elm) => { const v = p.get(key); if (v != null && elm) elm.value = v; };
+  setVal('search', el.fSearch); setVal('directory', el.fDirectory); setVal('position', el.fPosition);
+  setVal('location', el.fLocation); setVal('emailType', el.fEmailType); setVal('phoneType', el.fPhoneType);
+  setVal('type', el.fType); setVal('gender', el.fGender);
+  setVal('industry', el.fIndustry); setVal('companySize', el.fCompanySize); setVal('companyLocation', el.fCompanyLocation);
+  setVal('foundedMin', el.fFoundedMin); setVal('foundedMax', el.fFoundedMax);
+  if (p.get('domain') && el.fDomains) el.fDomains.value = p.get('domain');
+  if ((p.get('linkedin') === '1' || p.get('linkedin') === 'yes') && el.fLinkedin) el.fLinkedin.checked = true;
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   initElements();
   el.resultsScroll = $('resultsScroll');
   attachEvents();
   createHeader();
+  applyUrlParams();  // deep-link filters from the URL (Company Crawler Contact Count links here)
   updateSelectedInfo();
   query();          // load the results table immediately
   loadFacets();     // fill the filter dropdowns in the background (don't block the table)

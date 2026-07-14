@@ -9,7 +9,7 @@
 const os = require('./opensearch');
 
 const INDEX = process.env.COMPANIES_INDEX || 'companies';
-const OUT_COLS = ['name', 'website', 'industry', 'size', 'founded', 'locality', 'region', 'country', 'linkedin_url'];
+const OUT_COLS = ['name', 'website', 'domain', 'contact_count', 'sitemap_url', 'industry', 'size', 'founded', 'locality', 'region', 'country', 'linkedin_url'];
 
 const MAPPING = {
   settings: { number_of_shards: 2, number_of_replicas: 0, 'index.max_result_window': 50000 },
@@ -26,6 +26,8 @@ const MAPPING = {
       region:       { type: 'keyword' },
       country:      { type: 'keyword' },
       linkedin_url: { type: 'keyword' },
+      contact_count: { type: 'integer' },   // # contacts sharing this root domain (set by count-sitemap batch)
+      sitemap_url:   { type: 'keyword' },    // discovered bio sitemap (else render constructs {domain}/sitemap.xml)
     },
   },
 };
@@ -81,17 +83,27 @@ function buildQuery(f) {
   if (f.founded_min) fr.gte = Number(f.founded_min);
   if (f.founded_max) fr.lte = Number(f.founded_max);
   if (fr.gte != null || fr.lte != null) filter.push({ range: { founded: fr } });
+  if (f.contactMin) filter.push({ range: { contact_count: { gte: Number(f.contactMin) } } });
+  // sitemap search: users type a sitemap URL or a domain — match on the (shared) root domain either way
+  if (f.sitemap) { const d = normDomain(f.sitemap); if (d) filter.push({ term: { domain: d } }); }
+  if (Array.isArray(f.ids) && f.ids.length) filter.push({ ids: { values: f.ids.slice(0, 10000) } });
   if (!must.length && !filter.length) return { match_all: {} };
   return { bool: { must: must.length ? must : undefined, filter: filter.length ? filter : undefined } };
 }
 
-async function search(client, f, { from = 0, size = 50 } = {}) {
+const SORT_COLS = { name: 'name.kw', founded: 'founded', contact_count: 'contact_count', size: 'size', industry: 'industry', country: 'country', domain: 'domain' };
+function sortFor(sort, dir) {
+  const order = dir === 'desc' ? 'desc' : 'asc';
+  if (SORT_COLS[sort]) return [{ [SORT_COLS[sort]]: { order, missing: '_last' } }];
+  return [{ _score: 'desc' }, { 'name.kw': 'asc' }];
+}
+async function search(client, f, { from = 0, size = 50, sort = '', dir = 'asc' } = {}) {
   const res = await client.search({
     index: INDEX,
     body: {
       track_total_hits: true, from, size,
       query: buildQuery(f),
-      sort: [{ _score: 'desc' }, { 'name.kw': 'asc' }],
+      sort: sortFor(sort, dir),
     },
   });
   const b = res.body || res;
@@ -118,10 +130,12 @@ async function each(client, f, onRow, cap = 1000000) {
   return n;
 }
 
+// Effective sitemap: the discovered one if we have it, else the constructed {domain}/sitemap.xml default.
+function effectiveSitemap(d) { return d.sitemap_url || (d.domain ? 'https://' + d.domain + '/sitemap.xml' : ''); }
 const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
 function rowToCsvLine(d) {
-  return [d.name, d.website, d.industry, d.size, d.founded, d.locality, d.region, d.country, d.linkedin_url].map(esc).join(',');
+  return [d.name, d.website, d.domain, d.contact_count || 0, effectiveSitemap(d), d.industry, d.size, d.founded, d.locality, d.region, d.country, d.linkedin_url].map(esc).join(',');
 }
 const csvHeader = () => OUT_COLS.join(',');
 
-module.exports = { INDEX, MAPPING, OUT_COLS, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, each, rowToCsvLine, csvHeader, makeClient: os.makeClient };
+module.exports = { INDEX, MAPPING, OUT_COLS, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, each, effectiveSitemap, rowToCsvLine, csvHeader, makeClient: os.makeClient };

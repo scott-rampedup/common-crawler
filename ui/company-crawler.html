@@ -8,7 +8,7 @@
   <link rel="apple-touch-icon" href="/ui/logo.png" />
   <link rel="stylesheet" href="/ui/styles.css" />
   <style>
-    .cc-wrap { max-width: 1280px; margin: 0 auto; padding: 16px 24px 48px; }
+    .cc-wrap { max-width: 1360px; margin: 0 auto; padding: 16px 24px 48px; }
     .cc-hint { color: #6b7280; font-size: 12.5px; margin: 2px 0 14px; }
     .cc-form { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px 14px; margin: 12px 0 6px; }
     .cc-field { display: flex; flex-direction: column; gap: 3px; }
@@ -20,14 +20,21 @@
     .cc-status { font-size: 13.5px; margin: 8px 0; padding: 9px 12px; background: #f3f4f6; border-radius: 8px; }
     .cc-status.err { background: #fde8e8; color: #9b1c1c; }
     table.cc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    table.cc-table th, table.cc-table td { text-align: left; padding: 7px 9px; border-bottom: 1px solid #eceef1; vertical-align: top; }
-    table.cc-table th { position: sticky; top: 0; background: #fafbfc; font-weight: 600; }
+    table.cc-table th, table.cc-table td { text-align: left; padding: 6px 9px; border-bottom: 1px solid #eceef1; vertical-align: middle; white-space: nowrap; }
+    table.cc-table th { position: sticky; top: 0; background: #fafbfc; font-weight: 600; z-index: 1; }
+    table.cc-table th.sortable { cursor: pointer; user-select: none; }
+    table.cc-table th.sortable:hover { background: #eef2f6; }
+    table.cc-table th .arrow { color: #6366f1; font-size: 11px; }
     table.cc-table td.url a { word-break: break-all; }
-    .cc-tablewrap { max-height: 60vh; overflow: auto; border: 1px solid #eceef1; border-radius: 8px; margin-top: 8px; }
-    .cc-empty { color: #6b7280; padding: 20px; text-align: center; }
+    .cc-fav { width: 18px; height: 18px; vertical-align: middle; border-radius: 3px; }
+    .cc-tablewrap { max-height: 62vh; overflow: auto; border: 1px solid #eceef1; border-radius: 8px; margin-top: 8px; }
+    .cc-empty { color: #9ca3af; }
     .cc-pill { display: inline-block; padding: 1px 7px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: 11px; white-space: nowrap; }
+    .cc-count a { font-weight: 600; color: #4338ca; text-decoration: none; }
+    .cc-count a:hover { text-decoration: underline; }
     .cc-pager { display: flex; gap: 10px; align-items: center; margin-top: 10px; font-size: 13px; }
     .cc-pager button { padding: 5px 12px; }
+    .cc-sel { font-size: 12.5px; color: #374151; }
   </style>
 </head>
 <body class="search-page">
@@ -49,8 +56,9 @@
 
     <div class="cc-wrap">
       <h2>Company Crawler</h2>
-      <p class="cc-hint">Search the company reference database (<b id="ccTotalIdx">…</b> companies) by any combination of fields,
-        then download the matching rows as CSV. Text fields match on words; Industry / Size / Country / Region match exactly.</p>
+      <p class="cc-hint">Search the company reference database (<b id="ccTotalIdx">…</b> companies). <b>Contacts</b> = records we
+        hold on that root domain (click it to open them in Search). <b>Sitemap</b> is the discovered bio sitemap, else the
+        standard <code>/sitemap.xml</code>. Tick rows to Download Selected, click a column header to sort.</p>
 
       <div class="cc-form">
         <div class="cc-field"><label>Company name</label><input id="fName" placeholder="e.g. baker tilly" /></div>
@@ -69,6 +77,8 @@
         <div class="cc-field"><label>Founded (year range)</label>
           <div class="cc-founded"><input id="fFoundedMin" type="number" placeholder="from" /><span>–</span><input id="fFoundedMax" type="number" placeholder="to" /></div>
         </div>
+        <div class="cc-field"><label>Min contacts</label><input id="fContactMin" type="number" min="0" placeholder="e.g. 5" /></div>
+        <div class="cc-field"><label>Sitemap URL / domain</label><input id="fSitemap" placeholder="e.g. compass.com" /></div>
       </div>
       <datalist id="industries">
         <option>accounting</option><option>financial services</option><option>banking</option><option>capital markets</option>
@@ -88,14 +98,16 @@
         <label style="display:flex;gap:6px;align-items:center;font-size:13px;"><input id="fLinkedin" type="checkbox" /> Has LinkedIn URL</label>
         <button id="ccSearch" type="button" class="primary">Search</button>
         <button id="ccReset" type="button">Reset</button>
-        <a id="ccDownload" class="nav-link green" href="#" style="display:none">⬇ Download CSV</a>
+        <a id="ccDownload" class="nav-link green" href="#" style="display:none">⬇ Download All (filtered)</a>
+        <button id="ccDownloadSel" type="button" style="display:none">⬇ Download Selected (<span id="ccSelCount">0</span>)</button>
+        <span class="cc-sel" id="ccSelInfo"></span>
       </div>
 
       <div id="ccStatus" class="cc-status" style="display:none"></div>
 
       <div class="cc-tablewrap" id="ccTableWrap" style="display:none">
         <table class="cc-table">
-          <thead><tr><th>Name</th><th>Website</th><th>Industry</th><th>Size</th><th>Founded</th><th>Location</th><th>LinkedIn</th></tr></thead>
+          <thead><tr id="ccHead"></tr></thead>
           <tbody id="ccBody"></tbody>
         </table>
       </div>
@@ -112,11 +124,25 @@
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
     const PAGE = 50;
     let from = 0, total = 0;
+    const sortState = { col: '', dir: 'asc' };
+    const selected = new Map();   // id -> row (so Download Selected can send ids)
 
-    // show the total index size in the hint
+    // Column config: key (record field), label, sort (server sort key, '' = not sortable)
+    const COLS = [
+      { key: '_fav',        label: '',          sort: '' },
+      { key: 'name',        label: 'Company',   sort: 'name' },
+      { key: 'website',     label: 'Website',   sort: 'domain' },
+      { key: 'contact_count', label: 'Contacts', sort: 'contact_count' },
+      { key: 'sitemap',     label: 'Sitemap',   sort: '' },
+      { key: 'industry',    label: 'Industry',  sort: 'industry' },
+      { key: 'size',        label: 'Size',      sort: 'size' },
+      { key: 'founded',     label: 'Founded',   sort: 'founded' },
+      { key: 'location',    label: 'Location',  sort: '' },
+      { key: 'linkedin_url',label: 'LinkedIn',  sort: '' },
+    ];
+
     fetch('/api/companies/search?size_n=1').then(r => r.json()).then(d => {
-      if (typeof d.total === 'number') $('ccTotalIdx').textContent = d.total.toLocaleString();
-      else $('ccTotalIdx').textContent = '—';
+      $('ccTotalIdx').textContent = (typeof d.total === 'number') ? d.total.toLocaleString() : '—';
     }).catch(() => { $('ccTotalIdx').textContent = '—'; });
 
     function filters() {
@@ -124,27 +150,45 @@
         name: $('fName').value.trim(), domain: $('fDomain').value.trim(), industry: $('fIndustry').value.trim(),
         size: $('fSize').value, country: $('fCountry').value.trim(), region: $('fRegion').value.trim(),
         locality: $('fLocality').value.trim(), founded_min: $('fFoundedMin').value.trim(),
-        founded_max: $('fFoundedMax').value.trim(), linkedin: $('fLinkedin').checked ? 'yes' : '',
+        founded_max: $('fFoundedMax').value.trim(), contactMin: $('fContactMin').value.trim(),
+        sitemap: $('fSitemap').value.trim(), linkedin: $('fLinkedin').checked ? 'yes' : '',
       };
     }
     function qs(extra) {
       const f = filters(), p = new URLSearchParams();
       for (const k in f) if (f[k]) p.set(k, f[k]);
+      if (sortState.col) { p.set('sort', sortState.col); p.set('dir', sortState.dir); }
       for (const k in (extra || {})) p.set(k, extra[k]);
       return p.toString();
     }
     function setStatus(msg, err) { const el = $('ccStatus'); el.style.display = 'block'; el.className = 'cc-status' + (err ? ' err' : ''); el.textContent = msg; }
 
+    function renderHead() {
+      $('ccHead').innerHTML =
+        '<th><input type="checkbox" id="ccAll" title="Select all on this page" /></th>' +
+        COLS.map((c) => {
+          if (!c.sort) return '<th>' + esc(c.label) + '</th>';
+          const active = sortState.col === c.sort;
+          const arrow = active ? ' <span class="arrow">' + (sortState.dir === 'asc' ? '▲' : '▼') + '</span>' : '';
+          return '<th class="sortable" data-sort="' + c.sort + '">' + esc(c.label) + arrow + '</th>';
+        }).join('');
+      $('ccAll').addEventListener('change', (e) => togglePage(e.target.checked));
+      document.querySelectorAll('#ccHead th.sortable').forEach((th) => th.addEventListener('click', () => {
+        const s = th.getAttribute('data-sort');
+        if (sortState.col === s) sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+        else { sortState.col = s; sortState.dir = (s === 'contact_count' || s === 'founded') ? 'desc' : 'asc'; }
+        search(0);
+      }));
+    }
+
     async function search(newFrom) {
       from = newFrom || 0;
-      setStatus('Searching…');
-      $('ccSearch').disabled = true;
+      setStatus('Searching…'); $('ccSearch').disabled = true;
       try {
         const r = await fetch('/api/companies/search?' + qs({ from, size_n: PAGE }));
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-        total = d.total;
-        render(d.rows);
+        total = d.total; renderHead(); render(d.rows);
         setStatus(total.toLocaleString() + ' matching compan' + (total === 1 ? 'y' : 'ies') + (total > 500000 ? ' (CSV caps at 500,000)' : ''));
         $('ccDownload').style.display = total ? 'inline-block' : 'none';
         $('ccDownload').href = '/api/companies/export.csv?' + qs();
@@ -152,17 +196,32 @@
       $('ccSearch').disabled = false;
     }
 
+    function siteOf(d) { return d.sitemap_url || (d.domain ? 'https://' + d.domain + '/sitemap.xml' : ''); }
+    function abs(u) { return /^https?:/.test(u) ? u : 'https://' + u; }
+
     function render(rows) {
-      const dash = '<span class="cc-empty" style="padding:0">—</span>';
+      const dash = '<span class="cc-empty">—</span>';
       $('ccTableWrap').style.display = rows.length ? 'block' : 'none';
       $('ccPager').style.display = total > PAGE ? 'flex' : 'none';
       $('ccBody').innerHTML = rows.map((d) => {
         const loc = [d.locality, d.region, d.country].filter(Boolean).join(', ');
-        const site = d.website ? '<a href="' + esc(/^https?:/.test(d.website) ? d.website : 'https://' + d.website) + '" target="_blank" rel="noopener">' + esc(d.website) + '</a>' : dash;
-        const li = d.linkedin_url ? '<a href="' + esc(/^https?:/.test(d.linkedin_url) ? d.linkedin_url : 'https://' + d.linkedin_url) + '" target="_blank" rel="noopener">LinkedIn</a>' : dash;
+        const fav = d.domain ? '<img class="cc-fav" loading="lazy" src="https://www.google.com/s2/favicons?domain=' + encodeURIComponent(d.domain) + '&sz=128" onerror="this.style.visibility=\'hidden\'" />' : '';
+        const site = d.website ? '<a href="' + esc(abs(d.website)) + '" target="_blank" rel="noopener">' + esc(d.website) + '</a>' : dash;
+        const cnt = Number(d.contact_count || 0);
+        const cntCell = cnt > 0
+          ? '<a href="/search?domain=' + encodeURIComponent(d.domain) + '" target="_blank" rel="noopener">' + cnt.toLocaleString() + '</a>'
+          : '<span class="cc-empty">0</span>';
+        const sm = siteOf(d);
+        const smCell = sm ? '<a href="' + esc(sm) + '" target="_blank" rel="noopener">' + (d.sitemap_url ? 'sitemap ✓' : 'sitemap') + '</a>' : dash;
+        const li = d.linkedin_url ? '<a href="' + esc(abs(d.linkedin_url)) + '" target="_blank" rel="noopener">LinkedIn</a>' : dash;
+        const checked = selected.has(d.id) ? ' checked' : '';
         return '<tr>' +
+          '<td><input type="checkbox" class="ccRow" data-id="' + esc(d.id) + '"' + checked + ' /></td>' +
+          '<td>' + fav + '</td>' +
           '<td>' + (d.name ? esc(d.name) : dash) + '</td>' +
           '<td class="url">' + site + '</td>' +
+          '<td class="cc-count">' + cntCell + '</td>' +
+          '<td class="url">' + smCell + '</td>' +
           '<td>' + (d.industry ? esc(d.industry) : dash) + '</td>' +
           '<td>' + (d.size ? '<span class="cc-pill">' + esc(d.size) + '</span>' : dash) + '</td>' +
           '<td>' + (d.founded ? esc(d.founded) : dash) + '</td>' +
@@ -170,20 +229,49 @@
           '<td class="url">' + li + '</td>' +
         '</tr>';
       }).join('');
+      // wire row checkboxes
+      const byId = {}; rows.forEach((d) => { byId[d.id] = d; });
+      document.querySelectorAll('.ccRow').forEach((cb) => cb.addEventListener('change', () => {
+        const id = cb.getAttribute('data-id');
+        if (cb.checked) selected.set(id, byId[id]); else selected.delete(id);
+        updateSel();
+      }));
       const shownTo = Math.min(from + PAGE, total);
       $('ccPageInfo').textContent = (total ? (from + 1) : 0) + '–' + shownTo + ' of ' + total.toLocaleString();
       $('ccPrev').disabled = from <= 0;
       $('ccNext').disabled = shownTo >= total;
+      updateSel();
+    }
+
+    function togglePage(on) {
+      document.querySelectorAll('.ccRow').forEach((cb) => {
+        cb.checked = on; const id = cb.getAttribute('data-id');
+        if (on) selected.set(id, true); else selected.delete(id);
+      });
+      updateSel();
+    }
+    function updateSel() {
+      const n = selected.size;
+      $('ccSelCount').textContent = n;
+      $('ccDownloadSel').style.display = n ? 'inline-block' : 'none';
+      $('ccSelInfo').textContent = n ? (n.toLocaleString() + ' selected') : '';
     }
 
     $('ccSearch').addEventListener('click', () => search(0));
     $('ccPrev').addEventListener('click', () => search(Math.max(0, from - PAGE)));
     $('ccNext').addEventListener('click', () => search(from + PAGE));
+    $('ccDownloadSel').addEventListener('click', () => {
+      const ids = [...selected.keys()];
+      if (!ids.length) return;
+      if (ids.length > 5000) { alert('Too many selected for a direct download (max 5,000). Use Download All (filtered) instead.'); return; }
+      window.location.href = '/api/companies/export.csv?ids=' + encodeURIComponent(ids.join(','));
+    });
     $('ccReset').addEventListener('click', () => {
-      ['fName','fDomain','fIndustry','fCountry','fRegion','fLocality','fFoundedMin','fFoundedMax'].forEach((i) => $(i).value = '');
+      ['fName','fDomain','fIndustry','fCountry','fRegion','fLocality','fFoundedMin','fFoundedMax','fContactMin','fSitemap'].forEach((i) => $(i).value = '');
       $('fSize').value = ''; $('fLinkedin').checked = false;
-      $('ccTableWrap').style.display = 'none'; $('ccPager').style.display = 'none'; $('ccDownload').style.display = 'none';
-      $('ccStatus').style.display = 'none';
+      sortState.col = ''; sortState.dir = 'asc'; selected.clear(); updateSel();
+      $('ccTableWrap').style.display = 'none'; $('ccPager').style.display = 'none';
+      $('ccDownload').style.display = 'none'; $('ccStatus').style.display = 'none';
     });
     document.querySelectorAll('.cc-form input, .cc-form select').forEach((el) =>
       el.addEventListener('keydown', (e) => { if (e.key === 'Enter') search(0); }));
