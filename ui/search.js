@@ -6,7 +6,8 @@ const CSV_COLUMNS = [
   'Time Stamp', 'Source', 'Web Source URL', 'Directory', 'Path ID', 'Domain', 'Last Path',
   'Bio Check', 'First', 'Last', 'Gender', 'Title', 'Position', 'Description', 'Email Address',
   'Email Type', 'LinkedIn URL', 'Facebook', 'Twitter', 'WhatsApp', 'Google Maps', 'vCard', 'Phone', 'Phone Type', 'Phone Location',
-  'Phone 2', 'Phone 2 Type', 'Type'
+  'Phone 2', 'Phone 2 Type', 'Type',
+  'Industry', 'Company Size', 'Company HQ', 'Founded', 'Company Name', 'Company LinkedIn'
 ];
 
 // On-screen columns, in display order. Each: key (record field), label (header text),
@@ -30,6 +31,11 @@ const COLUMNS = [
   { key: 'Phone 2',        label: 'Phone 2',       type: 'text',     sortable: true  },
   { key: 'Phone 2 Type',   label: 'Type',          type: 'text',     sortable: true  },
   { key: 'Type',           label: 'Domain Type',   type: 'text',     sortable: true  },
+  { key: 'Industry',       label: 'Industry',      type: 'text',     sortable: false },
+  { key: 'Company Size',   label: 'Co. Size',      type: 'text',     sortable: false },
+  { key: 'Company HQ',     label: 'Co. HQ',        type: 'text',     sortable: false },
+  { key: 'Founded',        label: 'Founded',       type: 'text',     sortable: false },
+  { key: 'Company Name',   label: 'Company',       type: 'text',     sortable: false },
 ];
 
 // Fields the manual Edit modal lets you change for each selected record.
@@ -125,6 +131,11 @@ function initElements() {
   el.fPhoneType = $('f-phoneType');
   el.fType = $('f-type');
   el.fGender = $('f-gender');
+  el.fIndustry = $('f-industry');
+  el.fCompanySize = $('f-companySize');
+  el.fCompanyLocation = $('f-companyLocation');
+  el.fFoundedMin = $('f-foundedMin');
+  el.fFoundedMax = $('f-foundedMax');
   el.fLinkedin = $('f-linkedin');
   el.applyBtn = $('applyBtn');
   el.clearBtn = $('clearBtn');
@@ -484,6 +495,14 @@ function buildParams(extra) {
   if (el.fType.value) p.set('type', el.fType.value);
   const g = el.fGender.value;
   if (g && g !== 'na') p.set('gender', g);
+  if (el.fIndustry && el.fIndustry.value) p.set('industry', el.fIndustry.value);
+  if (el.fCompanySize && el.fCompanySize.value) p.set('companySize', el.fCompanySize.value);
+  const cloc = el.fCompanyLocation && el.fCompanyLocation.value.trim();
+  if (cloc) p.set('companyLocation', cloc);
+  const fmin = el.fFoundedMin && el.fFoundedMin.value.trim();
+  if (fmin) p.set('foundedMin', fmin);
+  const fmax = el.fFoundedMax && el.fFoundedMax.value.trim();
+  if (fmax) p.set('foundedMax', fmax);
   if (el.fLinkedin.checked) p.set('linkedin', '1');
   if (state.sort.column) { p.set('sort', state.sort.column); p.set('dir', String(state.sort.dir)); }
   if (extra) for (const k of Object.keys(extra)) p.set(k, extra[k]);
@@ -563,6 +582,8 @@ async function loadFacets() {
     fill(el.fEmailType, f.emailType, 'email types');
     fill(el.fPhoneType, f.phoneType, 'phone types');
     fill(el.fType, f.type, 'types');
+    if (el.fIndustry) fill(el.fIndustry, f.industry, 'industries');
+    if (el.fCompanySize) fill(el.fCompanySize, f.companySize, 'sizes');
   } catch (e) { /* ignore */ }
 }
 
@@ -812,6 +833,11 @@ function clearFilters() {
   el.fPhoneType.value = '';
   el.fType.value = '';
   el.fGender.value = 'na';
+  if (el.fIndustry) el.fIndustry.value = '';
+  if (el.fCompanySize) el.fCompanySize.value = '';
+  if (el.fCompanyLocation) el.fCompanyLocation.value = '';
+  if (el.fFoundedMin) el.fFoundedMin.value = '';
+  if (el.fFoundedMax) el.fFoundedMax.value = '';
   el.fLinkedin.checked = false;
   state.selected.clear();
   updateSelectedInfo();

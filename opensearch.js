@@ -150,6 +150,14 @@ function docToRecord(doc) {
   const rec = {};
   for (const f in FIELD_TO_DOC) rec[f] = doc[FIELD_TO_DOC[f]] || '';
   rec.Domain = doc.domain || '';
+  // firmographics are READ-ONLY here (not in FIELD_TO_DOC, so recordToDoc never writes them back — a
+  // re-load/edit can't wipe the enrichment).
+  rec.Industry = doc.industry || '';
+  rec['Company Size'] = doc.company_size || '';
+  rec['Company HQ'] = doc.company_hq || '';
+  rec.Founded = doc.company_founded || '';
+  rec['Company Name'] = doc.company_name || '';
+  rec['Company LinkedIn'] = doc.company_linkedin || '';
   return rec;
 }
 
@@ -174,6 +182,12 @@ function buildQuery(o = {}) {
   if (o.domain) filter.push({ term: { domain: String(o.domain).toLowerCase() } });
   if (o.position) filter.push(ciWild('position', o.position));
   if (o.location) filter.push({ bool: { minimum_should_match: 1, should: [ciWild('phone_location', o.location), ciWild('phone_2_location', o.location)] } });
+  // firmographics (company-dataset enrichment): industry/size are exact facets, HQ is substring, founded a range
+  if (o.industry) filter.push(ciTerm('industry.keyword', o.industry));
+  if (o.companySize) filter.push({ term: { 'company_size.keyword': String(o.companySize) } });
+  if (o.companyLocation) filter.push(ciWild('company_hq', o.companyLocation));
+  { const fr = {}; if (o.foundedMin) fr.gte = Number(o.foundedMin); if (o.foundedMax) fr.lte = Number(o.foundedMax);
+    if (fr.gte != null || fr.lte != null) filter.push({ range: { company_founded: fr } }); }
   if (Array.isArray(o.domains) && o.domains.length) {
     const should = [];
     for (const d of o.domains) {
@@ -242,10 +256,12 @@ async function each(client, o, cb) {
 async function facets(client) {
   const agg = (field) => ({ terms: { field, size: 1000, order: { _key: 'asc' } } });
   const res = await client.search({ index: INDEX, body: { size: 0, aggs: {
-    directory: agg('directory'), emailType: agg('email_type'), phoneType: agg('phone_type'), type: agg('type') } } });
+    directory: agg('directory'), emailType: agg('email_type'), phoneType: agg('phone_type'), type: agg('type'),
+    industry: agg('industry.keyword'), companySize: agg('company_size.keyword') } } });
   const a = res.body.aggregations;
   const vals = (k) => (a[k].buckets || []).map((b) => b.key).filter((v) => v !== '');
-  return { directory: vals('directory'), emailType: vals('emailType'), phoneType: vals('phoneType'), type: vals('type') };
+  return { directory: vals('directory'), emailType: vals('emailType'), phoneType: vals('phoneType'), type: vals('type'),
+    industry: vals('industry'), companySize: vals('companySize') };
 }
 
 async function count(client, o) {

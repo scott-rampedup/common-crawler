@@ -70,6 +70,25 @@
             <option value="none">None</option>
           </select>
         </label>
+        <label>
+          Industry (firmographic)
+          <select id="f-industry"><option value="">All industries</option></select>
+        </label>
+        <label>
+          Company Size
+          <select id="f-companySize"><option value="">Any size</option></select>
+        </label>
+        <label>
+          Company HQ (key word)
+          <input id="f-companyLocation" type="search" placeholder="e.g. Chicago, California, United States" />
+        </label>
+        <label>
+          Founded (year range)
+          <span style="display:flex;gap:6px">
+            <input id="f-foundedMin" type="number" placeholder="from" style="width:50%" />
+            <input id="f-foundedMax" type="number" placeholder="to" style="width:50%" />
+          </span>
+        </label>
         <label class="checkbox-label">
           <input id="f-linkedin" type="checkbox" />
           Must have LinkedIn URL
