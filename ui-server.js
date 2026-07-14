@@ -124,6 +124,8 @@ function makeOsReader(endpoint) {
   };
 }
 let osSync = null;   // background delta syncer handle (fleet-ingested contacts -> OpenSearch)
+const companies = require('./companies');
+let companiesClient = null;        // OpenSearch client for the `companies` index (Company Crawler), set in startup
 const monitorDb = sqliteDb;        // sitemap-monitor tables always live in SQLite
 const aiEnrich = require('./ai-enrich');
 
@@ -1017,6 +1019,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/company-crawler' || url.pathname === '/company-crawler.html') {
+    if (!isAnalyst) { res.writeHead(302, { Location: '/search' }); res.end(); return; }   // analyst+
+    serveStaticFile(res, path.join(PUBLIC_DIR, 'company-crawler.html'));
+    return;
+  }
+
   if (url.pathname.startsWith('/ui/')) {
     const filePath = path.join(PUBLIC_DIR, url.pathname.replace(/^\/ui\//, ''));
     serveStaticFile(res, filePath);
@@ -1369,6 +1377,35 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ---- Company Crawler: search the `companies` reference index + CSV export ----
+  const companyFilters = (q) => ({
+    name: q.get('name'), domain: q.get('domain'), industry: q.get('industry'), size: q.get('size'),
+    country: q.get('country'), region: q.get('region'), locality: q.get('locality'),
+    founded_min: q.get('founded_min'), founded_max: q.get('founded_max'), linkedin: q.get('linkedin'),
+  });
+  if (url.pathname === '/api/companies/search' && req.method === 'GET') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
+    const q = url.searchParams;
+    const from = Math.max(0, Number(q.get('from')) || 0);
+    const size = Math.min(200, Math.max(1, Number(q.get('size_n')) || 50));
+    try { sendJson(res, await companies.search(companiesClient, companyFilters(q), { from, size })); }
+    catch (e) { jsonErr(res, 500, e.message); }
+    return;
+  }
+  if (url.pathname === '/api/companies/export.csv' && req.method === 'GET') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
+    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="companies.csv"' });
+    res.write(companies.csvHeader() + '\n');
+    try {
+      await companies.each(companiesClient, companyFilters(url.searchParams),
+        async (d) => { if (!res.write(companies.rowToCsvLine(d) + '\n')) await new Promise((r) => res.once('drain', r)); }, 500000);
+    } catch (e) { /* client disconnected or query failed mid-stream */ }
+    res.end();
+    return;
+  }
+
   // ---- central database (SQLite, server-side paginated) ----
   if (url.pathname === '/api/db/stats' && req.method === 'GET') { sendJson(res, await reader.stats()); return; }
   if (url.pathname === '/api/db/facets' && req.method === 'GET') {
@@ -1385,6 +1422,8 @@ const server = http.createServer(async (req, res) => {
       gender: q.get('gender') || 'na', domain: q.get('domain') || '',
       domains: parseDomainsParam(q.get('domains')), position: q.get('position') || '', location: q.get('location') || '',
       type: q.get('type') || '',
+      industry: q.get('industry') || '', companySize: q.get('companySize') || '',
+      companyLocation: q.get('companyLocation') || '', foundedMin: q.get('foundedMin') || '', foundedMax: q.get('foundedMax') || '',
       linkedin: q.get('linkedin') === '1', sort: q.get('sort') || '', dir: q.get('dir'),
     }));
     return;
@@ -1397,6 +1436,8 @@ const server = http.createServer(async (req, res) => {
       gender: q.get('gender') || 'na', domain: q.get('domain') || '',
       domains: parseDomainsParam(q.get('domains')), position: q.get('position') || '', location: q.get('location') || '',
       type: q.get('type') || '',
+      industry: q.get('industry') || '', companySize: q.get('companySize') || '',
+      companyLocation: q.get('companyLocation') || '', foundedMin: q.get('foundedMin') || '', foundedMax: q.get('foundedMax') || '',
       linkedin: q.get('linkedin') === '1',
     };
     res.writeHead(200, {
@@ -1605,6 +1646,7 @@ pruneOldJobs();
   if (String(process.env.SEARCH_BACKEND || '').toLowerCase() === 'opensearch' && process.env.OPENSEARCH_ENDPOINT) {
     try {
       reader = makeOsReader(process.env.OPENSEARCH_ENDPOINT);
+      companiesClient = companies.makeClient(process.env.OPENSEARCH_ENDPOINT);   // Company Crawler index
       console.log('Search backend: OpenSearch (SEARCH_BACKEND=opensearch).');
       // Keep OpenSearch current with the processing DB: stream fleet-ingested/edited contacts across.
       // Only meaningful when the source of truth is Postgres (DATABASE_URL); SQLite fallback has no fleet.
