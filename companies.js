@@ -1,0 +1,127 @@
+/**
+ * companies.js — the `companies` OpenSearch index (People Data Labs free company dataset) + search.
+ * -------------------------------------------------------------------------------------------------
+ * A reference dataset of ~35.6M companies keyed by id, searchable by name / website / industry / size /
+ * country / region / locality / founded. Powers the Company Crawler tab. Reuses the shared OpenSearch
+ * client + endpoint (opensearch.js). Loaded once by load-companies.js from the gzip NDJSON (0 replicas —
+ * it's static, re-loadable reference data, so we skip the replica to save disk).
+ */
+const os = require('./opensearch');
+
+const INDEX = process.env.COMPANIES_INDEX || 'companies';
+const OUT_COLS = ['name', 'website', 'industry', 'size', 'founded', 'locality', 'region', 'country', 'linkedin_url'];
+
+const MAPPING = {
+  settings: { number_of_shards: 2, number_of_replicas: 0, 'index.max_result_window': 50000 },
+  mappings: {
+    properties: {
+      id:           { type: 'keyword' },
+      name:         { type: 'text', fields: { kw: { type: 'keyword' } } },
+      website:      { type: 'keyword' },
+      domain:       { type: 'keyword' },
+      industry:     { type: 'keyword' },
+      size:         { type: 'keyword' },
+      founded:      { type: 'integer' },
+      locality:     { type: 'text', fields: { kw: { type: 'keyword' } } },
+      region:       { type: 'keyword' },
+      country:      { type: 'keyword' },
+      linkedin_url: { type: 'keyword' },
+    },
+  },
+};
+
+function normDomain(w) {
+  if (!w) return '';
+  return String(w).toLowerCase().trim().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].split('?')[0];
+}
+
+// One raw PDL record -> an index doc.
+function recordToDoc(r) {
+  return {
+    id: r.id || '', name: r.name || '', website: r.website || '', domain: normDomain(r.website),
+    industry: r.industry || '', size: r.size || '',
+    founded: (r.founded != null && r.founded !== '') ? (Number(r.founded) || null) : null,
+    locality: r.locality || '', region: r.region || '', country: r.country || '', linkedin_url: r.linkedin_url || '',
+  };
+}
+
+async function ensureIndex(client) {
+  const ex = await client.indices.exists({ index: INDEX });
+  if (!(ex.body === true || ex === true)) await client.indices.create({ index: INDEX, body: MAPPING });
+}
+
+// Bulk index by id (plain index — reference data, last write wins; no score gating).
+async function bulkIndex(client, docs) {
+  if (!docs.length) return { errors: 0 };
+  const body = [];
+  for (const d of docs) { if (!d.id) continue; body.push({ index: { _index: INDEX, _id: d.id } }, d); }
+  if (!body.length) return { errors: 0 };
+  const res = await client.bulk({ body });
+  const r = res.body || res;
+  let errors = 0;
+  if (r.errors) for (const it of r.items) if (it.index && it.index.error) errors++;
+  return { errors };
+}
+
+// Build an OpenSearch query from the Company Crawler filters. Text fields (name, locality) use match;
+// exact facets (domain, industry, size, region, country) use term (lowercased); founded is a range.
+function buildQuery(f) {
+  f = f || {};
+  const must = [], filter = [];
+  const kw = (v) => String(v).trim().toLowerCase();
+  if (f.name) must.push({ match: { name: { query: String(f.name), operator: 'and' } } });
+  if (f.locality) must.push({ match: { locality: { query: String(f.locality), operator: 'and' } } });
+  if (f.domain) filter.push({ term: { domain: normDomain(f.domain) } });
+  if (f.industry) filter.push({ term: { industry: kw(f.industry) } });
+  if (f.size) filter.push({ term: { size: String(f.size).trim() } });
+  if (f.region) filter.push({ term: { region: kw(f.region) } });
+  if (f.country) filter.push({ term: { country: kw(f.country) } });
+  if (f.linkedin === 'yes') filter.push({ exists: { field: 'linkedin_url' } });
+  const fr = {};
+  if (f.founded_min) fr.gte = Number(f.founded_min);
+  if (f.founded_max) fr.lte = Number(f.founded_max);
+  if (fr.gte != null || fr.lte != null) filter.push({ range: { founded: fr } });
+  if (!must.length && !filter.length) return { match_all: {} };
+  return { bool: { must: must.length ? must : undefined, filter: filter.length ? filter : undefined } };
+}
+
+async function search(client, f, { from = 0, size = 50 } = {}) {
+  const res = await client.search({
+    index: INDEX,
+    body: {
+      track_total_hits: true, from, size,
+      query: buildQuery(f),
+      sort: [{ _score: 'desc' }, { 'name.kw': 'asc' }],
+    },
+  });
+  const b = res.body || res;
+  return { total: b.hits.total.value, rows: b.hits.hits.map((h) => h._source) };
+}
+
+async function count(client, f) {
+  const res = await client.count({ index: INDEX, body: { query: buildQuery(f) } });
+  return (res.body || res).count;
+}
+
+// Stream every matching company to onRow via search_after (for CSV export beyond the 50k window).
+async function each(client, f, onRow, cap = 1000000) {
+  let after = null, n = 0;
+  for (;;) {
+    const body = { size: 5000, query: buildQuery(f), sort: [{ 'name.kw': 'asc' }, { id: 'asc' }] };
+    if (after) body.search_after = after;
+    const res = await client.search({ index: INDEX, body });
+    const hits = (res.body || res).hits.hits;
+    if (!hits.length) break;
+    for (const h of hits) { await onRow(h._source); if (++n >= cap) return n; }
+    after = hits[hits.length - 1].sort;
+  }
+  return n;
+}
+
+const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+function rowToCsvLine(d) {
+  return [d.name, d.website, d.industry, d.size, d.founded, d.locality, d.region, d.country, d.linkedin_url].map(esc).join(',');
+}
+const csvHeader = () => OUT_COLS.join(',');
+
+module.exports = { INDEX, MAPPING, OUT_COLS, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, each, rowToCsvLine, csvHeader, makeClient: os.makeClient };

@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Company Crawler · Common Crawler</title>
+  <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+  <link rel="apple-touch-icon" href="/ui/logo.png" />
+  <link rel="stylesheet" href="/ui/styles.css" />
+  <style>
+    .cc-wrap { max-width: 1280px; margin: 0 auto; padding: 16px 24px 48px; }
+    .cc-hint { color: #6b7280; font-size: 12.5px; margin: 2px 0 14px; }
+    .cc-form { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px 14px; margin: 12px 0 6px; }
+    .cc-field { display: flex; flex-direction: column; gap: 3px; }
+    .cc-field label { font-size: 12px; color: #374151; font-weight: 600; }
+    .cc-field input, .cc-field select { padding: 7px 9px; font-size: 13px; border: 1px solid #d1d5db; border-radius: 6px; box-sizing: border-box; }
+    .cc-founded { display: flex; gap: 6px; align-items: center; }
+    .cc-founded input { width: 100%; }
+    .cc-actions { display: flex; gap: 10px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
+    .cc-status { font-size: 13.5px; margin: 8px 0; padding: 9px 12px; background: #f3f4f6; border-radius: 8px; }
+    .cc-status.err { background: #fde8e8; color: #9b1c1c; }
+    table.cc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.cc-table th, table.cc-table td { text-align: left; padding: 7px 9px; border-bottom: 1px solid #eceef1; vertical-align: top; }
+    table.cc-table th { position: sticky; top: 0; background: #fafbfc; font-weight: 600; }
+    table.cc-table td.url a { word-break: break-all; }
+    .cc-tablewrap { max-height: 60vh; overflow: auto; border: 1px solid #eceef1; border-radius: 8px; margin-top: 8px; }
+    .cc-empty { color: #6b7280; padding: 20px; text-align: center; }
+    .cc-pill { display: inline-block; padding: 1px 7px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: 11px; white-space: nowrap; }
+    .cc-pager { display: flex; gap: 10px; align-items: center; margin-top: 10px; font-size: 13px; }
+    .cc-pager button { padding: 5px 12px; }
+  </style>
+</head>
+<body class="search-page">
+  <div class="search-shell">
+    <header class="search-header">
+      <div class="brand">
+        <img class="app-logo" src="/ui/logo.png" alt="Common Crawler logo"
+             onerror="this.onerror=null;this.src='/ui/favicon.svg';" />
+        <h1>Common Crawler</h1>
+      </div>
+      <nav class="nav-actions">
+        <a class="nav-link" href="/">⌂ Crawler</a>
+        <a class="nav-link green" href="/search">🔍 Search Database</a>
+        <a class="nav-link green" href="/site-search">🌐 Site Search</a>
+        <a class="nav-link green" href="/serp-lookup">🔎 SERP Look Up</a>
+        <a class="nav-link green active" href="/company-crawler" aria-current="page">🏢 Company Crawler</a>
+      </nav>
+    </header>
+
+    <div class="cc-wrap">
+      <h2>Company Crawler</h2>
+      <p class="cc-hint">Search the company reference database (<b id="ccTotalIdx">…</b> companies) by any combination of fields,
+        then download the matching rows as CSV. Text fields match on words; Industry / Size / Country / Region match exactly.</p>
+
+      <div class="cc-form">
+        <div class="cc-field"><label>Company name</label><input id="fName" placeholder="e.g. baker tilly" /></div>
+        <div class="cc-field"><label>Website / domain</label><input id="fDomain" placeholder="e.g. bakertilly.com" /></div>
+        <div class="cc-field"><label>Industry</label><input id="fIndustry" list="industries" placeholder="e.g. legal services" /></div>
+        <div class="cc-field"><label>Size (employees)</label>
+          <select id="fSize">
+            <option value="">any</option>
+            <option>1-10</option><option>11-50</option><option>51-200</option><option>201-500</option>
+            <option>501-1000</option><option>1001-5000</option><option>5001-10000</option><option>10001+</option>
+          </select>
+        </div>
+        <div class="cc-field"><label>Country</label><input id="fCountry" list="countries" placeholder="e.g. united states" /></div>
+        <div class="cc-field"><label>Region / state</label><input id="fRegion" placeholder="e.g. california" /></div>
+        <div class="cc-field"><label>Locality / city</label><input id="fLocality" placeholder="e.g. chicago" /></div>
+        <div class="cc-field"><label>Founded (year range)</label>
+          <div class="cc-founded"><input id="fFoundedMin" type="number" placeholder="from" /><span>–</span><input id="fFoundedMax" type="number" placeholder="to" /></div>
+        </div>
+      </div>
+      <datalist id="industries">
+        <option>accounting</option><option>financial services</option><option>banking</option><option>capital markets</option>
+        <option>real estate</option><option>commercial real estate</option><option>insurance</option>
+        <option>investment banking</option><option>investment management</option><option>venture capital &amp; private equity</option>
+        <option>legal services</option><option>law practice</option><option>government administration</option>
+        <option>non-profit organization management</option><option>civic &amp; social organization</option>
+        <option>higher education</option><option>education management</option><option>management consulting</option>
+        <option>information technology and services</option><option>construction</option><option>marketing and advertising</option>
+      </datalist>
+      <datalist id="countries">
+        <option>united states</option><option>united kingdom</option><option>canada</option><option>australia</option>
+        <option>ireland</option><option>new zealand</option><option>india</option><option>germany</option>
+      </datalist>
+
+      <div class="cc-actions">
+        <label style="display:flex;gap:6px;align-items:center;font-size:13px;"><input id="fLinkedin" type="checkbox" /> Has LinkedIn URL</label>
+        <button id="ccSearch" type="button" class="primary">Search</button>
+        <button id="ccReset" type="button">Reset</button>
+        <a id="ccDownload" class="nav-link green" href="#" style="display:none">⬇ Download CSV</a>
+      </div>
+
+      <div id="ccStatus" class="cc-status" style="display:none"></div>
+
+      <div class="cc-tablewrap" id="ccTableWrap" style="display:none">
+        <table class="cc-table">
+          <thead><tr><th>Name</th><th>Website</th><th>Industry</th><th>Size</th><th>Founded</th><th>Location</th><th>LinkedIn</th></tr></thead>
+          <tbody id="ccBody"></tbody>
+        </table>
+      </div>
+      <div class="cc-pager" id="ccPager" style="display:none">
+        <button id="ccPrev" type="button">‹ Prev</button>
+        <span id="ccPageInfo"></span>
+        <button id="ccNext" type="button">Next ›</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+    const PAGE = 50;
+    let from = 0, total = 0;
+
+    // show the total index size in the hint
+    fetch('/api/companies/search?size_n=1').then(r => r.json()).then(d => {
+      if (typeof d.total === 'number') $('ccTotalIdx').textContent = d.total.toLocaleString();
+      else $('ccTotalIdx').textContent = '—';
+    }).catch(() => { $('ccTotalIdx').textContent = '—'; });
+
+    function filters() {
+      return {
+        name: $('fName').value.trim(), domain: $('fDomain').value.trim(), industry: $('fIndustry').value.trim(),
+        size: $('fSize').value, country: $('fCountry').value.trim(), region: $('fRegion').value.trim(),
+        locality: $('fLocality').value.trim(), founded_min: $('fFoundedMin').value.trim(),
+        founded_max: $('fFoundedMax').value.trim(), linkedin: $('fLinkedin').checked ? 'yes' : '',
+      };
+    }
+    function qs(extra) {
+      const f = filters(), p = new URLSearchParams();
+      for (const k in f) if (f[k]) p.set(k, f[k]);
+      for (const k in (extra || {})) p.set(k, extra[k]);
+      return p.toString();
+    }
+    function setStatus(msg, err) { const el = $('ccStatus'); el.style.display = 'block'; el.className = 'cc-status' + (err ? ' err' : ''); el.textContent = msg; }
+
+    async function search(newFrom) {
+      from = newFrom || 0;
+      setStatus('Searching…');
+      $('ccSearch').disabled = true;
+      try {
+        const r = await fetch('/api/companies/search?' + qs({ from, size_n: PAGE }));
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        total = d.total;
+        render(d.rows);
+        setStatus(total.toLocaleString() + ' matching compan' + (total === 1 ? 'y' : 'ies') + (total > 500000 ? ' (CSV caps at 500,000)' : ''));
+        $('ccDownload').style.display = total ? 'inline-block' : 'none';
+        $('ccDownload').href = '/api/companies/export.csv?' + qs();
+      } catch (e) { setStatus('Search failed: ' + e.message, true); }
+      $('ccSearch').disabled = false;
+    }
+
+    function render(rows) {
+      const dash = '<span class="cc-empty" style="padding:0">—</span>';
+      $('ccTableWrap').style.display = rows.length ? 'block' : 'none';
+      $('ccPager').style.display = total > PAGE ? 'flex' : 'none';
+      $('ccBody').innerHTML = rows.map((d) => {
+        const loc = [d.locality, d.region, d.country].filter(Boolean).join(', ');
+        const site = d.website ? '<a href="' + esc(/^https?:/.test(d.website) ? d.website : 'https://' + d.website) + '" target="_blank" rel="noopener">' + esc(d.website) + '</a>' : dash;
+        const li = d.linkedin_url ? '<a href="' + esc(/^https?:/.test(d.linkedin_url) ? d.linkedin_url : 'https://' + d.linkedin_url) + '" target="_blank" rel="noopener">LinkedIn</a>' : dash;
+        return '<tr>' +
+          '<td>' + (d.name ? esc(d.name) : dash) + '</td>' +
+          '<td class="url">' + site + '</td>' +
+          '<td>' + (d.industry ? esc(d.industry) : dash) + '</td>' +
+          '<td>' + (d.size ? '<span class="cc-pill">' + esc(d.size) + '</span>' : dash) + '</td>' +
+          '<td>' + (d.founded ? esc(d.founded) : dash) + '</td>' +
+          '<td>' + (loc ? esc(loc) : dash) + '</td>' +
+          '<td class="url">' + li + '</td>' +
+        '</tr>';
+      }).join('');
+      const shownTo = Math.min(from + PAGE, total);
+      $('ccPageInfo').textContent = (total ? (from + 1) : 0) + '–' + shownTo + ' of ' + total.toLocaleString();
+      $('ccPrev').disabled = from <= 0;
+      $('ccNext').disabled = shownTo >= total;
+    }
+
+    $('ccSearch').addEventListener('click', () => search(0));
+    $('ccPrev').addEventListener('click', () => search(Math.max(0, from - PAGE)));
+    $('ccNext').addEventListener('click', () => search(from + PAGE));
+    $('ccReset').addEventListener('click', () => {
+      ['fName','fDomain','fIndustry','fCountry','fRegion','fLocality','fFoundedMin','fFoundedMax'].forEach((i) => $(i).value = '');
+      $('fSize').value = ''; $('fLinkedin').checked = false;
+      $('ccTableWrap').style.display = 'none'; $('ccPager').style.display = 'none'; $('ccDownload').style.display = 'none';
+      $('ccStatus').style.display = 'none';
+    });
+    document.querySelectorAll('.cc-form input, .cc-form select').forEach((el) =>
+      el.addEventListener('keydown', (e) => { if (e.key === 'Enter') search(0); }));
+  </script>
+</body>
+</html>
