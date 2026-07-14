@@ -107,7 +107,7 @@ async function search(client, f, { from = 0, size = 50, sort = '', dir = 'asc' }
     },
   });
   const b = res.body || res;
-  return { total: b.hits.total.value, rows: b.hits.hits.map((h) => h._source) };
+  return { total: b.hits.total.value, rows: b.hits.hits.map((h) => prettyRow(h._source)) };
 }
 
 async function count(client, f) {
@@ -132,10 +132,31 @@ async function each(client, f, onRow, cap = 1000000) {
 
 // Effective sitemap: the discovered one if we have it, else the constructed {domain}/sitemap.xml default.
 function effectiveSitemap(d) { return d.sitemap_url || (d.domain ? 'https://' + d.domain + '/sitemap.xml' : ''); }
+
+// Proper/Title case for the lowercased PDL text fields (name/industry/locality/region/country). Keeps
+// common acronyms/legal suffixes upper (LLC, USA…) and small joining words lower (of/and/the).
+const TC_UP = new Set(['llc', 'inc', 'llp', 'plc', 'pllc', 'pc', 'ltd', 'usa', 'us', 'uk', 'uae', 'eu', 'ny', 'la', 'dc', 'it', 'hr', 'pr', 'ai', 'ii', 'iii', 'iv']);
+const TC_LOW = new Set(['of', 'and', 'the', 'for', 'to', 'in', 'on', 'at', 'a', 'an', 'or', 'de', 'la', 'du']);
+function titleCase(s) {
+  const str = String(s == null ? '' : s);
+  if (!str) return '';
+  return str.toLowerCase().split(/(\s+|-|\/|,)/).map((w, i) => {
+    if (/^(\s+|-|\/|,)$/.test(w) || !w) return w;
+    if (TC_UP.has(w)) return w.toUpperCase();
+    if (i > 0 && TC_LOW.has(w)) return w;
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }).join('');
+}
+// Apply proper case to the display/export text fields of a row (returns a shallow copy).
+function prettyRow(d) {
+  return { ...d, name: titleCase(d.name), industry: titleCase(d.industry), locality: titleCase(d.locality), region: titleCase(d.region), country: titleCase(d.country) };
+}
+
 const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
-function rowToCsvLine(d) {
-  return [d.name, d.website, d.domain, d.contact_count || 0, effectiveSitemap(d), d.industry, d.size, d.founded, d.locality, d.region, d.country, d.linkedin_url].map(esc).join(',');
+function rowToCsvLine(d0) {
+  const d = prettyRow(d0);
+  return [d.name, d.website, d.domain, d.contact_count || 0, effectiveSitemap(d0), d.industry, d.size, d.founded, d.locality, d.region, d.country, d.linkedin_url].map(esc).join(',');
 }
 const csvHeader = () => OUT_COLS.join(',');
 
-module.exports = { INDEX, MAPPING, OUT_COLS, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, each, effectiveSitemap, rowToCsvLine, csvHeader, makeClient: os.makeClient };
+module.exports = { INDEX, MAPPING, OUT_COLS, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, each, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, makeClient: os.makeClient };
