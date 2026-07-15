@@ -99,6 +99,7 @@
         <label style="display:flex;gap:6px;align-items:center;font-size:13px;"><input id="fLinkedin" type="checkbox" /> Has LinkedIn URL</label>
         <button id="ccSearch" type="button" class="primary">Search</button>
         <button id="ccReset" type="button">Reset</button>
+        <button id="ccAltCfg" type="button" title="Manage the Alternate-Websites pattern list (admin)">⚙ Alt Websites</button>
         <a id="ccDownload" class="nav-link green" href="#" style="display:none">⬇ Download All (filtered)</a>
         <button id="ccDownloadSel" type="button" style="display:none">⬇ Download Selected (<span id="ccSelCount">0</span>)</button>
         <button id="ccPlaces" type="button" style="display:none">📍 Look Up Places (Selected)</button>
@@ -131,6 +132,19 @@
         <button id="ccEditSave" type="button" class="primary">Save</button>
       </div>
       <div id="ccEditMsg" style="font-size:12.5px;color:#9b1c1c;margin-top:8px;"></div>
+    </div>
+  </div>
+
+  <div id="ccAltModal" style="display:none;position:fixed;inset:0;background:rgba(17,24,39,.45);z-index:100;align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:10px;padding:20px 22px;max-width:480px;width:92%;max-height:86vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25);">
+      <h3 style="margin:0 0 8px">Alternate Websites</h3>
+      <p style="font-size:12px;color:#6b7280;margin:0 0 10px">One pattern per line (host or host/path). When a company's Website matches one, it's moved to Alternate Websites and the Website is blanked. Saving requires admin.</p>
+      <textarea id="ccAltList" style="width:100%;min-height:220px;padding:9px 10px;font-size:13px;font-family:ui-monospace,Menlo,Consolas,monospace;box-sizing:border-box;"></textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+        <button id="ccAltCancel" type="button">Cancel</button>
+        <button id="ccAltSave" type="button" class="primary">Save</button>
+      </div>
+      <div id="ccAltMsg" style="font-size:12.5px;margin-top:8px;"></div>
     </div>
   </div>
 
@@ -355,6 +369,26 @@
         $('ccEditModal').style.display = 'none'; search(from);
       } catch (e) { $('ccEditMsg').textContent = 'Failed: ' + e.message; }
       $('ccEditSave').disabled = false;
+    });
+
+    // ---- Alternate Websites config ----
+    $('ccAltCfg').addEventListener('click', async () => {
+      $('ccAltMsg').textContent = 'Loading…'; $('ccAltMsg').style.color = '#6b7280'; $('ccAltModal').style.display = 'flex';
+      try { const r = await fetch('/api/companies/alt-websites'); const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status)); $('ccAltList').value = (d.patterns || []).join('\n'); $('ccAltMsg').textContent = ''; }
+      catch (e) { $('ccAltMsg').textContent = 'Load failed: ' + e.message; $('ccAltMsg').style.color = '#9b1c1c'; }
+    });
+    $('ccAltCancel').addEventListener('click', () => { $('ccAltModal').style.display = 'none'; });
+    $('ccAltModal').addEventListener('click', (e) => { if (e.target.id === 'ccAltModal') $('ccAltModal').style.display = 'none'; });
+    $('ccAltSave').addEventListener('click', async () => {
+      const patterns = $('ccAltList').value.split('\n').map((s) => s.trim()).filter(Boolean);
+      $('ccAltSave').disabled = true; $('ccAltMsg').textContent = 'Saving…'; $('ccAltMsg').style.color = '#6b7280';
+      try {
+        const r = await fetch('/api/companies/alt-websites', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ patterns }) });
+        const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        $('ccAltMsg').textContent = 'Saved ' + d.saved + ' patterns.'; $('ccAltMsg').style.color = '#166534';
+        setTimeout(() => { $('ccAltModal').style.display = 'none'; }, 900);
+      } catch (e) { $('ccAltMsg').textContent = 'Save failed: ' + e.message + (/403/.test(e.message) ? ' (admin only)' : ''); $('ccAltMsg').style.color = '#9b1c1c'; }
+      $('ccAltSave').disabled = false;
     });
   </script>
 </body>

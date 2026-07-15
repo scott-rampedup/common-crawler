@@ -1433,6 +1433,19 @@ const server = http.createServer(async (req, res) => {
     });
     return;
   }
+  // Alternate-Websites admin list: GET (analyst) the current patterns, POST (admin) to replace them.
+  if (url.pathname === '/api/companies/alt-websites' && req.method === 'GET') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
+    try { sendJson(res, { patterns: await companies.getAltWebsites(companiesClient) }); } catch (e) { jsonErr(res, 500, e.message); }
+    return;
+  }
+  if (url.pathname === '/api/companies/alt-websites' && req.method === 'POST') {
+    if (!isAdmin) { jsonErr(res, 403, 'Admin access required'); return; }
+    if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
+    readJsonBody(req, async (b) => { try { sendJson(res, await companies.setAltWebsites(companiesClient, (b && b.patterns) || [])); } catch (e) { jsonErr(res, 500, e.message); } });
+    return;
+  }
   // CC home-page enrichment for selected companies: description/phone/email/socials/maps/linkedin/bio/
   // alternate-websites + the grouped Contacts string. Reads each company's home page from Common Crawl.
   if (url.pathname === '/api/companies/cc-enrich' && req.method === 'POST') {

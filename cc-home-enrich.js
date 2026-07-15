@@ -56,8 +56,8 @@ async function resolveHome(domain, { crawls, demoMode = false } = {}) {
   return null;
 }
 
-// Parse the home-page HTML into the raw field buckets.
-function parseHome(html, domain) {
+// Parse the home-page HTML into the raw field buckets. altList = the (admin-editable) alternate-website patterns.
+function parseHome(html, domain, altList) {
   const out = { description: '', facebook: '', instagram: '', map: '', linkedin: [], bio: [], alternateWebsites: [], emails: [], phones: [] };
   if (!html) return out;
   out.description = metaDescription(html);
@@ -77,7 +77,7 @@ function parseHome(html, domain) {
     else if (!out.instagram && /(^|\/\/|\.)instagram\.com\//i.test(low) && hasPath(href)) out.instagram = href;
     else if (!out.map && (/google\.[^/]+\/maps/i.test(low) || /goo\.gl\/maps/i.test(low) || /maps\.app\.goo\.gl/i.test(low) || /bing\.com\/maps/i.test(low))) out.map = href;
     else if (/linkedin\.com\/in\//i.test(low)) { const u = stripQ(href); if (!seenLi.has(u)) { seenLi.add(u); out.linkedin.push(u); } }
-    else if (isAlternate(href) && !seenAlt.has(low)) { seenAlt.add(low); out.alternateWebsites.push(href); }
+    else if (isAlternate(href, altList) && !seenAlt.has(low)) { seenAlt.add(low); out.alternateWebsites.push(href); }
     else if (/^https?:\/\//i.test(href) && ex.getBaseDomain(href) === selfHost && cc.isBioOrContactUrl(href)) { const u = stripQ(href); if (!seenBio.has(u)) { seenBio.add(u); out.bio.push(u); } }
   }
   // description-embedded phone/email
@@ -112,14 +112,15 @@ function buildContacts({ linkedin = [], emails = [], bio = [] }, { genderMap = {
   for (const u of linkedin) add(nameFromLinkedin(u), 'linkedin', u);
   for (const e of emails) add(nameFromEmail(e), 'email', e);
   for (const u of bio) add(nameFromBio(u), 'bio', u);
-  const contacts = [];
+  const contacts = [], structured = [];
   for (const g of groups.values()) {
     if (g.types.size < 2) continue;                                  // need >= 2 agreeing fields
     const gender = genderMap[(g.first || '').toLowerCase()] || '';   // must be gender-assignable
     if (!gender) continue;
     contacts.push([g.first, g.last, gender, g.email || '', address || '', g.linkedin || '', g.bio || ''].join(', ') + ';');
+    structured.push({ first: g.first, last: g.last, gender, email: g.email || '', address: address || '', linkedin: g.linkedin || '', bio: g.bio || '' });
   }
-  return { contacts, count: contacts.length };
+  return { contacts, structured, count: contacts.length };
 }
 
 // If the company's primary `website` is really a social/map/alternate URL, move it out (and blank website).
@@ -137,9 +138,9 @@ function reclassifyWebsite(website, altList) {
 // Athena-resolved pointer, not just per-company CDX). Returns { updates, people }.
 function enrichFromHtml(company, html, { genderMap = {}, altList } = {}) {
   const domain = company.domain || '';
-  const p = parseHome(html, domain);
+  const p = parseHome(html, domain, altList);
   const address = company.full_address || '';
-  const { contacts, count } = buildContacts({ linkedin: p.linkedin, emails: p.emails, bio: p.bio }, { genderMap, address });
+  const { contacts, structured, count } = buildContacts({ linkedin: p.linkedin, emails: p.emails, bio: p.bio }, { genderMap, address });
   const rc = reclassifyWebsite(company.website, altList);
   const alt = [...new Set([...(p.alternateWebsites || []), ...(rc.altMove ? [rc.altMove] : [])])];
   const phone = (p.phones[0] || '').trim();
@@ -159,7 +160,7 @@ function enrichFromHtml(company, html, { genderMap = {}, altList } = {}) {
   if (email) { up.email = email; up.email_type = ex.classifyEmail(email); }
   if ('website' in rc) up.website = '';
   const people = p.linkedin.map((u) => { const n = nameFromLinkedin(u); return { linkedin: u, first: n.first, last: n.last }; }).filter((x) => x.first && x.last);
-  return { updates: up, people };
+  return { updates: up, people, contacts: structured };
 }
 
 // Full per-company enrichment: resolve its home page in CC (CDX), fetch, then enrichFromHtml.

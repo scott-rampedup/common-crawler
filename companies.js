@@ -124,6 +124,20 @@ async function count(client, f) {
   return (res.body || res).count;
 }
 
+// --- Alternate-Websites admin list (patterns whose match moves out of Website). Stored in OpenSearch so
+// the Fly UI and the LOCAL enricher share one editable list; falls back to the default seed. ---
+const CONFIG_INDEX = process.env.CC_CONFIG_INDEX || 'cc_config';
+const DEFAULT_ALT = ['linktr.ee', 'youtube.com', 'crunchbase.com', 'twitter.com', 'x.com', 'yelp.com', 'etsy.com', 'about.me', 'sites.google.com', 'amazon.com/shop', 'wix.com', 'wixsite.com'];
+async function getAltWebsites(client) {
+  try { const g = await client.get({ index: CONFIG_INDEX, id: 'alt_websites' }); const p = (g.body || g)._source.patterns; return Array.isArray(p) && p.length ? p : DEFAULT_ALT; }
+  catch (e) { return DEFAULT_ALT; }
+}
+async function setAltWebsites(client, patterns) {
+  const list = (Array.isArray(patterns) ? patterns : []).map((p) => String(p).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '')).filter(Boolean);
+  await client.index({ index: CONFIG_INDEX, id: 'alt_websites', body: { patterns: list }, refresh: true });
+  return { saved: list.length, patterns: list };
+}
+
 // Manual edit of a company doc (partial update by id). Only whitelisted fields; website edits keep domain
 // in sync. NOTE: a full company re-load (from the source dataset) would overwrite manual edits.
 const EDITABLE = new Set(['name', 'website', 'industry', 'size', 'country', 'region', 'locality', 'founded',
@@ -202,4 +216,4 @@ function rowToCsvLine(d0) {
 }
 const csvHeader = () => OUT_COLS.join(',');
 
-module.exports = { INDEX, MAPPING, OUT_COLS, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, each, update, placeUpdates, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, makeClient: os.makeClient };
+module.exports = { INDEX, MAPPING, OUT_COLS, CC_FIELDS, DEFAULT_ALT, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, each, update, placeUpdates, getAltWebsites, setAltWebsites, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, makeClient: os.makeClient };
