@@ -126,6 +126,7 @@ function makeOsReader(endpoint) {
 let osSync = null;   // background delta syncer handle (fleet-ingested contacts -> OpenSearch)
 const companies = require('./companies');
 const serperApi = require('./serper');
+const ccHome = require('./cc-home-enrich');
 let companiesClient = null;        // OpenSearch client for the `companies` index (Company Crawler), set in startup
 const monitorDb = sqliteDb;        // sitemap-monitor tables always live in SQLite
 const aiEnrich = require('./ai-enrich');
@@ -1429,6 +1430,37 @@ const server = http.createServer(async (req, res) => {
       }
       await Promise.all(Array.from({ length: Math.min(5, docs.length) }, worker));
       sendJson(res, { processed, updated, credits, errors: errs });
+    });
+    return;
+  }
+  // CC home-page enrichment for selected companies: description/phone/email/socials/maps/linkedin/bio/
+  // alternate-websites + the grouped Contacts string. Reads each company's home page from Common Crawl.
+  if (url.pathname === '/api/companies/cc-enrich' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
+    readJsonBody(req, async (b) => {
+      const ids = (b && Array.isArray(b.ids)) ? b.ids.slice(0, 300) : [];
+      if (!ids.length) return jsonErr(res, 400, 'no ids');
+      let crawls; try { crawls = [await ccEngine.resolveLatestCrawl()]; } catch (e) { crawls = ['CC-MAIN-2026-25']; }
+      const fetchWarc = ccEngine.fetchWarc;
+      const docs = [];
+      for (const id of ids) { try { const g = await companiesClient.get({ index: companies.INDEX, id }); docs.push({ id, s: (g.body || g)._source || {} }); } catch (e) { /* skip */ } }
+      let i = 0, found = 0, updated = 0, contacts = 0, errs = 0;
+      async function worker() {
+        for (;;) {
+          const k = i++; if (k >= docs.length) return;
+          const { id, s } = docs[k];
+          try {
+            const r = await ccHome.enrichCompany(s, { genderMap: GENDER_MAP, crawls, fetchWarc });
+            if (!r.found) continue;
+            found++;
+            await companies.update(companiesClient, id, r.updates); updated++;
+            contacts += (r.updates.contacts_count || 0);
+          } catch (e) { errs++; }
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(4, docs.length) }, worker));   // CC/CloudFront is ~10 req/s per IP
+      sendJson(res, { processed: docs.length, found, updated, contacts, errors: errs });
     });
     return;
   }

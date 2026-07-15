@@ -9,7 +9,12 @@
 const os = require('./opensearch');
 
 const INDEX = process.env.COMPANIES_INDEX || 'companies';
-const OUT_COLS = ['name', 'website', 'domain', 'contact_count', 'sitemap_url', 'industry', 'size', 'founded', 'locality', 'region', 'country', 'linkedin_url'];
+const OUT_COLS = ['name', 'website', 'domain', 'contact_count', 'sitemap_url', 'industry', 'size', 'founded',
+  'locality', 'region', 'country', 'linkedin_url', 'phone', 'full_address', 'category', 'cid',
+  'description', 'email', 'email_type', 'facebook', 'instagram', 'map', 'linkedin_contact', 'bio_url',
+  'alternate_websites', 'contacts', 'contacts_count'];
+// CC home-page enrichment fields (populated by cc-home-enrich via /api/companies/cc-enrich).
+const CC_FIELDS = ['description', 'email', 'email_type', 'facebook', 'instagram', 'map', 'linkedin_contact', 'bio_url', 'alternate_websites', 'contacts', 'contacts_count'];
 
 const MAPPING = {
   settings: { number_of_shards: 2, number_of_replicas: 0, 'index.max_result_window': 50000 },
@@ -73,11 +78,13 @@ function buildQuery(f) {
   const kw = (v) => String(v).trim().toLowerCase();
   if (f.name) must.push({ match: { name: { query: String(f.name), operator: 'and' } } });
   if (f.locality) must.push({ match: { locality: { query: String(f.locality), operator: 'and' } } });
+  // multi-value: a comma-separated string (or array) -> terms (OR) so several industries/sizes/countries match.
+  const multi = (v) => (Array.isArray(v) ? v : String(v).split(',')).map((x) => String(x).trim()).filter(Boolean);
   if (f.domain) filter.push({ term: { domain: normDomain(f.domain) } });
-  if (f.industry) filter.push({ term: { industry: kw(f.industry) } });
-  if (f.size) filter.push({ term: { size: String(f.size).trim() } });
+  if (f.industry) filter.push({ terms: { industry: multi(f.industry).map((x) => x.toLowerCase()) } });
+  if (f.size) filter.push({ terms: { size: multi(f.size) } });
   if (f.region) filter.push({ term: { region: kw(f.region) } });
-  if (f.country) filter.push({ term: { country: kw(f.country) } });
+  if (f.country) filter.push({ terms: { country: multi(f.country).map((x) => x.toLowerCase()) } });
   if (f.linkedin === 'yes') filter.push({ exists: { field: 'linkedin_url' } });
   const fr = {};
   if (f.founded_min) fr.gte = Number(f.founded_min);
@@ -120,7 +127,8 @@ async function count(client, f) {
 // Manual edit of a company doc (partial update by id). Only whitelisted fields; website edits keep domain
 // in sync. NOTE: a full company re-load (from the source dataset) would overwrite manual edits.
 const EDITABLE = new Set(['name', 'website', 'industry', 'size', 'country', 'region', 'locality', 'founded',
-  'linkedin_url', 'phone', 'full_address', 'category', 'cid', 'sitemap_url']);
+  'linkedin_url', 'phone', 'full_address', 'category', 'cid', 'sitemap_url',
+  'description', 'email', 'email_type', 'facebook', 'instagram', 'map', 'linkedin_contact', 'bio_url', 'alternate_websites', 'contacts', 'contacts_count']);
 async function update(client, id, updates) {
   if (!id) throw new Error('id required');
   const doc = {};
@@ -187,7 +195,10 @@ function prettyRow(d) {
 const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
 function rowToCsvLine(d0) {
   const d = prettyRow(d0);
-  return [d.name, d.website, d.domain, d.contact_count || 0, effectiveSitemap(d0), d.industry, d.size, d.founded, d.locality, d.region, d.country, d.linkedin_url].map(esc).join(',');
+  return [d.name, d.website, d.domain, d.contact_count || 0, effectiveSitemap(d0), d.industry, d.size, d.founded,
+    d.locality, d.region, d.country, d.linkedin_url, d.phone, d.full_address, d.category, d.cid,
+    d.description, d.email, d.email_type, d.facebook, d.instagram, d.map, d.linkedin_contact, d.bio_url,
+    d.alternate_websites, d.contacts, d.contacts_count || 0].map(esc).join(',');
 }
 const csvHeader = () => OUT_COLS.join(',');
 

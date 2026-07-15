@@ -64,7 +64,9 @@ function parseHome(html, domain) {
   const selfHost = String(domain || '').toLowerCase().replace(/^www\./, '');
   const seenLi = new Set(), seenBio = new Set(), seenAlt = new Set();
   for (const raw of hrefsFromHtml(html)) {
-    const href = clean(raw); if (!href) continue;
+    let href = clean(raw); if (!href) continue;
+    if (href.startsWith('//')) href = 'https:' + href;                       // protocol-relative -> https:
+    else if (/^(facebook|instagram|linkedin|twitter|x|youtube)\.com\//i.test(href)) href = 'https://' + href;  // scheme-less social
     const low = href.toLowerCase();
     if (/^mailto:/i.test(href)) { const e = stripQ(href.replace(/^mailto:/i, '')).trim(); if (e) out.emails.push(e); continue; }
     if (/^tel:/i.test(href)) { out.phones.push(href.replace(/^tel:/i, '').trim()); continue; }

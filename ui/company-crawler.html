@@ -27,7 +27,9 @@
     table.cc-table th .arrow { color: #6366f1; font-size: 11px; }
     table.cc-table td.url a { word-break: break-all; }
     .cc-fav { width: 18px; height: 18px; vertical-align: middle; border-radius: 3px; }
-    .cc-tablewrap { max-height: 62vh; overflow: auto; border: 1px solid #eceef1; border-radius: 8px; margin-top: 8px; }
+    .cc-wrap { max-width: 1360px; margin: 0 auto; padding: 16px 24px 24px; }
+    .cc-tablewrap { max-height: calc(100vh - 300px); overflow: auto; border: 1px solid #eceef1; border-radius: 8px; margin-top: 8px; }
+    body.search-page { overflow-x: hidden; }   /* keep the page within the screen; the table scrolls itself */
     .cc-empty { color: #9ca3af; }
     .cc-pill { display: inline-block; padding: 1px 7px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: 11px; white-space: nowrap; }
     .cc-count a { font-weight: 600; color: #4338ca; text-decoration: none; }
@@ -63,15 +65,14 @@
       <div class="cc-form">
         <div class="cc-field"><label>Company name</label><input id="fName" placeholder="e.g. baker tilly" /></div>
         <div class="cc-field"><label>Website / domain</label><input id="fDomain" placeholder="e.g. bakertilly.com" /></div>
-        <div class="cc-field"><label>Industry</label><input id="fIndustry" list="industries" placeholder="e.g. legal services" /></div>
-        <div class="cc-field"><label>Size (employees)</label>
-          <select id="fSize">
-            <option value="">any</option>
+        <div class="cc-field"><label>Industry (comma-separate for several)</label><input id="fIndustry" list="industries" placeholder="e.g. legal services, accounting" /></div>
+        <div class="cc-field"><label>Size (⌘/Ctrl-click for several)</label>
+          <select id="fSize" multiple size="4">
             <option>1-10</option><option>11-50</option><option>51-200</option><option>201-500</option>
             <option>501-1000</option><option>1001-5000</option><option>5001-10000</option><option>10001+</option>
           </select>
         </div>
-        <div class="cc-field"><label>Country</label><input id="fCountry" list="countries" placeholder="e.g. united states" /></div>
+        <div class="cc-field"><label>Country (comma-separate for several)</label><input id="fCountry" list="countries" placeholder="e.g. united states, canada" /></div>
         <div class="cc-field"><label>Region / state</label><input id="fRegion" placeholder="e.g. california" /></div>
         <div class="cc-field"><label>Locality / city</label><input id="fLocality" placeholder="e.g. chicago" /></div>
         <div class="cc-field"><label>Founded (year range)</label>
@@ -101,6 +102,7 @@
         <a id="ccDownload" class="nav-link green" href="#" style="display:none">⬇ Download All (filtered)</a>
         <button id="ccDownloadSel" type="button" style="display:none">⬇ Download Selected (<span id="ccSelCount">0</span>)</button>
         <button id="ccPlaces" type="button" style="display:none">📍 Look Up Places (Selected)</button>
+        <button id="ccEnrich" type="button" style="display:none">🌐 Enrich from CC (Selected)</button>
         <span class="cc-sel" id="ccSelInfo"></span>
       </div>
 
@@ -165,7 +167,7 @@
     function filters() {
       return {
         name: $('fName').value.trim(), domain: $('fDomain').value.trim(), industry: $('fIndustry').value.trim(),
-        size: $('fSize').value, country: $('fCountry').value.trim(), region: $('fRegion').value.trim(),
+        size: [...$('fSize').selectedOptions].map((o) => o.value).join(','), country: $('fCountry').value.trim(), region: $('fRegion').value.trim(),
         locality: $('fLocality').value.trim(), founded_min: $('fFoundedMin').value.trim(),
         founded_max: $('fFoundedMax').value.trim(), contactMin: $('fContactMin').value.trim(),
         sitemap: $('fSitemap').value.trim(), linkedin: $('fLinkedin').checked ? 'yes' : '',
@@ -274,6 +276,7 @@
       $('ccSelCount').textContent = n;
       $('ccDownloadSel').style.display = n ? 'inline-block' : 'none';
       $('ccPlaces').style.display = n ? 'inline-block' : 'none';
+      $('ccEnrich').style.display = n ? 'inline-block' : 'none';
       $('ccSelInfo').textContent = n ? (n.toLocaleString() + ' selected') : '';
     }
 
@@ -300,9 +303,23 @@
       } catch (e) { setStatus('Places lookup failed: ' + e.message, true); }
       $('ccPlaces').disabled = false;
     });
+    $('ccEnrich').addEventListener('click', async () => {
+      const ids = [...selected.keys()];
+      if (!ids.length) return;
+      if (ids.length > 300) { alert('CC enrichment is capped at 300 selected per run. Select fewer.'); return; }
+      if (!confirm('Enrich ' + ids.length + ' company(ies) from their Common Crawl home page? (reads the CC archive, no credits)')) return;
+      $('ccEnrich').disabled = true; setStatus('Enriching ' + ids.length + ' from Common Crawl…');
+      try {
+        const r = await fetch('/api/companies/cc-enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+        const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        setStatus('CC enrich: ' + d.found + ' home pages found / ' + d.processed + ' processed, ' + d.updated + ' updated, ' + d.contacts + ' contacts' + (d.errors ? ', ' + d.errors + ' error(s)' : ''));
+        search(from);
+      } catch (e) { setStatus('CC enrich failed: ' + e.message, true); }
+      $('ccEnrich').disabled = false;
+    });
     $('ccReset').addEventListener('click', () => {
       ['fName','fDomain','fIndustry','fCountry','fRegion','fLocality','fFoundedMin','fFoundedMax','fContactMin','fSitemap'].forEach((i) => $(i).value = '');
-      $('fSize').value = ''; $('fLinkedin').checked = false;
+      $('fSize').selectedIndex = -1; $('fLinkedin').checked = false;
       sortState.col = ''; sortState.dir = 'asc'; selected.clear(); updateSel();
       $('ccTableWrap').style.display = 'none'; $('ccPager').style.display = 'none';
       $('ccDownload').style.display = 'none'; $('ccStatus').style.display = 'none';
@@ -313,7 +330,10 @@
     // ---- Edit modal ----
     const EDIT_FIELDS = [['name','Company name'],['website','Website'],['industry','Industry'],['size','Size'],
       ['country','Country'],['region','Region'],['locality','Locality'],['founded','Founded'],
-      ['phone','Phone'],['full_address','Full Address'],['category','Category'],['linkedin_url','LinkedIn URL']];
+      ['phone','Phone'],['full_address','Full Address'],['category','Category'],['linkedin_url','LinkedIn URL'],
+      ['email','Email'],['email_type','Email Type'],['description','Description'],['facebook','Facebook'],
+      ['instagram','Instagram'],['map','Map'],['linkedin_contact','LinkedIn Contacts'],['bio_url','BIO URL'],
+      ['alternate_websites','Alternate Websites'],['contacts','Contacts'],['sitemap_url','Sitemap URL']];
     let editId = null;
     function openEdit(row) {
       if (!row) return;

@@ -54,11 +54,11 @@ function adjustSize(size, count) {
 
 (async () => {
   const client = co.makeClient(process.env.OPENSEARCH_ENDPOINT);
-  // roll per-host counts up to registrable domain
-  const roll = new Map();
+  // contact_count = the company's OWN domain count (host-exact; NO sub-domain rollup, per Scott 2026-07-15)
+  const counts = new Map();
   { const rl = readline.createInterface({ input: fs.createReadStream(process.argv[2]), crlfDelay: Infinity });
-    for await (const l of rl) { const i = l.indexOf('\t'); if (i < 0) continue; const host = l.slice(0, i), n = Number(l.slice(i + 1)); const r = registrable(host); if (r) roll.set(r, (roll.get(r) || 0) + n); } }
-  console.error('registrable domains with contacts: ' + roll.size.toLocaleString());
+    for await (const l of rl) { const i = l.indexOf('\t'); if (i < 0) continue; const host = l.slice(0, i), n = Number(l.slice(i + 1)); if (host) counts.set(host, n); } }
+  console.error('domains with contacts: ' + counts.size.toLocaleString());
 
   const INDEX = co.INDEX;
   async function bulk(actions) { for (let a = 0; ; a++) { try { const res = await client.bulk({ body: actions }); const r = res.body || res; let e = 0; if (r.errors) for (const it of r.items) if (it.update && it.update.error) e++; return e; } catch (err) { if (a >= 6) throw err; await sleep(Math.min(16000, 500 * 2 ** a)); } } }
@@ -76,8 +76,7 @@ function adjustSize(size, count) {
     const actions = [];
     for (const h of hits) {
       scanned++; const s = h._source; const dom = s.domain; if (!dom) continue;
-      const reg = registrable(dom);
-      const cc = roll.get(reg) || 0;
+      const cc = counts.get(dom) || 0;                     // host-exact (the company's own domain)
       const doc = {};
       if (cc !== (s.contact_count || 0)) doc.contact_count = cc;
       if (!s.country) { const c = countryFromTld(dom); if (c) doc.country = c; }
