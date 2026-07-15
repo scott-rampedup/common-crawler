@@ -9,26 +9,37 @@ const readline = require('readline');
 const co = require('./companies');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const COMPOUND_TLD = new Set(['co.uk', 'org.uk', 'net.au', 'com.au', 'co.nz', 'org.nz', 'co.za', 'com.br', 'co.jp', 'co.in', 'com.mx', 'co.il', 'com.sg', 'com.hk', 'com.au', 'gov.uk', 'ac.uk', 'edu.au', 'gov.au']);
+// A compound public suffix is <second-level>.<2-letter ccTLD>: co.uk, com.au, com.br, ac.uk, org.uk,
+// gov.uk, net.au, co.nz, co.in, com.mx, co.za, co.jp, edu.au … So the registrable domain is the label
+// BEFORE that suffix (ox.ac.uk, not ac.uk). This is what the contact->company rollup groups on.
+const SLD = new Set(['co', 'com', 'org', 'net', 'ac', 'gov', 'edu', 'mil', 'ltd', 'plc', 'me', 'sch', 'nhs', 'or', 'ne', 'go', 'gr', 'gob']);
+function isCompound(host) { const p = host.split('.'); return p.length >= 3 && p[p.length - 1].length === 2 && SLD.has(p[p.length - 2]); }
 function registrable(host) {
   if (!host) return '';
   const p = host.split('.');
   if (p.length <= 2) return host;
-  return COMPOUND_TLD.has(p.slice(-2).join('.')) ? p.slice(-3).join('.') : p.slice(-2).join('.');
+  return isCompound(host) ? p.slice(-3).join('.') : p.slice(-2).join('.');
 }
-// public-suffix (last label, or compound) -> country
-const TLD_COUNTRY = { uk: 'united kingdom', 'co.uk': 'united kingdom', 'ac.uk': 'united kingdom', 'gov.uk': 'united kingdom',
-  ca: 'canada', au: 'australia', 'com.au': 'australia', nz: 'new zealand', ie: 'ireland', us: 'united states',
-  in: 'india', de: 'germany', fr: 'france', es: 'spain', it: 'italy', nl: 'netherlands', se: 'sweden', no: 'norway',
-  dk: 'denmark', fi: 'finland', ch: 'switzerland', at: 'austria', be: 'belgium', pt: 'portugal', pl: 'poland',
-  za: 'south africa', br: 'brazil', mx: 'mexico', jp: 'japan', sg: 'singapore', hk: 'hong kong', ae: 'united arab emirates', il: 'israel' };
-function tldOf(host) { const p = host.split('.'); const c2 = p.slice(-2).join('.'); return COMPOUND_TLD.has(c2) ? c2 : p[p.length - 1]; }
-function countryFromTld(host) { return TLD_COUNTRY[tldOf(host)] || ''; }
+const TLD_COUNTRY = { uk: 'united kingdom', ca: 'canada', au: 'australia', us: 'united states', nz: 'new zealand',
+  ie: 'ireland', in: 'india', de: 'germany', fr: 'france', es: 'spain', it: 'italy', nl: 'netherlands', se: 'sweden',
+  no: 'norway', dk: 'denmark', fi: 'finland', ch: 'switzerland', at: 'austria', be: 'belgium', pt: 'portugal',
+  pl: 'poland', za: 'south africa', br: 'brazil', mx: 'mexico', jp: 'japan', sg: 'singapore', hk: 'hong kong',
+  ae: 'united arab emirates', il: 'israel', kr: 'south korea', tr: 'turkey', id: 'indonesia', ph: 'philippines',
+  my: 'malaysia', th: 'thailand', vn: 'vietnam', cn: 'china' };
+function countryFromTld(host) {
+  const last = host.split('.').pop();
+  if (last.length === 2) return TLD_COUNTRY[last] || '';         // ccTLD (incl. compound like ox.ac.uk -> uk)
+  if (last === 'edu' || last === 'gov' || last === 'mil') return 'united states';
+  return '';                                                     // generic .com/.org/.net -> no country
+}
+// The "type" label of the public suffix: the second-level for a compound suffix (org.au -> org,
+// ac.uk -> ac, gov.au -> gov), else the last label (.org, .edu, .gov).
+function tldType(host) { const p = host.split('.'); return isCompound(host) ? p[p.length - 2] : p[p.length - 1]; }
 function industryFromTld(host) {
-  const t = tldOf(host); const last = t.split('.').pop();
-  if (last === 'edu' || t === 'edu.au' || t === 'ac.uk') return 'higher education';
-  if (last === 'gov' || t === 'gov.uk' || t === 'gov.au') return 'government administration';
-  if (last === 'org') return 'non-profit organization management';
+  const t = tldType(host);
+  if (t === 'edu' || t === 'ac') return 'higher education';
+  if (t === 'gov') return 'government administration';
+  if (t === 'org') return 'non-profit organization management';
   return '';
 }
 const BANDS = [['1-10', 10], ['11-50', 50], ['51-200', 200], ['201-500', 500], ['501-1000', 1000], ['1001-5000', 5000], ['5001-10000', 10000], ['10001+', Infinity]];
