@@ -68,6 +68,8 @@ function parseHome(html, domain) {
     if (href.startsWith('//')) href = 'https:' + href;                       // protocol-relative -> https:
     else if (/^(facebook|instagram|linkedin|twitter|x|youtube)\.com\//i.test(href)) href = 'https://' + href;  // scheme-less social
     const low = href.toLowerCase();
+    // skip social SHARE / intent / plugin buttons (not the company's own page)
+    if (/(sharer|share\.php|\/sharearticle|\/share\?|\/intent\/|\/dialog\/|\/plugins\/|\/sharing\/|\/tweet\b|addtoany|sharelink|utm_source=share)/i.test(low)) continue;
     if (/^mailto:/i.test(href)) { const e = stripQ(href.replace(/^mailto:/i, '')).trim(); if (e) out.emails.push(e); continue; }
     if (/^tel:/i.test(href)) { out.phones.push(href.replace(/^tel:/i, '').trim()); continue; }
     const wam = low.match(/wa\.me\/(\+?\d[\d]*)/); if (wam) { out.phones.push(wam[1]); continue; }
@@ -131,14 +133,10 @@ function reclassifyWebsite(website, altList) {
   return {};
 }
 
-// Full enrichment for one company: resolve its home page in CC, parse it, and assemble the field updates
-// (+ the linkedin/in people to add to the Contacts store). fetchWarc(ptr)->html is injected (cc-s3 or cc-engine).
-async function enrichCompany(company, { genderMap = {}, crawls, fetchWarc, altList } = {}) {
+// Assemble the field updates from an already-fetched home-page HTML (the reusable core — drivable from an
+// Athena-resolved pointer, not just per-company CDX). Returns { updates, people }.
+function enrichFromHtml(company, html, { genderMap = {}, altList } = {}) {
   const domain = company.domain || '';
-  const ptr = await resolveHome(domain, { crawls });
-  if (!ptr) return { found: false, reason: 'not in CC' };
-  let html = ''; try { html = await fetchWarc(ptr); } catch (e) { return { found: false, reason: 's3: ' + e.message }; }
-  if (!html) return { found: false, reason: 'empty' };
   const p = parseHome(html, domain);
   const address = company.full_address || '';
   const { contacts, count } = buildContacts({ linkedin: p.linkedin, emails: p.emails, bio: p.bio }, { genderMap, address });
@@ -161,7 +159,17 @@ async function enrichCompany(company, { genderMap = {}, crawls, fetchWarc, altLi
   if (email) { up.email = email; up.email_type = ex.classifyEmail(email); }
   if ('website' in rc) up.website = '';
   const people = p.linkedin.map((u) => { const n = nameFromLinkedin(u); return { linkedin: u, first: n.first, last: n.last }; }).filter((x) => x.first && x.last);
-  return { found: true, updates: up, people, ptr: { url: ptr.url, crawl: ptr.filename ? String(ptr.filename).split('/')[1] : '' } };
+  return { updates: up, people };
 }
 
-module.exports = { ALT_DEFAULT, resolveHome, parseHome, buildContacts, reclassifyWebsite, enrichCompany, hasPath, isAlternate, nameFromLinkedin, nameFromEmail, nameFromBio };
+// Full per-company enrichment: resolve its home page in CC (CDX), fetch, then enrichFromHtml.
+async function enrichCompany(company, { genderMap = {}, crawls, fetchWarc, altList } = {}) {
+  const ptr = await resolveHome(company.domain || '', { crawls });
+  if (!ptr) return { found: false, reason: 'not in CC' };
+  let html = ''; try { html = await fetchWarc(ptr); } catch (e) { return { found: false, reason: 's3: ' + e.message }; }
+  if (!html) return { found: false, reason: 'empty' };
+  const r = enrichFromHtml(company, html, { genderMap, altList });
+  return { found: true, updates: r.updates, people: r.people, ptr: { url: ptr.url } };
+}
+
+module.exports = { ALT_DEFAULT, resolveHome, parseHome, buildContacts, reclassifyWebsite, enrichFromHtml, enrichCompany, hasPath, isAlternate, nameFromLinkedin, nameFromEmail, nameFromBio };
