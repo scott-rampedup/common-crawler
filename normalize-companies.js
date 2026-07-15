@@ -62,8 +62,10 @@ function adjustSize(size, count) {
 
   const INDEX = co.INDEX;
   async function bulk(actions) { for (let a = 0; ; a++) { try { const res = await client.bulk({ body: actions }); const r = res.body || res; let e = 0; if (r.errors) for (const it of r.items) if (it.update && it.update.error) e++; return e; } catch (err) { if (a >= 6) throw err; await sleep(Math.min(16000, 500 * 2 ** a)); } } }
-  async function searchRetry(body) { for (let a = 0; ; a++) { try { return await client.search({ index: INDEX, body }); } catch (err) { if (a >= 8) throw err; await sleep(Math.min(30000, 1000 * 2 ** a)); } } }
+  async function searchRetry(body) { for (let a = 0; ; a++) { try { return await client.search({ index: INDEX, body }); } catch (err) { if (a >= 20) throw err; await sleep(Math.min(60000, 1000 * 2 ** a)); } } }
+  const CKPT = process.argv[3] || '';                    // resume cursor file (survives a fatal error -> re-run continues)
   let after = null, scanned = 0, updated = 0, errs = 0;
+  if (CKPT) { try { after = JSON.parse(fs.readFileSync(CKPT, 'utf8')); console.error('resuming from checkpoint'); } catch (e) { after = null; } }
   const t0 = Date.now();
   for (;;) {
     const body = { size: 5000, _source: ['domain', 'country', 'industry', 'size', 'contact_count'], query: { match_all: {} }, sort: [{ id: 'asc' }] };
@@ -85,7 +87,9 @@ function adjustSize(size, count) {
     }
     if (actions.length) { errs += await bulk(actions); updated += actions.length / 2; }
     after = hits[hits.length - 1].sort;
+    if (CKPT) { try { fs.writeFileSync(CKPT, JSON.stringify(after)); } catch (e) { /* best effort */ } }
     if (scanned % 2000000 < 5000) { const t = (Date.now() - t0) / 1000; console.error(`  scanned ${scanned.toLocaleString()} | updated ${updated.toLocaleString()} | ${errs} err | ${Math.round(scanned / t)}/s`); }
   }
+  if (CKPT) { try { fs.unlinkSync(CKPT); } catch (e) { /* gone */ } }
   console.error(`DONE: scanned ${scanned.toLocaleString()}, updated ${updated.toLocaleString()}, ${errs} err, ${Math.round((Date.now() - t0) / 1000)}s`);
 })().catch((e) => { console.error('error:', e.message); process.exit(1); });
