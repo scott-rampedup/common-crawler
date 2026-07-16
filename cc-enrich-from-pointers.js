@@ -33,6 +33,25 @@ const readline = require('readline');
     for await (const l of rl) { if (!l) continue; let o; try { o = JSON.parse(l); } catch { continue; } if (o.url && o.filename) ptrs.push(o); } }
   console.error('pointers: ' + ptrs.length.toLocaleString());
 
+  // Retry transient failures (OpenSearch 429/throttle, dropped sockets, S3 5xx) with exponential backoff so
+  // a concurrent write job or a flaky link doesn't turn recoverable blips into permanent misses.
+  const TRANSIENT = /429|rejected_execution|too_many_requests|timeout|ETIMEDOUT|ECONN|socket|Connection|hang up|EAI_AGAIN|502|503|throttl/i;
+  async function withRetry(fn, tries = 5) {
+    let last;
+    for (let a = 0; a < tries; a++) {
+      try { return await fn(); }
+      catch (e) { last = e; if (!TRANSIENT.test(String((e && e.message) || e))) throw e; await new Promise((r) => setTimeout(r, 250 * Math.pow(2, a))); }
+    }
+    throw last;
+  }
+  const errKinds = {}; const errSample = [];
+  function tallyErr(e) {
+    const m = String((e && e.message) || e);
+    const kind = /429|rejected|too_many|throttl/i.test(m) ? 'os-429' : /timeout|ETIMEDOUT/i.test(m) ? 'timeout' : /ECONN|socket|Connection|hang up|EAI_AGAIN|502|503/i.test(m) ? 'conn' : 'other';
+    errKinds[kind] = (errKinds[kind] || 0) + 1;
+    if (errSample.length < 6) errSample.push(m.slice(0, 140));
+  }
+
   const CONC = Number(process.env.CONC) || 16;
   let i = 0, updated = 0, contacts = 0, errs = 0;
   const t0 = Date.now();
@@ -42,21 +61,22 @@ const readline = require('readline');
       const p = ptrs[k];
       const company = targets.get(norm(p.url)); if (!company) continue;
       try {
-        const html = await fetchWarc({ url: p.url, filename: p.filename, offset: p.offset, length: p.length });
+        const html = await withRetry(() => fetchWarc({ url: p.url, filename: p.filename, offset: p.offset, length: p.length }));
         if (!html) continue;
         const r = che.enrichFromHtml(company, html, { genderMap: gm, altList });
-        await co.update(client, company.id, r.updates); updated++; contacts += (r.updates.contacts_count || 0);
+        await withRetry(() => co.update(client, company.id, r.updates)); updated++; contacts += (r.updates.contacts_count || 0);
         for (const c of (r.contacts || [])) {
           if (!c.email) continue;                        // email-keyed store: skip email-less contacts
           const doc = os.recordToDoc({ 'Time Stamp': today, 'Source': 'CC Home', 'Web Source URL': c.bio || ('https://' + company.domain + '/'), 'Domain': company.domain, 'First': c.first, 'Last': c.last, 'Gender': c.gender, 'Email Address': c.email, 'LinkedIn URL': c.linkedin }, now);
           if (doc.email) contactBuf.push(doc);
         }
         if (contactBuf.length >= 2000) await flushContacts();
-      } catch (e) { errs++; }
+      } catch (e) { errs++; tallyErr(e); }
       if ((k + 1) % 1000 === 0) { const el = (Date.now() - t0) / 1000; console.error(`  ${k + 1}/${ptrs.length} | updated ${updated} | contacts ${contacts} | upserted ${upserted} | ${errs} err | ${Math.round((k + 1) / el)}/s`); }
     }
   }
   await Promise.all(Array.from({ length: CONC }, worker));
   await flushContacts();
   console.error(`DONE: updated ${updated.toLocaleString()}, ${contacts.toLocaleString()} contacts, ${upserted.toLocaleString()} upserted to store, ${errs} err, ${Math.round((Date.now() - t0) / 1000)}s`);
+  if (errs) { console.error('error kinds:', JSON.stringify(errKinds)); console.error('sample errors:', errSample.join(' | ')); }
 })().catch((e) => { console.error('ERR', e.message); process.exit(1); });
