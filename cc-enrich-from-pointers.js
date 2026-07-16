@@ -22,6 +22,9 @@ const readline = require('readline');
   const now = new Date().toISOString(), today = now.slice(0, 10);
   const contactBuf = []; let upserted = 0;
   async function flushContacts() { if (!contactBuf.length) return; const batch = contactBuf.splice(0); try { await os.bulkUpsert(client, batch); upserted += batch.length; } catch (e) { /* skip */ } }
+  // BIO_OUT: collect every discovered bio/team URL (deduped) so Hop 2 (extract-from-pointers) can turn them
+  // into person contacts. Written once at the end to avoid concurrent-append races.
+  const bioOut = process.env.BIO_OUT || ''; const bioSet = bioOut ? new Set() : null;
 
   const targets = new Map();
   { const rl = readline.createInterface({ input: fs.createReadStream(process.argv[3]), crlfDelay: Infinity });
@@ -65,6 +68,7 @@ const readline = require('readline');
         if (!html) continue;
         const r = che.enrichFromHtml(company, html, { genderMap: gm, altList, now });
         await withRetry(() => co.update(client, company.id, r.updates)); updated++; contacts += (r.updates.contacts_count || 0);
+        if (bioSet) for (const u of String(r.updates.bio_url || '').split(';')) { const t = u.trim(); if (t) bioSet.add(t); }
         for (const c of (r.contacts || [])) {
           if (!c.email) continue;                        // email-keyed store: skip email-less contacts
           const doc = os.recordToDoc({ 'Time Stamp': today, 'Source': 'CC Home', 'Web Source URL': c.bio || ('https://' + company.domain + '/'), 'Domain': company.domain, 'First': c.first, 'Last': c.last, 'Gender': c.gender, 'Email Address': c.email, 'LinkedIn URL': c.linkedin }, now);
@@ -77,6 +81,7 @@ const readline = require('readline');
   }
   await Promise.all(Array.from({ length: CONC }, worker));
   await flushContacts();
+  if (bioSet) { fs.writeFileSync(bioOut, [...bioSet].join('\n') + '\n'); console.error(`bio URLs written: ${bioSet.size.toLocaleString()} -> ${bioOut}`); }
   console.error(`DONE: updated ${updated.toLocaleString()}, ${contacts.toLocaleString()} contacts, ${upserted.toLocaleString()} upserted to store, ${errs} err, ${Math.round((Date.now() - t0) / 1000)}s`);
   if (errs) { console.error('error kinds:', JSON.stringify(errKinds)); console.error('sample errors:', errSample.join(' | ')); }
 })().catch((e) => { console.error('ERR', e.message); process.exit(1); });
