@@ -13,12 +13,13 @@ const CSV_COLUMNS = [
 // On-screen columns, in display order. Each: key (record field), label (header text),
 // type (how the cell renders), sortable (whether the header sorts server-side).
 const COLUMNS = [
-  { key: 'Image URL',      label: 'Image',         type: 'image',    sortable: false },
-  { key: 'Last Path',      label: 'Last Path',     type: 'lastpath', sortable: true  },
+  { key: 'Image URL',      label: 'Image',         type: 'image',       sortable: false },
+  { key: 'Last',           label: 'Contact Name',  type: 'contactname', sortable: true  },
   { key: 'Position',       label: 'Position',      type: 'position', sortable: true  },
   { key: 'Domain',         label: 'Domain',        type: 'domain',   sortable: true  },
   { key: 'Email Address',  label: 'Email Address', type: 'text',     sortable: true  },
   { key: 'Email Type',     label: 'Type',          type: 'text',     sortable: true  },
+  { key: 'New Hire',       label: 'New Hire',      type: 'newhire',  sortable: false },
   { key: 'LinkedIn URL',   label: 'LinkedIn',      type: 'linkedin', sortable: false },
   { key: 'Facebook',       label: 'Facebook',      type: 'social',   sortable: false },
   { key: 'Twitter',        label: 'Twitter',       type: 'social',   sortable: false },
@@ -137,6 +138,7 @@ function initElements() {
   el.fFoundedMin = $('f-foundedMin');
   el.fFoundedMax = $('f-foundedMax');
   el.fLinkedin = $('f-linkedin');
+  el.fNewHire = $('f-newhire');
   el.applyBtn = $('applyBtn');
   el.clearBtn = $('clearBtn');
   el.headerRow = $('headerRow');
@@ -173,7 +175,7 @@ function createHeader() {
   for (const col of COLUMNS) {
     const th = document.createElement('th');
     if (col.type === 'image') th.classList.add('photo-col');
-    else if (col.type === 'lastpath') th.classList.add('lastpath-col');
+    else if (col.type === 'lastpath' || col.type === 'contactname') th.classList.add('lastpath-col');
     else if (col.type === 'position') th.classList.add('position-col');
     else if (col.type === 'location') th.classList.add('location-col');
     if (col.type === 'linkedin' || col.type === 'maps' || col.type === 'vcard' || col.type === 'social') th.classList.add('icon-col');
@@ -288,6 +290,20 @@ function renderRows() {
             cell.appendChild(img);
           }
         }
+      } else if (col.type === 'contactname') {
+        // Contact Name = First + Last, hyperlinked to the Web Source URL (frozen left column)
+        cell.className = 'lastpath-cell';
+        const name = ((record['First'] || '') + ' ' + (record['Last'] || '')).trim();
+        const pageUrl = record['Web Source URL'];
+        if (name && pageUrl) {
+          const a = document.createElement('a');
+          a.href = pageUrl; a.target = '_blank'; a.rel = 'noopener noreferrer';
+          a.className = 'domain-link'; a.title = name; a.textContent = name;
+          cell.appendChild(a);
+        } else {
+          cell.textContent = name;
+          if (name) cell.title = name;
+        }
       } else if (col.type === 'lastpath') {
         // Last Path text, hyperlinked to the Web Source URL
         cell.className = 'lastpath-cell';
@@ -362,6 +378,14 @@ function renderRows() {
           a.title = SOCIAL[col.key].title;
           a.innerHTML = SOCIAL[col.key].svg;
           cell.appendChild(a);
+        }
+      } else if (col.type === 'newhire') {
+        cell.style.textAlign = 'center';
+        if (value === 'Y') {
+          const s = document.createElement('span');
+          s.className = 'newhire-pill';
+          s.textContent = 'NEW';
+          cell.appendChild(s);
         }
       } else if (col.type === 'position') {
         cell.className = 'position-cell';
@@ -504,6 +528,7 @@ function buildParams(extra) {
   const fmax = el.fFoundedMax && el.fFoundedMax.value.trim();
   if (fmax) p.set('foundedMax', fmax);
   if (el.fLinkedin.checked) p.set('linkedin', '1');
+  if (el.fNewHire && el.fNewHire.checked) p.set('newHire', '1');
   if (state.sort.column) { p.set('sort', state.sort.column); p.set('dir', String(state.sort.dir)); }
   if (extra) for (const k of Object.keys(extra)) p.set(k, extra[k]);
   return p;
@@ -832,7 +857,8 @@ function clearFilters() {
   el.fEmailType.value = '';
   el.fPhoneType.value = '';
   el.fType.value = '';
-  el.fGender.value = 'na';
+  el.fGender.value = 'all';
+  if (el.fNewHire) el.fNewHire.checked = false;
   if (el.fIndustry) el.fIndustry.value = '';
   if (el.fCompanySize) el.fCompanySize.value = '';
   if (el.fCompanyLocation) el.fCompanyLocation.value = '';
@@ -860,6 +886,7 @@ function attachEvents() {
   el.fType.addEventListener('change', runSearch);
   el.fGender.addEventListener('change', runSearch);
   el.fLinkedin.addEventListener('change', runSearch);
+  if (el.fNewHire) el.fNewHire.addEventListener('change', runSearch);
   el.applyBtn.addEventListener('click', runSearch);
   el.clearBtn.addEventListener('click', clearFilters);
   el.downloadBtn.addEventListener('click', download);

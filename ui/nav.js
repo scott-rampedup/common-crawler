@@ -1,7 +1,7 @@
-// nav.js — shared top-nav setup on the Master DB + Search pages.
-// Shows the signed-in user + Log out, adds the Admin link for admins, hides the Master
-// Database link for plain 'user' accounts, and tags <body data-role> so role-specific UI
-// (e.g. Edit/Delete/AI buttons) can hide itself via CSS.
+// nav.js — the single source of truth for the top navigation on every page.
+// Renders the full tab set (role-gated), marks the active tab from the URL, and appends the
+// signed-in user chip + Log out. Each page just needs an empty <nav class="nav-actions"></nav>;
+// this replaces its contents so the nav is identical everywhere.
 (async function () {
   let me = null;
   try {
@@ -13,30 +13,32 @@
   document.body.dataset.role = me.role;
   const rank = ({ user: 0, analyst: 1, admin: 2 })[me.role] || 0;
 
-  const nav = document.querySelector('.nav-actions') || document.querySelector('.actions');
+  const nav = document.querySelector('.nav-actions');
   if (!nav) return;
 
-  // Plain users can't see the Master Database.
-  if (rank < 1) {
-    const master = nav.querySelector('#dbButton') || nav.querySelector('a[href^="/?"]') || nav.querySelector('a[href="/"]');
-    if (master) master.style.display = 'none';
-  }
+  const path = (location.pathname.replace(/\/+$/, '') || '/');
+  const view = new URLSearchParams(location.search).get('view');
 
-  // Monitor link for analyst+ (new-employee detection).
-  if (rank >= 1 && !nav.querySelector('a[href="/monitor"]')) {
-    const m = document.createElement('a');
-    m.className = 'nav-link green';
-    m.href = '/monitor';
-    m.textContent = '🛰 Monitor';
-    nav.appendChild(m);
-  }
+  // Canonical tab set, in order. min = lowest role rank that sees the tab.
+  const TABS = [
+    { href: '/',                label: '⌂ Crawler',         min: 0, active: (p, v) => p === '/' && v !== 'db' },
+    { href: '/?view=db',        label: '📥 Data Importer',  min: 1, active: (p, v) => p === '/' && v === 'db' },
+    { href: '/search',          label: '🔍 Contact Crawler', min: 0, green: true, active: (p) => p === '/search' },
+    { href: '/site-search',     label: '🌐 Site Search',    min: 1, green: true, active: (p) => p === '/site-search' },
+    { href: '/serp-lookup',     label: '🔎 SERP Look Up',   min: 1, green: true, active: (p) => p === '/serp-lookup' },
+    { href: '/company-crawler', label: '🏢 Company Crawler', min: 1, green: true, active: (p) => p === '/company-crawler' },
+    { href: '/admin',           label: '⚙ Admin',           min: 2, active: (p) => p === '/admin' },
+  ];
 
-  // Admin link for admins.
-  if (rank >= 2 && !nav.querySelector('a[href="/admin"]')) {
+  nav.innerHTML = '';
+  for (const t of TABS) {
+    if (rank < t.min) continue;
+    const on = t.active(path, view);
     const a = document.createElement('a');
-    a.className = 'nav-link';
-    a.href = '/admin';
-    a.textContent = '⚙ Admin';
+    a.className = 'nav-link' + (t.green ? ' green' : '') + (on ? ' active' : '');
+    a.href = t.href;
+    a.textContent = t.label;
+    if (on) a.setAttribute('aria-current', 'page');
     nav.appendChild(a);
   }
 

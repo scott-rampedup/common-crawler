@@ -114,6 +114,102 @@ $('testEmailForm').addEventListener('submit', async (e) => {
   btn.disabled = false;
 });
 
+// ---- Sitemap Monitor (folded in from the old /monitor tab) ----
+const monSetStatus = (msg, isErr) => { const el = $('monStatus'); if (!el) return; el.textContent = msg; el.classList.toggle('err', !!isErr); };
+const monFmtTime = (t) => { if (!t) return '—'; const d = new Date(t); return isNaN(d) ? esc(t) : d.toLocaleString(); };
+const monEventPill = (e) => ({ new_bio: '<span class="pill new">new hire</span>', departed: '<span class="pill dep">departed</span>',
+  reappeared: '<span class="pill rea">reappeared</span>' }[e] || esc(e));
+
+async function monLoadStats() {
+  try {
+    const d = await (await fetch('/api/monitor')).json();
+    const s = d.stats || {}, obs = s.observations || {};
+    $('monStats').innerHTML = [
+      `Watches: <b>${s.watches || 0}</b> (${s.activeWatches || 0} active)`,
+      `Bios tracked: <b>${s.present || 0}</b>`, `Departed: <b>${s.departed || 0}</b>`,
+      `New hires seen: <b>${obs.new_bio || 0}</b>`, `Departures seen: <b>${obs.departed || 0}</b>`,
+      `Nightly pass: <b>${d.enabled ? 'ON (' + d.intervalHours + 'h)' : 'OFF'}</b>`,
+      `Last pass: <b>${monFmtTime(s.lastPass)}</b>`,
+    ].map((x) => `<span>${x}</span>`).join('');
+    $('monBadge').textContent = d.enabled ? '' : 'nightly pass OFF';
+    if (!d.enabled) monSetStatus('The nightly pass is OFF on the server (set MONITOR_ENABLED=1). You can still run passes manually below.', false);
+    else monSetStatus(d.running ? 'A monitoring pass is running…' : 'Ready.', false);
+  } catch (e) { monSetStatus('Could not load status: ' + e.message, true); }
+}
+
+async function monLoadWatches() {
+  try {
+    const d = await (await fetch('/api/monitor/watches')).json();
+    const ws = d.watches || [];
+    $('monWatches').innerHTML = ws.length ? ws.map((w) => `
+      <tr><td>${esc(w.domain || '')}</td>
+        <td class="u"><a href="${esc(w.sitemap_url)}" target="_blank" rel="noopener">${esc(w.sitemap_url)}</a></td>
+        <td><b>${w.present_count || 0}</b>${w.departed_count ? ` / <span style="color:#991b1b">${w.departed_count}</span>` : ''}</td>
+        <td>${w.bio_ratio == null ? '—' : (w.bio_ratio * 100).toFixed(0) + '%'}</td>
+        <td>${monFmtTime(w.last_fetched)}</td>
+        <td><span class="pill ${w.status === 'paused' ? 'paused' : 'active'}">${esc(w.status || 'active')}</span></td>
+        <td><button class="linklike" data-mon="toggle" data-sm="${esc(w.sitemap_url)}" data-status="${w.status === 'paused' ? 'active' : 'paused'}">${w.status === 'paused' ? 'resume' : 'pause'}</button>
+            <button class="linklike" data-mon="unwatch" data-sm="${esc(w.sitemap_url)}" style="color:#b91c1c">remove</button></td>
+      </tr>`).join('') : `<tr><td colspan="7" class="mon-empty">No watches yet — add a domain above.</td></tr>`;
+  } catch (e) { /* keep last */ }
+}
+
+async function monLoadChanges() {
+  try {
+    const ev = $('monEventFilter').value;
+    const d = await (await fetch('/api/monitor/changes?limit=300' + (ev ? '&event=' + encodeURIComponent(ev) : ''))).json();
+    const rows = d.changes || [];
+    $('monChanges').innerHTML = rows.length ? rows.map((c) => `
+      <tr><td>${monFmtTime(c.ts)}</td><td>${monEventPill(c.event)}</td><td>${esc(c.domain || '')}</td>
+        <td class="url"><a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.url)}</a></td></tr>`).join('')
+      : `<tr><td colspan="4" class="mon-empty">No changes yet — they appear after a pass detects new/departed bios.</td></tr>`;
+  } catch (e) { /* keep last */ }
+}
+
+function monRefresh() { if ($('monStatus')) { monLoadStats(); monLoadWatches(); monLoadChanges(); } }
+
+async function monAddWatch() {
+  const lines = $('monInput').value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+  if (!lines.length) { monSetStatus('Enter at least one domain or sitemap URL.', true); return; }
+  const domains = [], sitemaps = [];
+  for (const l of lines) (/\.xml(\.gz)?($|\?)/i.test(l) || /\/sitemap/i.test(l)) ? sitemaps.push(l) : domains.push(l);
+  $('monAdd').disabled = true; monSetStatus('Discovering bio-dedicated sitemaps…');
+  try {
+    const d = await api('POST', '/api/monitor/watch', { domains, sitemaps });
+    monSetStatus(`Added ${d.added} watch(es).` + (d.added ? '' : ' No bio-dedicated child sitemaps found for that input.'));
+    if (d.added) $('monInput').value = '';
+  } catch (e) { monSetStatus('Failed: ' + e.message, true); }
+  $('monAdd').disabled = false; monRefresh();
+}
+
+async function monRunPass(force) {
+  $('monRun').disabled = $('monRunForce').disabled = true;
+  monSetStatus('Running a monitoring pass…');
+  try {
+    const d = await api('POST', '/api/monitor/run', { force: !!force });
+    if (d.summary && d.summary.skipped === true) monSetStatus(d.summary.reason || 'Already running.', false);
+    else { const s = d.summary || {}; monSetStatus(`Pass done — scanned ${s.scanned}, skipped ${s.skipped}, new ${s.newBios}, departed ${s.departed}` + (s.extracted ? `, ${s.extracted} queued for extraction` : '') + '.'); }
+  } catch (e) { monSetStatus('Pass failed: ' + e.message, true); }
+  $('monRun').disabled = $('monRunForce').disabled = false; monRefresh();
+}
+
+if ($('monWatches')) {
+  $('monWatches').addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-mon]'); if (!btn) return;
+    const sm = btn.dataset.sm;
+    try {
+      if (btn.dataset.mon === 'toggle') await api('POST', '/api/monitor/toggle', { sitemapUrl: sm, status: btn.dataset.status });
+      else if (btn.dataset.mon === 'unwatch') { if (!window.confirm('Stop watching this sitemap and drop its baseline?')) return; await api('POST', '/api/monitor/unwatch', { sitemapUrl: sm }); }
+    } catch (err) { window.alert('Failed: ' + err.message); }
+    monRefresh();
+  });
+  $('monAdd').addEventListener('click', monAddWatch);
+  $('monRun').addEventListener('click', () => monRunPass(false));
+  $('monRunForce').addEventListener('click', () => monRunPass(true));
+  $('monEventFilter').addEventListener('change', monLoadChanges);
+}
+
 loadUsers();
 loadPages();
 loadEmailStatus();
+monRefresh();

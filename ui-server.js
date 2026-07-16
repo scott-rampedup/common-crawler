@@ -154,7 +154,7 @@ const monitor = makeMonitor({
   genderMap: GENDER_MAP,
   bioSitemapNames: BIO_SITEMAP_NAMES,
   // delta extraction reuses the normal CC-first webpage pipeline (-> Master DB upsert)
-  extract: (urls, label) => { startJob(urls, '', false, 'webpage', 'Monitor', label || 'Monitor: new bios', null); },
+  extract: (urls, label) => { startJob(urls, '', false, 'webpage', 'Monitor', label || 'Monitor: new bios', null, 'Sitemap Monitor'); },
   log: (m) => console.log(`[monitor] ${m}`),
 });
 let monitorRunning = false;
@@ -561,6 +561,7 @@ async function runJobDomains(job, domainsToRun) {
       shouldStop: () => job.stopRequested,                     // honor a STOP request
       outPath: path.join(JOBS_DIR, `${job.id}.engine.csv`),   // throwaway; we keep our own records
       onRecord: (row) => {
+        if (job.recordSource) row['Source'] = job.recordSource;   // tag monitor-detected new hires
         const k = String(row['Email Address'] || '').toLowerCase() || `_${job.recordsByEmail.size}`;
         job.recordsByEmail.set(k, row);
       },
@@ -609,7 +610,7 @@ const JOB_TYPES = ['Domains', 'Webpages', 'Sitemaps', 'Site Search Results', 'Go
 const jobTypeFromMode = (mode) => (mode === 'webpage' ? 'Webpages' : 'Domains');
 const normalizeJobType = (t, mode) => (JOB_TYPES.includes(t) ? t : jobTypeFromMode(mode));
 
-function startJob(domains, directoryFilter, liveOnly, mode, type, name, warcByUrl) {
+function startJob(domains, directoryFilter, liveOnly, mode, type, name, warcByUrl, recordSource) {
   const m = mode === 'webpage' ? 'webpage' : 'domain';
   const job = {
     id: newJobId(),
@@ -622,6 +623,7 @@ function startJob(domains, directoryFilter, liveOnly, mode, type, name, warcByUr
     doneDomains: [],
     coverage: { found: 0, live: 0, empty: 0, errored: 0 },
     directoryFilter: directoryFilter || '',
+    recordSource: recordSource || '',      // overrides each record's Source (e.g. 'Sitemap Monitor' -> NEW HIRE)
     liveOnly: !!liveOnly,
     mode: m,
     stopRequested: false,
@@ -1516,7 +1518,7 @@ const server = http.createServer(async (req, res) => {
       type: q.get('type') || '',
       industry: q.get('industry') || '', companySize: q.get('companySize') || '',
       companyLocation: q.get('companyLocation') || '', foundedMin: q.get('foundedMin') || '', foundedMax: q.get('foundedMax') || '',
-      linkedin: q.get('linkedin') === '1', sort: q.get('sort') || '', dir: q.get('dir'),
+      linkedin: q.get('linkedin') === '1', newHire: q.get('newHire') === '1', sort: q.get('sort') || '', dir: q.get('dir'),
     }));
     return;
   }
@@ -1530,7 +1532,7 @@ const server = http.createServer(async (req, res) => {
       type: q.get('type') || '',
       industry: q.get('industry') || '', companySize: q.get('companySize') || '',
       companyLocation: q.get('companyLocation') || '', foundedMin: q.get('foundedMin') || '', foundedMax: q.get('foundedMax') || '',
-      linkedin: q.get('linkedin') === '1',
+      linkedin: q.get('linkedin') === '1', newHire: q.get('newHire') === '1',
     };
     res.writeHead(200, {
       'Content-Type': 'text/csv; charset=utf-8',

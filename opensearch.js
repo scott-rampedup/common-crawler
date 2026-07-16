@@ -158,6 +158,7 @@ function docToRecord(doc) {
   rec.Founded = doc.company_founded || '';
   rec['Company Name'] = doc.company_name || '';
   rec['Company LinkedIn'] = doc.company_linkedin || '';
+  rec['New Hire'] = (doc.source === 'Sitemap Monitor') ? 'Y' : '';   // derived flag for the Contact Crawler
   return rec;
 }
 
@@ -198,6 +199,7 @@ function buildQuery(o = {}) {
     if (should.length) filter.push({ bool: { minimum_should_match: 1, should } });
   }
   if (o.linkedin) filter.push({ bool: { must_not: [{ term: { linkedin_url: '' } }] } });
+  if (o.newHire) filter.push(ciTerm('source', 'Sitemap Monitor'));   // NEW HIRE = detected by the Sitemap Monitor
   switch (o.gender) {
     case 'male': filter.push(ciTerm('gender', 'M')); break;
     case 'female': filter.push(ciTerm('gender', 'F')); break;

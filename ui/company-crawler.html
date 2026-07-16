@@ -267,6 +267,7 @@
     </div>
   </div>
 
+  <script src="/ui/nav.js"></script>
   <script>
     const $ = (id) => document.getElementById(id);
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
@@ -286,9 +287,7 @@
     const COLS = [
       { key: '_fav',        label: '',          sort: '' },
       { key: 'name',        label: 'Company',   sort: 'name' },
-      { key: 'website',     label: 'Website',   sort: 'domain' },
       { key: 'contact_count', label: 'Contacts', sort: 'contact_count' },
-      { key: 'sitemap',     label: 'Sitemap',   sort: '' },
       { key: 'industry',    label: 'Industry',  sort: 'industry' },
       { key: 'size',        label: 'Size',      sort: 'size' },
       { key: 'founded',     label: 'Founded',   sort: 'founded' },
@@ -361,7 +360,7 @@
       const dash = '<span class="cc-empty">—</span>';
       $('ccPager').style.display = total > PAGE ? 'flex' : 'none';
       if (!rows.length) {
-        $('ccBody').innerHTML = '<tr><td colspan="12" style="padding:34px 16px;text-align:center;color:#9ca3af">' +
+        $('ccBody').innerHTML = '<tr><td colspan="10" style="padding:34px 16px;text-align:center;color:#9ca3af">' +
           (hasSearched ? 'No companies match these filters. Try removing a filter or broadening a range.' : 'Set filters and press Search.') + '</td></tr>';
         rowsById = {}; updateSel(); return;
       }
@@ -369,23 +368,21 @@
       $('ccBody').innerHTML = rows.map((d) => {
         byId[d.id] = d;
         const loc = [tc(d.locality), tc(d.region), tc(d.country)].filter(Boolean).join(', ');
-        const fav = d.domain ? '<img class="cc-fav" loading="lazy" src="https://www.google.com/s2/favicons?domain=' + encodeURIComponent(d.domain) + '&sz=128" onerror="this.style.visibility=\'hidden\'" />' : '';
-        const site = d.website ? '<a class="domain-link" href="' + esc(abs(d.website)) + '" target="_blank" rel="noopener">' + esc(d.website) + '</a>' : dash;
+        const favImg = d.domain ? '<img class="cc-fav" loading="lazy" src="https://www.google.com/s2/favicons?domain=' + encodeURIComponent(d.domain) + '&sz=128" onerror="this.style.visibility=\'hidden\'" />' : '';
+        // the logo is the website link (Website column removed); fall back to the bare domain when no explicit website
+        const siteHref = d.website ? abs(d.website) : (d.domain ? 'https://' + d.domain + '/' : '');
+        const fav = (favImg && siteHref) ? '<a href="' + esc(siteHref) + '" target="_blank" rel="noopener" title="' + esc(d.website || d.domain) + '">' + favImg + '</a>' : favImg;
         const cnt = Number(d.contact_count || 0);
         const cntCell = cnt > 0
           ? '<a href="/search?domain=' + encodeURIComponent(d.domain) + '" target="_blank" rel="noopener">' + cnt.toLocaleString() + '</a>'
           : '<span class="cc-empty">0</span>';
-        const sm = siteOf(d);
-        const smCell = sm ? '<a class="domain-link" href="' + esc(sm) + '" target="_blank" rel="noopener">' + (d.sitemap_url ? 'sitemap ✓' : 'sitemap') + '</a>' : dash;
         const li = d.linkedin_url ? '<a class="domain-link" href="' + esc(abs(d.linkedin_url)) + '" target="_blank" rel="noopener">LinkedIn</a>' : dash;
         const checked = selected.has(d.id) ? ' checked' : '';
         return '<tr' + (selected.has(d.id) ? ' class="selected"' : '') + '>' +
           '<td class="check-col"><input type="checkbox" class="row-check ccRow" data-id="' + esc(d.id) + '"' + checked + ' /></td>' +
           '<td class="photo-cell">' + fav + '</td>' +
           '<td>' + (d.name ? esc(tc(d.name)) : dash) + '</td>' +
-          '<td>' + site + '</td>' +
           '<td class="cc-count">' + cntCell + '</td>' +
-          '<td>' + smCell + '</td>' +
           '<td>' + (d.industry ? esc(tc(d.industry)) : dash) + '</td>' +
           '<td>' + (d.size ? '<span class="cc-pill">' + esc(d.size) + '</span>' : dash) + '</td>' +
           '<td>' + (d.founded ? esc(d.founded) : dash) + '</td>' +

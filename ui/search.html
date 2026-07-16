@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Search Database · Common Crawler</title>
+  <title>Contact Crawler · Common Crawler</title>
   <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
   <link rel="apple-touch-icon" href="/ui/logo.png" />
   <link rel="stylesheet" href="/ui/styles.css" />
@@ -63,8 +63,8 @@
         <label>
           Gender
           <select id="f-gender">
+            <option value="all" selected>All (M &amp; F)</option>
             <option value="na">N/A (all results)</option>
-            <option value="all">All (M &amp; F)</option>
             <option value="male">Male</option>
             <option value="female">Female</option>
             <option value="none">None</option>
@@ -92,6 +92,10 @@
         <label class="checkbox-label">
           <input id="f-linkedin" type="checkbox" />
           Must have LinkedIn URL
+        </label>
+        <label class="checkbox-label">
+          <input id="f-newhire" type="checkbox" />
+          New hires only (Sitemap Monitor)
         </label>
         </div>
         <div class="search-actions">
