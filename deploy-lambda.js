@@ -17,7 +17,12 @@ const {
 } = require('@aws-sdk/client-lambda');
 
 const REGION = process.env.AWS_REGION || 'us-east-1';
-const FN = 'cc-extract';
+// Two functions share the same package + role + bucket: cc-extract (person contacts) and cc-enrich
+// (company home-page enrichment). --fn cc-enrich (or cc-extract) deploys just one; default deploys both.
+const FUNCTIONS = [
+  { name: 'cc-extract', handler: 'lambda-extract.handler', timeout: 180, memory: 1024 },
+  { name: 'cc-enrich',  handler: 'lambda-enrich.handler',  timeout: 300, memory: 1536 },
+];
 const ROLE = 'rampedup-cc-extract-lambda';
 const sts = new STSClient({ region: REGION });
 const iam = new IAMClient({ region: REGION });
@@ -28,8 +33,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function ensureBucket(bucket) {
   try { await s3.send(new HeadBucketCommand({ Bucket: bucket })); console.error(`  bucket ${bucket} exists`); return; }
   catch (_) { /* create below */ }
-  await s3.send(new CreateBucketCommand({ Bucket: bucket }));   // us-east-1: no LocationConstraint
-  console.error(`  bucket ${bucket} created`);
+  // The deploy user may lack Head/Create on an already-existing bucket (e.g. the 2nd function reusing the
+  // 1st's bucket). Try to create, but don't abort the deploy if it's already there / perms-denied — the
+  // Lambda's execution role is what actually reads/writes it at runtime.
+  try { await s3.send(new CreateBucketCommand({ Bucket: bucket })); console.error(`  bucket ${bucket} created`); }
+  catch (e) { console.error(`  bucket ${bucket}: assuming it already exists (${e.name || e.message})`); }
 }
 
 async function ensureRole(bucket) {
@@ -61,37 +69,42 @@ async function ensureRole(bucket) {
   const code = zip.toBuffer();
   console.error(`  zip size ${(code.length / 1048576).toFixed(1)} MB`);
 
+  const only = (() => { const i = process.argv.indexOf('--fn'); return i > -1 ? process.argv[i + 1] : ''; })();
+  const targets = only ? FUNCTIONS.filter((f) => f.name === only) : FUNCTIONS;
+  if (!targets.length) { console.error(`unknown --fn ${only}`); process.exit(1); }
+
   if (process.argv.includes('--code')) {
-    await lambda.send(new UpdateFunctionCodeCommand({ FunctionName: FN, ZipFile: code }));
-    console.error(`updated ${FN} code only.`); return;
+    for (const f of targets) { await lambda.send(new UpdateFunctionCodeCommand({ FunctionName: f.name, ZipFile: code })); console.error(`updated ${f.name} code only.`); }
+    return;
   }
 
   await ensureBucket(bucket);
   const roleArn = await ensureRole(bucket);
 
-  const cfg = {
-    FunctionName: FN, Runtime: 'nodejs20.x', Role: roleArn, Handler: 'lambda-extract.handler',
-    Timeout: 180, MemorySize: 1024, Environment: { Variables: { OUT_BUCKET: bucket } },
-  };
-  let exists = false;
-  try { await lambda.send(new GetFunctionCommand({ FunctionName: FN })); exists = true; } catch (_) { /* create */ }
-  if (exists) {
-    await lambda.send(new UpdateFunctionCodeCommand({ FunctionName: FN, ZipFile: code }));
-    await sleep(3000);
-    await lambda.send(new UpdateFunctionConfigurationCommand(cfg));
-    console.error(`updated ${FN}.`);
-  } else {
-    for (let attempt = 1; ; attempt++) {
-      try { await lambda.send(new CreateFunctionCommand({ ...cfg, Code: { ZipFile: code } })); break; }
-      catch (e) {
-        // The freshly-created role may not be assumable yet — retry a few times.
-        if (attempt < 5 && /cannot be assumed|not authorized to perform: sts:AssumeRole/i.test(e.message || '')) {
-          console.error(`  role not ready (attempt ${attempt}); waiting…`); await sleep(6000); continue;
+  for (const f of targets) {
+    const cfg = {
+      FunctionName: f.name, Runtime: 'nodejs20.x', Role: roleArn, Handler: f.handler,
+      Timeout: f.timeout, MemorySize: f.memory, Environment: { Variables: { OUT_BUCKET: bucket } },
+    };
+    let exists = false;
+    try { await lambda.send(new GetFunctionCommand({ FunctionName: f.name })); exists = true; } catch (_) { /* create */ }
+    if (exists) {
+      await lambda.send(new UpdateFunctionCodeCommand({ FunctionName: f.name, ZipFile: code }));
+      await sleep(3000);
+      await lambda.send(new UpdateFunctionConfigurationCommand(cfg));
+      console.error(`updated ${f.name}.`);
+    } else {
+      for (let attempt = 1; ; attempt++) {
+        try { await lambda.send(new CreateFunctionCommand({ ...cfg, Code: { ZipFile: code } })); break; }
+        catch (e) {
+          if (attempt < 5 && /cannot be assumed|not authorized to perform: sts:AssumeRole/i.test(e.message || '')) {
+            console.error(`  role not ready (attempt ${attempt}); waiting…`); await sleep(6000); continue;
+          }
+          throw e;
         }
-        throw e;
       }
+      console.error(`created ${f.name}.`);
     }
-    console.error(`created ${FN}.`);
   }
-  console.error(`\nDONE. Test: node -e "invoke ${FN} with {pointers:[…]}"  |  OUT_BUCKET=${bucket}`);
+  console.error(`\nDONE (${targets.map((f) => f.name).join(', ')}). OUT_BUCKET=${bucket}`);
 })().catch((e) => { console.error('deploy error:', e.message); process.exit(1); });
