@@ -160,7 +160,8 @@ async function setAltWebsites(client, patterns) {
 // in sync. NOTE: a full company re-load (from the source dataset) would overwrite manual edits.
 const EDITABLE = new Set(['name', 'website', 'industry', 'size', 'country', 'region', 'locality', 'founded',
   'linkedin_url', 'phone', 'full_address', 'category', 'cid', 'sitemap_url',
-  'description', 'email', 'email_type', 'facebook', 'instagram', 'map', 'linkedin_contact', 'bio_url', 'alternate_websites', 'contacts', 'contacts_count']);
+  'description', 'email', 'email_type', 'facebook', 'instagram', 'map', 'linkedin_contact', 'bio_url', 'alternate_websites', 'contacts', 'contacts_count',
+  'cc_refreshed_at', 'cc_crawl']);
 async function update(client, id, updates) {
   if (!id) throw new Error('id required');
   const doc = {};

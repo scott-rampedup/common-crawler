@@ -63,7 +63,7 @@ const readline = require('readline');
       try {
         const html = await withRetry(() => fetchWarc({ url: p.url, filename: p.filename, offset: p.offset, length: p.length }));
         if (!html) continue;
-        const r = che.enrichFromHtml(company, html, { genderMap: gm, altList });
+        const r = che.enrichFromHtml(company, html, { genderMap: gm, altList, now });
         await withRetry(() => co.update(client, company.id, r.updates)); updated++; contacts += (r.updates.contacts_count || 0);
         for (const c of (r.contacts || [])) {
           if (!c.email) continue;                        // email-keyed store: skip email-less contacts

@@ -136,7 +136,7 @@ function reclassifyWebsite(website, altList) {
 
 // Assemble the field updates from an already-fetched home-page HTML (the reusable core — drivable from an
 // Athena-resolved pointer, not just per-company CDX). Returns { updates, people }.
-function enrichFromHtml(company, html, { genderMap = {}, altList } = {}) {
+function enrichFromHtml(company, html, { genderMap = {}, altList, now, crawl } = {}) {
   const domain = company.domain || '';
   const p = parseHome(html, domain, altList);
   const address = company.full_address || '';
@@ -156,6 +156,8 @@ function enrichFromHtml(company, html, { genderMap = {}, altList } = {}) {
     contacts: contacts.join(' '),
     contacts_count: count,
   };
+  if (now) up.cc_refreshed_at = now;          // when this company was last CC-refreshed (drives deltas + "last refreshed")
+  if (crawl) up.cc_crawl = crawl;             // the CC crawl the freshest capture came from
   if (phone && !String(company.phone || '').trim()) up.phone = phone;
   if (email) { up.email = email; up.email_type = ex.classifyEmail(email); }
   if ('website' in rc) up.website = '';
@@ -164,12 +166,12 @@ function enrichFromHtml(company, html, { genderMap = {}, altList } = {}) {
 }
 
 // Full per-company enrichment: resolve its home page in CC (CDX), fetch, then enrichFromHtml.
-async function enrichCompany(company, { genderMap = {}, crawls, fetchWarc, altList } = {}) {
+async function enrichCompany(company, { genderMap = {}, crawls, fetchWarc, altList, now } = {}) {
   const ptr = await resolveHome(company.domain || '', { crawls });
   if (!ptr) return { found: false, reason: 'not in CC' };
   let html = ''; try { html = await fetchWarc(ptr); } catch (e) { return { found: false, reason: 's3: ' + e.message }; }
   if (!html) return { found: false, reason: 'empty' };
-  const r = enrichFromHtml(company, html, { genderMap, altList });
+  const r = enrichFromHtml(company, html, { genderMap, altList, now: now || new Date().toISOString(), crawl: (crawls && crawls[0]) || '' });
   return { found: true, updates: r.updates, people: r.people, ptr: { url: ptr.url } };
 }
 

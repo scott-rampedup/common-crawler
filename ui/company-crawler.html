@@ -596,7 +596,8 @@
         drRow('Description', d.description ? esc(d.description) : '') +
         drRow('Bio / team page', d.bio_url ? asLink(d.bio_url, 'Bio page') : '') +
         drRow('LinkedIn contact', d.linkedin_contact ? asLink(d.linkedin_contact, d.linkedin_contact) : '') +
-        drRow('Alternate sites', drAlt(d.alternate_websites)));
+        drRow('Alternate sites', drAlt(d.alternate_websites)) +
+        drRow('Last CC refresh', d.cc_refreshed_at ? (esc(String(d.cc_refreshed_at).slice(0, 10)) + (d.cc_crawl ? ' · <span class="dr-tag">' + esc(d.cc_crawl) + '</span>' : '')) : ''));
       h += drSec('Contacts', drContactsHtml(d));
       $('drBody').innerHTML = h || '<p class="dr-muted">No additional details captured yet.</p>';
       const cnt = Number(d.contact_count || 0);
