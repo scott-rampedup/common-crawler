@@ -13,7 +13,7 @@ const CSV_COLUMNS = [
 // On-screen columns, in display order. Each: key (record field), label (header text),
 // type (how the cell renders), sortable (whether the header sorts server-side).
 const COLUMNS = [
-  { key: 'Image URL',      label: 'Image',         type: 'image',       sortable: false },
+  { key: 'Image URL',      label: '',              type: 'image',       sortable: false },
   { key: 'Last',           label: 'Contact Name',  type: 'contactname', sortable: true  },
   { key: 'Position',       label: 'Position',      type: 'position', sortable: true  },
   { key: 'Domain',         label: 'Domain',        type: 'domain',   sortable: true  },
