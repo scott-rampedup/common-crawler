@@ -124,6 +124,24 @@ async function count(client, f) {
   return (res.body || res).count;
 }
 
+// Live facet counts. For each requested field the counts reflect all the OTHER active filters but NOT the
+// field's own selection — so a facet shows what you'd get by adding each value (true faceted behavior).
+const FACET_FIELDS = { industry: 'industry', size: 'size', country: 'country' };
+async function facets(client, f, fields = ['industry', 'size', 'country'], topN = 25) {
+  const out = {};
+  await Promise.all(fields.map(async (field) => {
+    if (!FACET_FIELDS[field]) { out[field] = []; return; }
+    const sub = { ...(f || {}) }; delete sub[field];              // drop this facet's own selection
+    const res = await client.search({
+      index: INDEX,
+      body: { size: 0, query: buildQuery(sub), aggs: { f: { terms: { field: FACET_FIELDS[field], size: topN } } } },
+    });
+    const b = res.body || res;
+    out[field] = ((b.aggregations && b.aggregations.f.buckets) || []).map((x) => ({ key: x.key, count: x.doc_count }));
+  }));
+  return out;
+}
+
 // --- Alternate-Websites admin list (patterns whose match moves out of Website). Stored in OpenSearch so
 // the Fly UI and the LOCAL enricher share one editable list; falls back to the default seed. ---
 const CONFIG_INDEX = process.env.CC_CONFIG_INDEX || 'cc_config';
@@ -216,4 +234,4 @@ function rowToCsvLine(d0) {
 }
 const csvHeader = () => OUT_COLS.join(',');
 
-module.exports = { INDEX, MAPPING, OUT_COLS, CC_FIELDS, DEFAULT_ALT, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, each, update, placeUpdates, getAltWebsites, setAltWebsites, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, makeClient: os.makeClient };
+module.exports = { INDEX, MAPPING, OUT_COLS, CC_FIELDS, DEFAULT_ALT, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, makeClient: os.makeClient };

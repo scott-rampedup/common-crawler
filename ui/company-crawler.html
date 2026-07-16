@@ -8,35 +8,59 @@
   <link rel="apple-touch-icon" href="/ui/logo.png" />
   <link rel="stylesheet" href="/ui/styles.css" />
   <style>
-    .cc-wrap { max-width: 1360px; margin: 0 auto; padding: 16px 24px 48px; }
-    .cc-hint { color: #6b7280; font-size: 12.5px; margin: 2px 0 14px; }
-    .cc-form { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px 14px; margin: 12px 0 6px; }
-    .cc-field { display: flex; flex-direction: column; gap: 3px; }
-    .cc-field label { font-size: 12px; color: #374151; font-weight: 600; }
-    .cc-field input, .cc-field select { padding: 7px 9px; font-size: 13px; border: 1px solid #d1d5db; border-radius: 6px; box-sizing: border-box; }
-    .cc-founded { display: flex; gap: 6px; align-items: center; }
-    .cc-founded input { width: 100%; }
-    .cc-actions { display: flex; gap: 10px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
-    .cc-status { font-size: 13.5px; margin: 8px 0; padding: 9px 12px; background: #f3f4f6; border-radius: 8px; }
-    .cc-status.err { background: #fde8e8; color: #9b1c1c; }
-    table.cc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    table.cc-table th, table.cc-table td { text-align: left; padding: 6px 9px; border-bottom: 1px solid #eceef1; vertical-align: middle; white-space: nowrap; }
-    table.cc-table th { position: sticky; top: 0; background: #fafbfc; font-weight: 600; z-index: 1; }
-    table.cc-table th.sortable { cursor: pointer; user-select: none; }
-    table.cc-table th.sortable:hover { background: #eef2f6; }
-    table.cc-table th .arrow { color: #6366f1; font-size: 11px; }
-    table.cc-table td.url a { word-break: break-all; }
-    .cc-fav { width: 18px; height: 18px; vertical-align: middle; border-radius: 3px; }
-    .cc-wrap { max-width: 1360px; margin: 0 auto; padding: 16px 24px 24px; }
-    .cc-tablewrap { max-height: calc(100vh - 300px); overflow: auto; border: 1px solid #eceef1; border-radius: 8px; margin-top: 8px; }
-    body.search-page { overflow-x: hidden; }   /* keep the page within the screen; the table scrolls itself */
+    /* ---- company-crawler specifics on top of the shared search-page shell ---- */
+    .cc-fav { width: 18px; height: 18px; border-radius: 3px; vertical-align: middle; }
+    .cc-pill { display: inline-block; padding: 1px 8px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: 0.72rem; white-space: nowrap; }
     .cc-empty { color: #9ca3af; }
-    .cc-pill { display: inline-block; padding: 1px 7px; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: 11px; white-space: nowrap; }
-    .cc-count a { font-weight: 600; color: #4338ca; text-decoration: none; }
+    .cc-count a { font-weight: 700; color: #4338ca; text-decoration: none; }
     .cc-count a:hover { text-decoration: underline; }
-    .cc-pager { display: flex; gap: 10px; align-items: center; margin-top: 10px; font-size: 13px; }
-    .cc-pager button { padding: 5px 12px; }
-    .cc-sel { font-size: 12.5px; color: #374151; }
+
+    /* faceted filter checklists */
+    .facet { display: flex; flex-direction: column; gap: 6px; }
+    .facet > .facet-h { display: flex; align-items: baseline; justify-content: space-between; }
+    .facet > .facet-h b { font-size: 0.9rem; color: #374151; font-weight: 700; }
+    .facet-add { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 10px; font-size: 0.88rem; font-family: inherit; }
+    .facet-list { display: flex; flex-direction: column; gap: 2px; max-height: 190px; overflow-y: auto; padding-right: 2px; }
+    .facet-list::-webkit-scrollbar { width: 8px; }
+    .facet-list::-webkit-scrollbar-thumb { background: #dbe2ec; border-radius: 8px; }
+    .facet-opt {
+      display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 8px;
+      font-size: 0.86rem; color: #1f2937; cursor: pointer; flex-direction: row;
+    }
+    .facet-opt:hover { background: #f1f5f9; }
+    .facet-opt input { width: 15px; height: 15px; flex: none; accent-color: #2563eb; margin: 0; }
+    .facet-opt .lbl { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: capitalize; }
+    .facet-opt .cnt { font-variant-numeric: tabular-nums; color: #6b7280; font-size: 0.78rem; flex: none; }
+    .facet-opt.on { background: #eef4ff; }
+    .facet-opt.on .lbl { font-weight: 650; color: #1d4ed8; }
+    .facet-empty { color: #9ca3af; font-size: 0.82rem; padding: 2px 6px; }
+
+    /* active-filter chips above the results */
+    .cc-chips { display: flex; flex-wrap: wrap; gap: 7px; padding: 10px 18px; border-bottom: 1px solid #eef2f7; align-items: center; }
+    .cc-chips[hidden] { display: none; }
+    .cc-chip {
+      display: inline-flex; align-items: center; gap: 7px; padding: 4px 6px 4px 11px;
+      background: #eef2ff; color: #3730a3; border-radius: 999px; font-size: 0.82rem; font-weight: 600; white-space: nowrap;
+    }
+    .cc-chip .k { color: #6366f1; font-weight: 700; text-transform: uppercase; font-size: 0.66rem; letter-spacing: 0.04em; }
+    .cc-chip button { border: none; background: rgba(99,102,241,.16); color: #3730a3; width: 17px; height: 17px; border-radius: 50%; cursor: pointer; font-size: 0.8rem; line-height: 1; padding: 0; }
+    .cc-chip button:hover { background: rgba(99,102,241,.32); }
+    .cc-chips .clear-all { border: none; background: none; color: #6b7280; font-weight: 600; font-size: 0.82rem; cursor: pointer; text-decoration: underline; }
+    .cc-chips .clear-all:hover { color: #b91c1c; }
+
+    /* sortable header arrows reuse shared thead styling */
+    thead th .arrow { color: #2563eb; font-size: 0.72rem; }
+    .cc-alt-link { background: none; border: none; color: #2563eb; font-weight: 600; font-size: 0.82rem; cursor: pointer; padding: 0; text-decoration: underline; }
+    .cc-alt-link:hover { color: #1d4ed8; }
+
+    /* modal buttons (shared modal-overlay chrome, local button styling) */
+    .modal-foot button { appearance: none; border: 1px solid #d1d5db; background: #f8fafc; color: #111827; padding: 9px 16px; border-radius: 10px; font-weight: 650; cursor: pointer; font-size: 0.9rem; }
+    .modal-foot button:hover { background: #eef2f7; }
+    .modal-foot button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .modal-foot button.primary:hover { background: #1d4ed8; }
+    .modal-msg { font-size: 0.84rem; margin: 8px 20px 0; min-height: 1em; }
+    .modal-msg.err { color: #b91c1c; } .modal-msg.ok { color: #047857; }
+    #ccAltList { width: 100%; min-height: 220px; padding: 10px 12px; font-size: 0.86rem; font-family: var(--mono, ui-monospace, Consolas, monospace); border: 1px solid #d1d5db; border-radius: 10px; box-sizing: border-box; }
   </style>
 </head>
 <body class="search-page">
@@ -56,95 +80,136 @@
       </nav>
     </header>
 
-    <div class="cc-wrap">
-      <h2>Company Crawler</h2>
-      <p class="cc-hint">Search the company reference database (<b id="ccTotalIdx">…</b> companies). <b>Contacts</b> = records we
-        hold on that root domain (click it to open them in Search). <b>Sitemap</b> is the discovered bio sitemap, else the
-        standard <code>/sitemap.xml</code>. Tick rows to Download Selected, click a column header to sort.</p>
+    <div class="search-layout">
+      <!-- LEFT: filter rail -->
+      <aside class="search-panel">
+        <h2>Company Crawler</h2>
+        <div class="search-fields">
+          <label>Company name
+            <input id="fName" type="search" placeholder="e.g. baker tilly" />
+          </label>
+          <label>Website / domain
+            <input id="fDomain" type="search" placeholder="e.g. bakertilly.com" />
+          </label>
 
-      <div class="cc-form">
-        <div class="cc-field"><label>Company name</label><input id="fName" placeholder="e.g. baker tilly" /></div>
-        <div class="cc-field"><label>Website / domain</label><input id="fDomain" placeholder="e.g. bakertilly.com" /></div>
-        <div class="cc-field"><label>Industry (comma-separate for several)</label><input id="fIndustry" list="industries" placeholder="e.g. legal services, accounting" /></div>
-        <div class="cc-field"><label>Size (⌘/Ctrl-click for several)</label>
-          <select id="fSize" multiple size="4">
-            <option>1-10</option><option>11-50</option><option>51-200</option><option>201-500</option>
-            <option>501-1000</option><option>1001-5000</option><option>5001-10000</option><option>10001+</option>
-          </select>
+          <div class="facet" data-field="industry">
+            <div class="facet-h"><b>Industry</b></div>
+            <input class="facet-add" id="addIndustry" list="industries" placeholder="Type an industry, press Enter…" />
+            <div class="facet-list" id="facetIndustry"><span class="facet-empty">Search to see counts</span></div>
+          </div>
+
+          <div class="facet" data-field="size">
+            <div class="facet-h"><b>Employee size</b></div>
+            <div class="facet-list" id="facetSize"></div>
+          </div>
+
+          <div class="facet" data-field="country">
+            <div class="facet-h"><b>Country</b></div>
+            <input class="facet-add" id="addCountry" list="countries" placeholder="Type a country, press Enter…" />
+            <div class="facet-list" id="facetCountry"><span class="facet-empty">Search to see counts</span></div>
+          </div>
+
+          <label>Region / state
+            <input id="fRegion" type="search" placeholder="e.g. california" />
+          </label>
+          <label>Locality / city
+            <input id="fLocality" type="search" placeholder="e.g. chicago" />
+          </label>
+          <label>Founded (year range)
+            <span style="display:flex;gap:6px">
+              <input id="fFoundedMin" type="number" placeholder="from" style="width:50%" />
+              <input id="fFoundedMax" type="number" placeholder="to" style="width:50%" />
+            </span>
+          </label>
+          <label>Min contacts
+            <input id="fContactMin" type="number" min="0" placeholder="e.g. 5" />
+          </label>
+          <label>Sitemap URL / domain
+            <input id="fSitemap" type="search" placeholder="e.g. compass.com" />
+          </label>
+          <label class="checkbox-label"><input id="fLinkedin" type="checkbox" /> Must have LinkedIn URL</label>
         </div>
-        <div class="cc-field"><label>Country (comma-separate for several)</label><input id="fCountry" list="countries" placeholder="e.g. united states, canada" /></div>
-        <div class="cc-field"><label>Region / state</label><input id="fRegion" placeholder="e.g. california" /></div>
-        <div class="cc-field"><label>Locality / city</label><input id="fLocality" placeholder="e.g. chicago" /></div>
-        <div class="cc-field"><label>Founded (year range)</label>
-          <div class="cc-founded"><input id="fFoundedMin" type="number" placeholder="from" /><span>–</span><input id="fFoundedMax" type="number" placeholder="to" /></div>
+
+        <div class="search-actions">
+          <button id="ccSearch" class="primary" type="button">Search</button>
+          <button id="ccReset" class="ghost" type="button">Clear</button>
         </div>
-        <div class="cc-field"><label>Min contacts</label><input id="fContactMin" type="number" min="0" placeholder="e.g. 5" /></div>
-        <div class="cc-field"><label>Sitemap URL / domain</label><input id="fSitemap" placeholder="e.g. compass.com" /></div>
-      </div>
-      <datalist id="industries">
-        <option>accounting</option><option>financial services</option><option>banking</option><option>capital markets</option>
-        <option>real estate</option><option>commercial real estate</option><option>insurance</option>
-        <option>investment banking</option><option>investment management</option><option>venture capital &amp; private equity</option>
-        <option>legal services</option><option>law practice</option><option>government administration</option>
-        <option>non-profit organization management</option><option>civic &amp; social organization</option>
-        <option>higher education</option><option>education management</option><option>management consulting</option>
-        <option>information technology and services</option><option>construction</option><option>marketing and advertising</option>
-      </datalist>
-      <datalist id="countries">
-        <option>united states</option><option>united kingdom</option><option>canada</option><option>australia</option>
-        <option>ireland</option><option>new zealand</option><option>india</option><option>germany</option>
-      </datalist>
+        <p class="search-hint">Searching <b id="ccTotalIdx">…</b> companies. <button id="ccAltCfg" class="cc-alt-link" type="button" title="Manage the Alternate-Websites pattern list (admin)">⚙ Alternate Websites</button></p>
+      </aside>
 
-      <div class="cc-actions">
-        <label style="display:flex;gap:6px;align-items:center;font-size:13px;"><input id="fLinkedin" type="checkbox" /> Has LinkedIn URL</label>
-        <button id="ccSearch" type="button" class="primary">Search</button>
-        <button id="ccReset" type="button">Reset</button>
-        <button id="ccAltCfg" type="button" title="Manage the Alternate-Websites pattern list (admin)">⚙ Alt Websites</button>
-        <a id="ccDownload" class="nav-link green" href="#" style="display:none">⬇ Download All (filtered)</a>
-        <button id="ccDownloadSel" type="button" style="display:none">⬇ Download Selected (<span id="ccSelCount">0</span>)</button>
-        <button id="ccPlaces" type="button" style="display:none">📍 Look Up Places (Selected)</button>
-        <button id="ccEnrich" type="button" style="display:none">🌐 Enrich from CC (Selected)</button>
-        <span class="cc-sel" id="ccSelInfo"></span>
-      </div>
+      <!-- RIGHT: results -->
+      <main class="results-panel">
+        <div class="results-toolbar">
+          <p id="resultsSummary">Set filters and press Search.</p>
+          <div class="toolbar-actions">
+            <span id="ccSelInfo" class="selected-info"></span>
+            <button id="ccDownloadSel" class="ghost" type="button" style="display:none">⬇ Selected (<span id="ccSelCount">0</span>)</button>
+            <button id="ccPlaces" class="ghost" type="button" style="display:none">📍 Places</button>
+            <button id="ccEnrich" class="ghost" type="button" style="display:none">🌐 Enrich (CC)</button>
+            <a id="ccDownload" class="primary" href="#" style="display:none;text-decoration:none">⬇ Download All</a>
+          </div>
+        </div>
 
-      <div id="ccStatus" class="cc-status" style="display:none"></div>
+        <div id="ccChips" class="cc-chips" hidden></div>
 
-      <div class="cc-tablewrap" id="ccTableWrap" style="display:none">
-        <table class="cc-table">
-          <thead><tr id="ccHead"></tr></thead>
-          <tbody id="ccBody"></tbody>
-        </table>
-      </div>
-      <div class="cc-pager" id="ccPager" style="display:none">
-        <button id="ccPrev" type="button">‹ Prev</button>
-        <span id="ccPageInfo"></span>
-        <button id="ccNext" type="button">Next ›</button>
-      </div>
+        <div class="results-scroll" id="ccScroll">
+          <table id="ccTable">
+            <thead><tr id="ccHead"></tr></thead>
+            <tbody id="ccBody"></tbody>
+          </table>
+        </div>
+
+        <div class="pagination" id="ccPager" style="display:none">
+          <button id="ccFirst" type="button" title="First page">«</button>
+          <button id="ccPrev" type="button" title="Previous page">‹ Prev</button>
+          <span id="ccPageInfo" class="page-info">Page 1 of 1</span>
+          <button id="ccNext" type="button" title="Next page">Next ›</button>
+          <button id="ccLast" type="button" title="Last page">»</button>
+        </div>
+      </main>
     </div>
   </div>
 
-  <div id="ccEditModal" style="display:none;position:fixed;inset:0;background:rgba(17,24,39,.45);z-index:100;align-items:center;justify-content:center;">
-    <div style="background:#fff;border-radius:10px;padding:20px 22px;max-width:480px;width:92%;max-height:86vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25);">
-      <h3 style="margin:0 0 12px">Edit company</h3>
-      <div id="ccEditFields" style="display:flex;flex-direction:column;gap:9px;"></div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+  <datalist id="industries">
+    <option>accounting</option><option>financial services</option><option>banking</option><option>capital markets</option>
+    <option>real estate</option><option>commercial real estate</option><option>insurance</option>
+    <option>investment banking</option><option>investment management</option><option>venture capital &amp; private equity</option>
+    <option>legal services</option><option>law practice</option><option>government administration</option>
+    <option>non-profit organization management</option><option>civic &amp; social organization</option>
+    <option>higher education</option><option>education management</option><option>management consulting</option>
+    <option>information technology and services</option><option>construction</option><option>marketing and advertising</option>
+  </datalist>
+  <datalist id="countries">
+    <option>united states</option><option>united kingdom</option><option>canada</option><option>australia</option>
+    <option>ireland</option><option>new zealand</option><option>india</option><option>germany</option>
+  </datalist>
+
+  <!-- Edit modal (shared modal-overlay chrome) -->
+  <div id="ccEditModal" class="modal-overlay" style="display:none">
+    <div class="modal-dialog">
+      <div class="modal-head"><h2>Edit company</h2><button class="modal-close" id="ccEditX" type="button">×</button></div>
+      <div class="modal-body" id="ccEditBody"></div>
+      <div class="modal-msg err" id="ccEditMsg"></div>
+      <div class="modal-foot">
         <button id="ccEditCancel" type="button">Cancel</button>
-        <button id="ccEditSave" type="button" class="primary">Save</button>
+        <button id="ccEditSave" class="primary" type="button">Save changes</button>
       </div>
-      <div id="ccEditMsg" style="font-size:12.5px;color:#9b1c1c;margin-top:8px;"></div>
     </div>
   </div>
 
-  <div id="ccAltModal" style="display:none;position:fixed;inset:0;background:rgba(17,24,39,.45);z-index:100;align-items:center;justify-content:center;">
-    <div style="background:#fff;border-radius:10px;padding:20px 22px;max-width:480px;width:92%;max-height:86vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25);">
-      <h3 style="margin:0 0 8px">Alternate Websites</h3>
-      <p style="font-size:12px;color:#6b7280;margin:0 0 10px">One pattern per line (host or host/path). When a company's Website matches one, it's moved to Alternate Websites and the Website is blanked. Saving requires admin.</p>
-      <textarea id="ccAltList" style="width:100%;min-height:220px;padding:9px 10px;font-size:13px;font-family:ui-monospace,Menlo,Consolas,monospace;box-sizing:border-box;"></textarea>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
-        <button id="ccAltCancel" type="button">Cancel</button>
-        <button id="ccAltSave" type="button" class="primary">Save</button>
+  <!-- Alternate Websites admin modal -->
+  <div id="ccAltModal" class="modal-overlay" style="display:none">
+    <div class="modal-dialog" style="max-width:520px">
+      <div class="modal-head"><h2>Alternate Websites</h2><button class="modal-close" id="ccAltX" type="button">×</button></div>
+      <div class="modal-body">
+        <p style="font-size:0.85rem;color:#6b7280;margin:0 0 10px">One pattern per line (host or host/path). When a company's Website matches one, it's moved to Alternate Websites and the Website is blanked. Saving requires admin.</p>
+        <textarea id="ccAltList"></textarea>
       </div>
-      <div id="ccAltMsg" style="font-size:12.5px;margin-top:8px;"></div>
+      <div class="modal-msg" id="ccAltMsg"></div>
+      <div class="modal-foot">
+        <button id="ccAltCancel" type="button">Cancel</button>
+        <button id="ccAltSave" class="primary" type="button">Save</button>
+      </div>
     </div>
   </div>
 
@@ -155,12 +220,14 @@
     const TC_UP = new Set(['llc','inc','llp','plc','pllc','pc','ltd','usa','us','uk','uae','eu','ny','la','dc']);
     const TC_LOW = new Set(['of','and','the','for','to','in','on','at','a','an','or','de','du']);
     function tc(s) { s = String(s == null ? '' : s); if (!s) return ''; return s.toLowerCase().split(/(\s+|-|\/|,)/).map((w, i) => { if (/^(\s+|-|\/|,)$/.test(w) || !w) return w; if (TC_UP.has(w)) return w.toUpperCase(); if (i > 0 && TC_LOW.has(w)) return w; return w.charAt(0).toUpperCase() + w.slice(1); }).join(''); }
-    const PAGE = 50;
-    let from = 0, total = 0;
-    const sortState = { col: '', dir: 'asc' };
-    const selected = new Map();   // id -> row (so Download Selected can send ids)
 
-    // Column config: key (record field), label, sort (server sort key, '' = not sortable)
+    const PAGE = 50;
+    const SIZE_BANDS = ['1-10','11-50','51-200','201-500','501-1000','1001-5000','5001-10000','10001+'];
+    let from = 0, total = 0, hasSearched = false;
+    const sortState = { col: '', dir: 'asc' };
+    const selected = new Map();                                   // id -> row
+    const sel = { industry: new Set(), size: new Set(), country: new Set() };  // facet selections
+
     const COLS = [
       { key: '_fav',        label: '',          sort: '' },
       { key: 'name',        label: 'Company',   sort: 'name' },
@@ -174,17 +241,18 @@
       { key: 'linkedin_url',label: 'LinkedIn',  sort: '' },
     ];
 
-    fetch('/api/companies/search?size_n=1').then(r => r.json()).then(d => {
+    fetch('/api/companies/search?size_n=1').then((r) => r.json()).then((d) => {
       $('ccTotalIdx').textContent = (typeof d.total === 'number') ? d.total.toLocaleString() : '—';
     }).catch(() => { $('ccTotalIdx').textContent = '—'; });
 
     function filters() {
       return {
-        name: $('fName').value.trim(), domain: $('fDomain').value.trim(), industry: $('fIndustry').value.trim(),
-        size: [...$('fSize').selectedOptions].map((o) => o.value).join(','), country: $('fCountry').value.trim(), region: $('fRegion').value.trim(),
-        locality: $('fLocality').value.trim(), founded_min: $('fFoundedMin').value.trim(),
-        founded_max: $('fFoundedMax').value.trim(), contactMin: $('fContactMin').value.trim(),
-        sitemap: $('fSitemap').value.trim(), linkedin: $('fLinkedin').checked ? 'yes' : '',
+        name: $('fName').value.trim(), domain: $('fDomain').value.trim(),
+        industry: [...sel.industry].join(','), size: [...sel.size].join(','), country: [...sel.country].join(','),
+        region: $('fRegion').value.trim(), locality: $('fLocality').value.trim(),
+        founded_min: $('fFoundedMin').value.trim(), founded_max: $('fFoundedMax').value.trim(),
+        contactMin: $('fContactMin').value.trim(), sitemap: $('fSitemap').value.trim(),
+        linkedin: $('fLinkedin').checked ? 'yes' : '',
       };
     }
     function qs(extra) {
@@ -194,16 +262,16 @@
       for (const k in (extra || {})) p.set(k, extra[k]);
       return p.toString();
     }
-    function setStatus(msg, err) { const el = $('ccStatus'); el.style.display = 'block'; el.className = 'cc-status' + (err ? ' err' : ''); el.textContent = msg; }
 
     function renderHead() {
       $('ccHead').innerHTML =
-        '<th><input type="checkbox" id="ccAll" title="Select all on this page" /></th>' +
-        COLS.map((c) => {
+        '<th class="check-col"><input type="checkbox" id="ccAll" class="all-check" title="Select all on this page" /></th>' +
+        '<th class="photo-col"></th>' +
+        COLS.slice(1).map((c) => {
           if (!c.sort) return '<th>' + esc(c.label) + '</th>';
           const active = sortState.col === c.sort;
           const arrow = active ? ' <span class="arrow">' + (sortState.dir === 'asc' ? '▲' : '▼') + '</span>' : '';
-          return '<th class="sortable" data-sort="' + c.sort + '">' + esc(c.label) + arrow + '</th>';
+          return '<th class="sortable' + (active ? ' sorted' : '') + '" data-sort="' + c.sort + '">' + esc(c.label) + arrow + '</th>';
         }).join('') + '<th>Edit</th>';
       $('ccAll').addEventListener('change', (e) => togglePage(e.target.checked));
       document.querySelectorAll('#ccHead th.sortable').forEach((th) => th.addEventListener('click', () => {
@@ -215,17 +283,19 @@
     }
 
     async function search(newFrom) {
+      hasSearched = true;
       from = newFrom || 0;
-      setStatus('Searching…'); $('ccSearch').disabled = true;
+      $('resultsSummary').textContent = 'Searching…'; $('ccSearch').disabled = true;
       try {
         const r = await fetch('/api/companies/search?' + qs({ from, size_n: PAGE }));
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
         total = d.total; renderHead(); render(d.rows);
-        setStatus(total.toLocaleString() + ' matching compan' + (total === 1 ? 'y' : 'ies') + (total > 500000 ? ' (CSV caps at 500,000)' : ''));
-        $('ccDownload').style.display = total ? 'inline-block' : 'none';
+        $('resultsSummary').textContent = total.toLocaleString() + ' compan' + (total === 1 ? 'y' : 'ies') + ' match' + (total > 500000 ? ' · CSV caps at 500,000' : '');
+        $('ccDownload').style.display = total ? 'inline-flex' : 'none';
         $('ccDownload').href = '/api/companies/export.csv?' + qs();
-      } catch (e) { setStatus('Search failed: ' + e.message, true); }
+        loadFacets(); renderChips();
+      } catch (e) { $('resultsSummary').textContent = 'Search failed: ' + e.message; }
       $('ccSearch').disabled = false;
     }
 
@@ -234,162 +304,262 @@
 
     function render(rows) {
       const dash = '<span class="cc-empty">—</span>';
-      $('ccTableWrap').style.display = rows.length ? 'block' : 'none';
       $('ccPager').style.display = total > PAGE ? 'flex' : 'none';
+      if (!rows.length) {
+        $('ccBody').innerHTML = '<tr><td colspan="12" style="padding:34px 16px;text-align:center;color:#9ca3af">' +
+          (hasSearched ? 'No companies match these filters. Try removing a filter or broadening a range.' : 'Set filters and press Search.') + '</td></tr>';
+        updateSel(); return;
+      }
+      const byId = {};
       $('ccBody').innerHTML = rows.map((d) => {
+        byId[d.id] = d;
         const loc = [tc(d.locality), tc(d.region), tc(d.country)].filter(Boolean).join(', ');
         const fav = d.domain ? '<img class="cc-fav" loading="lazy" src="https://www.google.com/s2/favicons?domain=' + encodeURIComponent(d.domain) + '&sz=128" onerror="this.style.visibility=\'hidden\'" />' : '';
-        const site = d.website ? '<a href="' + esc(abs(d.website)) + '" target="_blank" rel="noopener">' + esc(d.website) + '</a>' : dash;
+        const site = d.website ? '<a class="domain-link" href="' + esc(abs(d.website)) + '" target="_blank" rel="noopener">' + esc(d.website) + '</a>' : dash;
         const cnt = Number(d.contact_count || 0);
         const cntCell = cnt > 0
           ? '<a href="/search?domain=' + encodeURIComponent(d.domain) + '" target="_blank" rel="noopener">' + cnt.toLocaleString() + '</a>'
           : '<span class="cc-empty">0</span>';
         const sm = siteOf(d);
-        const smCell = sm ? '<a href="' + esc(sm) + '" target="_blank" rel="noopener">' + (d.sitemap_url ? 'sitemap ✓' : 'sitemap') + '</a>' : dash;
-        const li = d.linkedin_url ? '<a href="' + esc(abs(d.linkedin_url)) + '" target="_blank" rel="noopener">LinkedIn</a>' : dash;
+        const smCell = sm ? '<a class="domain-link" href="' + esc(sm) + '" target="_blank" rel="noopener">' + (d.sitemap_url ? 'sitemap ✓' : 'sitemap') + '</a>' : dash;
+        const li = d.linkedin_url ? '<a class="domain-link" href="' + esc(abs(d.linkedin_url)) + '" target="_blank" rel="noopener">LinkedIn</a>' : dash;
         const checked = selected.has(d.id) ? ' checked' : '';
-        return '<tr>' +
-          '<td><input type="checkbox" class="ccRow" data-id="' + esc(d.id) + '"' + checked + ' /></td>' +
-          '<td>' + fav + '</td>' +
+        return '<tr' + (selected.has(d.id) ? ' class="selected"' : '') + '>' +
+          '<td class="check-col"><input type="checkbox" class="row-check ccRow" data-id="' + esc(d.id) + '"' + checked + ' /></td>' +
+          '<td class="photo-cell">' + fav + '</td>' +
           '<td>' + (d.name ? esc(tc(d.name)) : dash) + '</td>' +
-          '<td class="url">' + site + '</td>' +
+          '<td>' + site + '</td>' +
           '<td class="cc-count">' + cntCell + '</td>' +
-          '<td class="url">' + smCell + '</td>' +
+          '<td>' + smCell + '</td>' +
           '<td>' + (d.industry ? esc(tc(d.industry)) : dash) + '</td>' +
           '<td>' + (d.size ? '<span class="cc-pill">' + esc(d.size) + '</span>' : dash) + '</td>' +
           '<td>' + (d.founded ? esc(d.founded) : dash) + '</td>' +
           '<td>' + (loc ? esc(loc) : dash) + '</td>' +
-          '<td class="url">' + li + '</td>' +
-          '<td><button type="button" class="ccEdit" data-id="' + esc(d.id) + '" title="Edit">✎</button></td>' +
+          '<td>' + li + '</td>' +
+          '<td><button type="button" class="ccEdit" data-id="' + esc(d.id) + '" title="Edit" style="border:none;background:none;cursor:pointer;font-size:1rem">✎</button></td>' +
         '</tr>';
       }).join('');
-      // wire row checkboxes + edit buttons
-      const byId = {}; rows.forEach((d) => { byId[d.id] = d; });
       document.querySelectorAll('.ccRow').forEach((cb) => cb.addEventListener('change', () => {
         const id = cb.getAttribute('data-id');
         if (cb.checked) selected.set(id, byId[id]); else selected.delete(id);
+        cb.closest('tr').classList.toggle('selected', cb.checked);
         updateSel();
       }));
       document.querySelectorAll('.ccEdit').forEach((b) => b.addEventListener('click', () => openEdit(byId[b.getAttribute('data-id')])));
       const shownTo = Math.min(from + PAGE, total);
-      $('ccPageInfo').textContent = (total ? (from + 1) : 0) + '–' + shownTo + ' of ' + total.toLocaleString();
-      $('ccPrev').disabled = from <= 0;
-      $('ccNext').disabled = shownTo >= total;
+      const pages = Math.max(1, Math.ceil(total / PAGE)), cur = Math.floor(from / PAGE) + 1;
+      $('ccPageInfo').textContent = 'Page ' + cur + ' of ' + pages.toLocaleString() + ' · ' + (from + 1).toLocaleString() + '–' + shownTo.toLocaleString() + ' of ' + total.toLocaleString();
+      $('ccFirst').disabled = from <= 0; $('ccPrev').disabled = from <= 0;
+      $('ccNext').disabled = shownTo >= total; $('ccLast').disabled = shownTo >= total;
       updateSel();
+    }
+
+    // ---- facets ----
+    async function loadFacets() {
+      try {
+        const r = await fetch('/api/companies/facets?' + qs());
+        const d = await r.json(); if (!r.ok) return;
+        renderFacet('industry', $('facetIndustry'), d.industry || []);
+        renderFacet('size', $('facetSize'), d.size || [], SIZE_BANDS);
+        renderFacet('country', $('facetCountry'), d.country || []);
+      } catch (e) { /* leave prior facet state */ }
+    }
+    function renderFacet(field, host, buckets, fixedOrder) {
+      const counts = new Map(buckets.map((b) => [b.key, b.count]));
+      let keys;
+      if (fixedOrder) keys = fixedOrder.slice();
+      else {
+        keys = buckets.map((b) => b.key);
+        for (const k of sel[field]) if (!keys.includes(k)) keys.unshift(k);   // always show selected
+      }
+      if (!keys.length) { host.innerHTML = '<span class="facet-empty">No values</span>'; return; }
+      host.innerHTML = keys.map((k) => {
+        const on = sel[field].has(k), c = counts.get(k);
+        return '<label class="facet-opt' + (on ? ' on' : '') + '">' +
+          '<input type="checkbox" data-field="' + field + '" value="' + esc(k) + '"' + (on ? ' checked' : '') + ' />' +
+          '<span class="lbl" title="' + esc(k) + '">' + esc(k) + '</span>' +
+          '<span class="cnt">' + (c != null ? c.toLocaleString() : (on ? '·' : '0')) + '</span>' +
+        '</label>';
+      }).join('');
+      host.querySelectorAll('input[type=checkbox]').forEach((cb) => cb.addEventListener('change', () => {
+        const k = cb.value; if (cb.checked) sel[field].add(k); else sel[field].delete(k);
+        search(0);
+      }));
+    }
+    function addFacetValue(field, raw) {
+      const v = String(raw || '').trim().toLowerCase(); if (!v) return;
+      sel[field].add(v); search(0);
+    }
+
+    // ---- active-filter chips ----
+    const CHIP_LABELS = { name: 'Name', domain: 'Domain', region: 'Region', locality: 'City', contactMin: 'Min contacts', linkedin: 'LinkedIn' };
+    function renderChips() {
+      const chips = [];
+      const add = (kind, label, val, onRemove) => chips.push({ label, val, onRemove });
+      const f = filters();
+      if (f.name) add('name', 'Name', f.name, () => { $('fName').value = ''; });
+      if (f.domain) add('domain', 'Domain', f.domain, () => { $('fDomain').value = ''; });
+      for (const k of sel.industry) add('industry', 'Industry', k, () => sel.industry.delete(k));
+      for (const k of sel.size) add('size', 'Size', k, () => sel.size.delete(k));
+      for (const k of sel.country) add('country', 'Country', k, () => sel.country.delete(k));
+      if (f.region) add('region', 'Region', f.region, () => { $('fRegion').value = ''; });
+      if (f.locality) add('locality', 'City', f.locality, () => { $('fLocality').value = ''; });
+      if (f.founded_min || f.founded_max) add('founded', 'Founded', (f.founded_min || '…') + '–' + (f.founded_max || '…'), () => { $('fFoundedMin').value = ''; $('fFoundedMax').value = ''; });
+      if (f.contactMin) add('contactMin', 'Min contacts', '≥ ' + f.contactMin, () => { $('fContactMin').value = ''; });
+      if (f.sitemap) add('sitemap', 'Sitemap', f.sitemap, () => { $('fSitemap').value = ''; });
+      if (f.linkedin) add('linkedin', 'Has LinkedIn', 'yes', () => { $('fLinkedin').checked = false; });
+
+      const box = $('ccChips');
+      if (!chips.length) { box.hidden = true; box.innerHTML = ''; return; }
+      box.hidden = false;
+      box.innerHTML = chips.map((c, i) =>
+        '<span class="cc-chip"><span class="k">' + esc(c.label) + '</span>' + esc(tc(c.val)) + ' <button type="button" data-i="' + i + '" aria-label="Remove ' + esc(c.label) + ' filter">×</button></span>'
+      ).join('') + '<button class="clear-all" type="button" id="ccClearAll">Clear all</button>';
+      box.querySelectorAll('.cc-chip button').forEach((b) => b.addEventListener('click', () => {
+        chips[Number(b.getAttribute('data-i'))].onRemove(); search(0);
+      }));
+      $('ccClearAll').addEventListener('click', reset);
     }
 
     function togglePage(on) {
       document.querySelectorAll('.ccRow').forEach((cb) => {
         cb.checked = on; const id = cb.getAttribute('data-id');
-        if (on) selected.set(id, true); else selected.delete(id);
+        const tr = cb.closest('tr'); if (tr) tr.classList.toggle('selected', on);
+        if (on) { const row = {}; row.id = id; selected.set(id, selected.get(id) || row); } else selected.delete(id);
       });
       updateSel();
     }
     function updateSel() {
       const n = selected.size;
       $('ccSelCount').textContent = n;
-      $('ccDownloadSel').style.display = n ? 'inline-block' : 'none';
-      $('ccPlaces').style.display = n ? 'inline-block' : 'none';
-      $('ccEnrich').style.display = n ? 'inline-block' : 'none';
+      $('ccDownloadSel').style.display = n ? 'inline-flex' : 'none';
+      $('ccPlaces').style.display = n ? 'inline-flex' : 'none';
+      $('ccEnrich').style.display = n ? 'inline-flex' : 'none';
       $('ccSelInfo').textContent = n ? (n.toLocaleString() + ' selected') : '';
     }
 
+    function reset() {
+      ['fName','fDomain','fRegion','fLocality','fFoundedMin','fFoundedMax','fContactMin','fSitemap','addIndustry','addCountry'].forEach((i) => { $(i).value = ''; });
+      $('fLinkedin').checked = false;
+      sel.industry.clear(); sel.size.clear(); sel.country.clear();
+      sortState.col = ''; sortState.dir = 'asc'; selected.clear(); updateSel();
+      $('ccBody').innerHTML = ''; $('ccPager').style.display = 'none';
+      $('ccDownload').style.display = 'none'; $('ccChips').hidden = true;
+      $('facetIndustry').innerHTML = '<span class="facet-empty">Search to see counts</span>';
+      $('facetSize').innerHTML = ''; $('facetCountry').innerHTML = '<span class="facet-empty">Search to see counts</span>';
+      $('resultsSummary').textContent = 'Set filters and press Search.'; hasSearched = false;
+    }
+
     $('ccSearch').addEventListener('click', () => search(0));
+    $('ccReset').addEventListener('click', reset);
+    $('ccFirst').addEventListener('click', () => search(0));
     $('ccPrev').addEventListener('click', () => search(Math.max(0, from - PAGE)));
     $('ccNext').addEventListener('click', () => search(from + PAGE));
+    $('ccLast').addEventListener('click', () => search(Math.max(0, (Math.ceil(total / PAGE) - 1) * PAGE)));
+    $('addIndustry').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addFacetValue('industry', e.target.value); e.target.value = ''; } });
+    $('addCountry').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addFacetValue('country', e.target.value); e.target.value = ''; } });
+    document.querySelectorAll('.search-fields input:not(.facet-add)').forEach((el) =>
+      el.addEventListener('keydown', (e) => { if (e.key === 'Enter') search(0); }));
+
+    // ---- bulk actions ----
     $('ccDownloadSel').addEventListener('click', () => {
-      const ids = [...selected.keys()];
-      if (!ids.length) return;
-      if (ids.length > 5000) { alert('Too many selected for a direct download (max 5,000). Use Download All (filtered) instead.'); return; }
+      const ids = [...selected.keys()]; if (!ids.length) return;
+      if (ids.length > 5000) { alert('Too many selected for a direct download (max 5,000). Use Download All instead.'); return; }
       window.location.href = '/api/companies/export.csv?ids=' + encodeURIComponent(ids.join(','));
     });
     $('ccPlaces').addEventListener('click', async () => {
-      const ids = [...selected.keys()];
-      if (!ids.length) return;
+      const ids = [...selected.keys()]; if (!ids.length) return;
       if (ids.length > 500) { alert('Places lookup is capped at 500 per run (1 serper credit each). Select fewer.'); return; }
       if (!confirm('Look up ' + ids.length + ' company(ies) via SERPER Places? Uses ~' + ids.length + ' serper credits.')) return;
-      $('ccPlaces').disabled = true; setStatus('Looking up ' + ids.length + ' place(s) via SERPER…');
+      $('ccPlaces').disabled = true; $('resultsSummary').textContent = 'Looking up ' + ids.length + ' place(s) via SERPER…';
       try {
         const r = await fetch('/api/companies/places', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
         const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-        setStatus('Places: processed ' + d.processed + ', updated ' + d.updated + ', ~' + d.credits + ' credits' + (d.errors ? ', ' + d.errors + ' error(s)' : ''));
+        alert('Places: processed ' + d.processed + ', updated ' + d.updated + ', ~' + d.credits + ' credits' + (d.errors ? ', ' + d.errors + ' error(s)' : ''));
         search(from);
-      } catch (e) { setStatus('Places lookup failed: ' + e.message, true); }
+      } catch (e) { $('resultsSummary').textContent = 'Places lookup failed: ' + e.message; }
       $('ccPlaces').disabled = false;
     });
     $('ccEnrich').addEventListener('click', async () => {
-      const ids = [...selected.keys()];
-      if (!ids.length) return;
+      const ids = [...selected.keys()]; if (!ids.length) return;
       if (ids.length > 300) { alert('CC enrichment is capped at 300 selected per run. Select fewer.'); return; }
       if (!confirm('Enrich ' + ids.length + ' company(ies) from their Common Crawl home page? (reads the CC archive, no credits)')) return;
-      $('ccEnrich').disabled = true; setStatus('Enriching ' + ids.length + ' from Common Crawl…');
+      $('ccEnrich').disabled = true; $('resultsSummary').textContent = 'Enriching ' + ids.length + ' from Common Crawl…';
       try {
         const r = await fetch('/api/companies/cc-enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
         const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-        setStatus('CC enrich: ' + d.found + ' home pages found / ' + d.processed + ' processed, ' + d.updated + ' updated, ' + d.contacts + ' contacts' + (d.errors ? ', ' + d.errors + ' error(s)' : ''));
+        alert('CC enrich: ' + d.found + ' home pages found / ' + d.processed + ' processed, ' + d.updated + ' updated, ' + d.contacts + ' contacts' + (d.errors ? ', ' + d.errors + ' error(s)' : ''));
         search(from);
-      } catch (e) { setStatus('CC enrich failed: ' + e.message, true); }
+      } catch (e) { $('resultsSummary').textContent = 'CC enrich failed: ' + e.message; }
       $('ccEnrich').disabled = false;
     });
-    $('ccReset').addEventListener('click', () => {
-      ['fName','fDomain','fIndustry','fCountry','fRegion','fLocality','fFoundedMin','fFoundedMax','fContactMin','fSitemap'].forEach((i) => $(i).value = '');
-      $('fSize').selectedIndex = -1; $('fLinkedin').checked = false;
-      sortState.col = ''; sortState.dir = 'asc'; selected.clear(); updateSel();
-      $('ccTableWrap').style.display = 'none'; $('ccPager').style.display = 'none';
-      $('ccDownload').style.display = 'none'; $('ccStatus').style.display = 'none';
-    });
-    document.querySelectorAll('.cc-form input, .cc-form select').forEach((el) =>
-      el.addEventListener('keydown', (e) => { if (e.key === 'Enter') search(0); }));
 
-    // ---- Edit modal ----
-    const EDIT_FIELDS = [['name','Company name'],['website','Website'],['industry','Industry'],['size','Size'],
-      ['country','Country'],['region','Region'],['locality','Locality'],['founded','Founded'],
-      ['phone','Phone'],['full_address','Full Address'],['category','Category'],['linkedin_url','LinkedIn URL'],
-      ['email','Email'],['email_type','Email Type'],['description','Description'],['facebook','Facebook'],
-      ['instagram','Instagram'],['map','Map'],['linkedin_contact','LinkedIn Contacts'],['bio_url','BIO URL'],
-      ['alternate_websites','Alternate Websites'],['contacts','Contacts'],['sitemap_url','Sitemap URL']];
+    // ---- edit modal (grouped) ----
+    const EDIT_GROUPS = [
+      ['Identity', [['name','Company name',1],['website','Website',1],['linkedin_url','LinkedIn URL',1],['sitemap_url','Sitemap URL',1]]],
+      ['Firmographics', [['industry','Industry'],['size','Size'],['founded','Founded'],['country','Country'],['region','Region'],['locality','Locality'],['category','Category']]],
+      ['Contact & place', [['phone','Phone'],['full_address','Full address',1],['email','Email'],['email_type','Email Type'],['cid','Google CID']]],
+      ['Common-Crawl enrichment', [['description','Description',2],['facebook','Facebook'],['instagram','Instagram'],['map','Map'],['bio_url','BIO URL'],['linkedin_contact','LinkedIn Contacts'],['alternate_websites','Alternate Websites',2],['contacts','Contacts',2],['contacts_count','Contacts Count']]],
+    ];
     let editId = null;
     function openEdit(row) {
-      if (!row) return;
-      editId = row.id;
-      $('ccEditFields').innerHTML = EDIT_FIELDS.map(([k, label]) =>
-        '<label style="font-size:12px;font-weight:600;color:#374151;display:flex;flex-direction:column;gap:2px;">' + esc(label) +
-        '<input data-k="' + k + '" value="' + esc(row[k] != null ? row[k] : '') + '" style="padding:6px 8px;font-size:13px;border:1px solid #d1d5db;border-radius:6px;" /></label>').join('');
+      if (!row) return; editId = row.id;
+      $('ccEditBody').innerHTML = EDIT_GROUPS.map(([title, fields]) =>
+        '<div class="edit-card"><div class="edit-card-title">' + esc(title) + '</div><div class="edit-grid">' +
+        fields.map(([k, label, wide]) => {
+          const v = esc(row[k] != null ? row[k] : '');
+          const cls = 'edit-field' + (wide ? ' wide' : '');
+          const ctl = wide === 2
+            ? '<textarea data-k="' + k + '" rows="2">' + v + '</textarea>'
+            : '<input data-k="' + k + '" value="' + v + '" />';
+          return '<label class="' + cls + '">' + esc(label) + ctl + '</label>';
+        }).join('') + '</div></div>'
+      ).join('');
       $('ccEditMsg').textContent = ''; $('ccEditModal').style.display = 'flex';
     }
-    $('ccEditCancel').addEventListener('click', () => { $('ccEditModal').style.display = 'none'; });
-    $('ccEditModal').addEventListener('click', (e) => { if (e.target.id === 'ccEditModal') $('ccEditModal').style.display = 'none'; });
+    function closeEdit() { $('ccEditModal').style.display = 'none'; }
+    $('ccEditX').addEventListener('click', closeEdit);
+    $('ccEditCancel').addEventListener('click', closeEdit);
+    $('ccEditModal').addEventListener('click', (e) => { if (e.target.id === 'ccEditModal') closeEdit(); });
     $('ccEditSave').addEventListener('click', async () => {
       const updates = {};
-      document.querySelectorAll('#ccEditFields input').forEach((i) => { updates[i.getAttribute('data-k')] = i.value; });
-      $('ccEditSave').disabled = true; $('ccEditMsg').textContent = 'Saving…';
+      $('ccEditBody').querySelectorAll('[data-k]').forEach((i) => { updates[i.getAttribute('data-k')] = i.value; });
+      $('ccEditSave').disabled = true; $('ccEditMsg').className = 'modal-msg'; $('ccEditMsg').textContent = 'Saving…';
       try {
         const r = await fetch('/api/companies/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: editId, updates }) });
         const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-        $('ccEditModal').style.display = 'none'; search(from);
-      } catch (e) { $('ccEditMsg').textContent = 'Failed: ' + e.message; }
+        closeEdit(); search(from);
+      } catch (e) { $('ccEditMsg').className = 'modal-msg err'; $('ccEditMsg').textContent = 'Failed: ' + e.message; }
       $('ccEditSave').disabled = false;
     });
 
-    // ---- Alternate Websites config ----
+    // ---- alternate-websites admin ----
+    function closeAlt() { $('ccAltModal').style.display = 'none'; }
     $('ccAltCfg').addEventListener('click', async () => {
-      $('ccAltMsg').textContent = 'Loading…'; $('ccAltMsg').style.color = '#6b7280'; $('ccAltModal').style.display = 'flex';
+      $('ccAltMsg').className = 'modal-msg'; $('ccAltMsg').textContent = 'Loading…'; $('ccAltModal').style.display = 'flex';
       try { const r = await fetch('/api/companies/alt-websites'); const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status)); $('ccAltList').value = (d.patterns || []).join('\n'); $('ccAltMsg').textContent = ''; }
-      catch (e) { $('ccAltMsg').textContent = 'Load failed: ' + e.message; $('ccAltMsg').style.color = '#9b1c1c'; }
+      catch (e) { $('ccAltMsg').className = 'modal-msg err'; $('ccAltMsg').textContent = 'Load failed: ' + e.message; }
     });
-    $('ccAltCancel').addEventListener('click', () => { $('ccAltModal').style.display = 'none'; });
-    $('ccAltModal').addEventListener('click', (e) => { if (e.target.id === 'ccAltModal') $('ccAltModal').style.display = 'none'; });
+    $('ccAltX').addEventListener('click', closeAlt);
+    $('ccAltCancel').addEventListener('click', closeAlt);
+    $('ccAltModal').addEventListener('click', (e) => { if (e.target.id === 'ccAltModal') closeAlt(); });
     $('ccAltSave').addEventListener('click', async () => {
       const patterns = $('ccAltList').value.split('\n').map((s) => s.trim()).filter(Boolean);
-      $('ccAltSave').disabled = true; $('ccAltMsg').textContent = 'Saving…'; $('ccAltMsg').style.color = '#6b7280';
+      $('ccAltSave').disabled = true; $('ccAltMsg').className = 'modal-msg'; $('ccAltMsg').textContent = 'Saving…';
       try {
         const r = await fetch('/api/companies/alt-websites', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ patterns }) });
         const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-        $('ccAltMsg').textContent = 'Saved ' + d.saved + ' patterns.'; $('ccAltMsg').style.color = '#166534';
-        setTimeout(() => { $('ccAltModal').style.display = 'none'; }, 900);
-      } catch (e) { $('ccAltMsg').textContent = 'Save failed: ' + e.message + (/403/.test(e.message) ? ' (admin only)' : ''); $('ccAltMsg').style.color = '#9b1c1c'; }
+        $('ccAltMsg').className = 'modal-msg ok'; $('ccAltMsg').textContent = 'Saved ' + d.saved + ' patterns.';
+        setTimeout(closeAlt, 900);
+      } catch (e) { $('ccAltMsg').className = 'modal-msg err'; $('ccAltMsg').textContent = 'Save failed: ' + e.message + (/403/.test(e.message) ? ' (admin only)' : ''); }
       $('ccAltSave').disabled = false;
     });
+
+    // Esc closes any open modal
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeEdit(); closeAlt(); } });
+
+    // seed the size facet (counts fill in after first search)
+    renderFacet('size', $('facetSize'), [], SIZE_BANDS);
   </script>
 </body>
 </html>

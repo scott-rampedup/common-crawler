@@ -1397,6 +1397,14 @@ const server = http.createServer(async (req, res) => {
     catch (e) { jsonErr(res, 500, e.message); }
     return;
   }
+  // Live facet counts (industry / size / country) for the current filter set — drives the sidebar checklists.
+  if (url.pathname === '/api/companies/facets' && req.method === 'GET') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
+    try { sendJson(res, await companies.facets(companiesClient, companyFilters(url.searchParams))); }
+    catch (e) { jsonErr(res, 500, e.message); }
+    return;
+  }
   if (url.pathname === '/api/companies/update' && req.method === 'POST') {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
