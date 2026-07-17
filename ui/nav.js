@@ -3,12 +3,24 @@
 // signed-in user chip + Log out. Each page just needs an empty <nav class="nav-actions"></nav>;
 // this replaces its contents so the nav is identical everywhere.
 (async function () {
-  let me = null;
-  try {
-    const res = await fetch('/api/auth/me');
-    if (res.ok) me = await res.json();
-  } catch (e) { /* ignore */ }
-  if (!me) { window.location.href = '/login'; return; }
+  // Only a DEFINITIVE 401 means signed-out. A transient failure (app cold-starting after a deploy, a
+  // 502/503 from the proxy, a network blip) must NOT log the user out — that was bouncing people to
+  // /login mid-navigation. Retry a couple of times to ride out a cold start, then give up quietly.
+  async function fetchMe(tries) {
+    for (let i = 0; i < tries; i++) {
+      try {
+        const res = await fetch('/api/auth/me', { cache: 'no-store' });
+        if (res.status === 401) return { signedOut: true };
+        if (res.ok) return { me: await res.json() };
+      } catch (e) { /* transient — retry */ }
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+    }
+    return {};   // transient failure after retries: leave the page as-is
+  }
+  const r = await fetchMe(3);
+  if (r.signedOut) { window.location.href = '/login'; return; }
+  const me = r.me;
+  if (!me) return;   // couldn't confirm the session (transient) — render nothing, don't bounce
 
   document.body.dataset.role = me.role;
   const rank = ({ user: 0, analyst: 1, admin: 2 })[me.role] || 0;
