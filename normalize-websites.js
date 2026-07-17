@@ -15,10 +15,11 @@ const che = require('./cc-home-enrich');
   const DRY = process.argv.includes('--dry-run');
   const client = co.makeClient(process.env.OPENSEARCH_ENDPOINT);
   const altList = await co.getAltWebsites(client);
-  // Over-inclusive prefilter (reclassifyWebsite does the precise check); keeps the scroll to candidates only.
-  const CAND = [...new Set(['facebook.com', 'fb.com', 'instagram.com', 'goo.gl/maps', 'maps.app.goo.gl', 'google.com/maps', 'bing.com/maps', ...altList].map((d) => String(d).toLowerCase()))];
-  const should = CAND.map((d) => ({ wildcard: { website: { value: '*' + d + '*' } } }));
-  const query = { bool: { minimum_should_match: 1, should } };
+  // Cheap exact-match prefilter on the normalized registrable domain (a leading-wildcard on the URL
+  // scans the whole index and times out). Over-inclusive is fine — reclassifyWebsite does the precise check.
+  const DOMAINS = [...new Set(['facebook.com', 'fb.com', 'instagram.com', 'google.com', 'goo.gl', 'maps.app.goo.gl', 'bing.com', ...altList.map((a) => co.normDomain(a))].filter(Boolean).map((d) => d.toLowerCase()))];
+  const query = { terms: { domain: DOMAINS } };
+  console.error(`prefilter domains: ${DOMAINS.join(', ')}`);
 
   const total = (await client.count({ index: co.INDEX, body: { query } })).body.count;
   console.error(`candidate companies (Website looks like fb/ig/maps/alt): ${total.toLocaleString()}${DRY ? ' [dry-run]' : ''}`);
