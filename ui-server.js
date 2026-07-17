@@ -884,7 +884,10 @@ function handleAdmin(req, res, p) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  const _t0 = Date.now();
+  const _hasSid = /(^|;\s*)sid=[^;]+/.test(String(req.headers['cookie'] || ''));
   console.log(`[${new Date().toISOString()}] ${req.method} ${url.pathname}`);
+  res.on('finish', () => console.log(`  <- ${res.statusCode} ${req.method} ${url.pathname} ${Date.now() - _t0}ms host=${req.headers.host} sid=${_hasSid ? 'y' : 'n'}${res.statusCode === 302 ? ' [REDIRECT ' + (res.getHeader('location') || '') + ']' : ''}`));
 
   // ---------------- authentication + role gate ----------------
   const me = currentUser(req);
