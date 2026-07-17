@@ -1022,9 +1022,16 @@ body.search-page {
 .nav-link.active { color: #16a34a; font-weight: 700; }
 
 /* hide data-editing controls for the read-only 'user' role */
-body[data-role="user"] #editBtn,
+/* AI Search + Delete: hidden for the read-only 'user' role (analyst+ only) */
 body[data-role="user"] #aiBtn,
 body[data-role="user"] #deleteBtn { display: none !important; }
+/* Edit: ADMIN-ONLY everywhere — users AND analysts cannot edit (Contact + Company Crawler) */
+body:not([data-role="admin"]) #editBtn,
+body:not([data-role="admin"]) .row-edit,
+body:not([data-role="admin"]) .ccEdit { display: none !important; }
+/* per-row Edit pencil (Contact Crawler) */
+.row-edit-btn { border: none; background: none; cursor: pointer; font-size: 1rem; color: #6b7280; padding: 2px 6px; border-radius: 6px; line-height: 1; }
+.row-edit-btn:hover { background: #eef2ff; color: #2563eb; }
 
 /* ===================== Admin page ===================== */
 .admin-main { flex: 1; overflow: auto; padding: 18px 22px 40px; display: flex; flex-direction: column; gap: 22px; }

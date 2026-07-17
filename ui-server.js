@@ -1410,7 +1410,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (url.pathname === '/api/companies/update' && req.method === 'POST') {
-    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!isAdmin) { jsonErr(res, 403, 'Edit is reserved for admins'); return; }   // Edit = admin-only
     if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
     readJsonBody(req, async (b) => {
       if (!b || !b.id) return jsonErr(res, 400, 'id + updates required');
@@ -1549,7 +1549,7 @@ const server = http.createServer(async (req, res) => {
 
   // POST /api/db/update  { edits: [{ email, updates }] }  -> apply manual edits to records
   if (url.pathname === '/api/db/update' && req.method === 'POST') {
-    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!isAdmin) { jsonErr(res, 403, 'Edit is reserved for admins'); return; }   // Edit = admin-only
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', async () => {

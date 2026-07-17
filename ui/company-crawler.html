@@ -50,8 +50,7 @@
 
     /* sortable header arrows reuse shared thead styling */
     thead th .arrow { color: #2563eb; font-size: 0.72rem; }
-    /* view-only 'user' role: hide write/export controls (read APIs are open; write APIs stay gated) */
-    body[data-role="user"] .ccEdit,
+    /* view-only 'user' role: hide analyst+ write/export controls (.ccEdit is admin-only via styles.css) */
     body[data-role="user"] #ccPlaces,
     body[data-role="user"] #ccEnrich,
     body[data-role="user"] #ccDownloadSel,

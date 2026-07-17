@@ -37,6 +37,7 @@ const COLUMNS = [
   { key: 'Company HQ',     label: 'Co. HQ',        type: 'text',     sortable: false },
   { key: 'Founded',        label: 'Founded',       type: 'text',     sortable: false },
   { key: 'Company Name',   label: 'Company',       type: 'text',     sortable: false },
+  { key: '_edit',          label: 'Edit',          type: 'edit',     sortable: false },
 ];
 
 // Fields the manual Edit modal lets you change for each selected record.
@@ -178,6 +179,7 @@ function createHeader() {
     else if (col.type === 'lastpath' || col.type === 'contactname') th.classList.add('lastpath-col');
     else if (col.type === 'position') th.classList.add('position-col');
     else if (col.type === 'location') th.classList.add('location-col');
+    else if (col.type === 'edit') th.classList.add('row-edit');   // admin-only column (hidden via CSS otherwise)
     if (col.type === 'linkedin' || col.type === 'maps' || col.type === 'vcard' || col.type === 'social') th.classList.add('icon-col');
 
     if (col.type === 'linkedin') {
@@ -387,6 +389,13 @@ function renderRows() {
           s.textContent = 'NEW';
           cell.appendChild(s);
         }
+      } else if (col.type === 'edit') {
+        cell.className = 'row-edit';
+        cell.style.textAlign = 'center';
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'row-edit-btn'; b.title = 'Edit'; b.textContent = '✎';
+        b.addEventListener('click', (e) => { e.stopPropagation(); openEditModal([record]); });
+        cell.appendChild(b);
       } else if (col.type === 'position') {
         cell.className = 'position-cell';
         cell.textContent = value || '';
@@ -680,8 +689,8 @@ function openModal(title, buildBody, footerButtons) {
 }
 
 // ---- manual edit of the selected records ----
-function openEditModal() {
-  const records = [...state.selected.values()];
+function openEditModal(recordsArg) {
+  const records = (recordsArg && recordsArg.length) ? recordsArg : [...state.selected.values()];
   if (!records.length) return;
   const cards = [];
 
