@@ -50,8 +50,12 @@
 
     /* sortable header arrows reuse shared thead styling */
     thead th .arrow { color: #2563eb; font-size: 0.72rem; }
-    .cc-alt-link { background: none; border: none; color: #2563eb; font-weight: 600; font-size: 0.82rem; cursor: pointer; padding: 0; text-decoration: underline; }
-    .cc-alt-link:hover { color: #1d4ed8; }
+    /* view-only 'user' role: hide write/export controls (read APIs are open; write APIs stay gated) */
+    body[data-role="user"] .ccEdit,
+    body[data-role="user"] #ccPlaces,
+    body[data-role="user"] #ccEnrich,
+    body[data-role="user"] #ccDownloadSel,
+    body[data-role="user"] #ccDownload { display: none !important; }
 
     /* modal buttons (shared modal-overlay chrome, local button styling) */
     .modal-foot button { appearance: none; border: 1px solid #d1d5db; background: #f8fafc; color: #111827; padding: 9px 16px; border-radius: 10px; font-weight: 650; cursor: pointer; font-size: 0.9rem; }
@@ -60,7 +64,6 @@
     .modal-foot button.primary:hover { background: #1d4ed8; }
     .modal-msg { font-size: 0.84rem; margin: 8px 20px 0; min-height: 1em; }
     .modal-msg.err { color: #b91c1c; } .modal-msg.ok { color: #047857; }
-    #ccAltList { width: 100%; min-height: 220px; padding: 10px 12px; font-size: 0.86rem; font-family: var(--mono, ui-monospace, Consolas, monospace); border: 1px solid #d1d5db; border-radius: 10px; box-sizing: border-box; }
 
     /* clickable rows open the record drawer */
     #ccBody tr { cursor: pointer; }
@@ -171,7 +174,7 @@
           <button id="ccSearch" class="primary" type="button">Search</button>
           <button id="ccReset" class="ghost" type="button">Clear</button>
         </div>
-        <p class="search-hint">Searching <b id="ccTotalIdx">…</b> companies. <button id="ccAltCfg" class="cc-alt-link" type="button" title="Manage the Alternate-Websites pattern list (admin)">⚙ Alternate Websites</button></p>
+        <p class="search-hint">Searching <b id="ccTotalIdx">…</b> companies.</p>
       </aside>
 
       <!-- RIGHT: results -->
@@ -251,21 +254,6 @@
     </div>
   </div>
 
-  <!-- Alternate Websites admin modal -->
-  <div id="ccAltModal" class="modal-overlay" style="display:none">
-    <div class="modal-dialog" style="max-width:520px">
-      <div class="modal-head"><h2>Alternate Websites</h2><button class="modal-close" id="ccAltX" type="button">×</button></div>
-      <div class="modal-body">
-        <p style="font-size:0.85rem;color:#6b7280;margin:0 0 10px">One pattern per line (host or host/path). When a company's Website matches one, it's moved to Alternate Websites and the Website is blanked. Saving requires admin.</p>
-        <textarea id="ccAltList"></textarea>
-      </div>
-      <div class="modal-msg" id="ccAltMsg"></div>
-      <div class="modal-foot">
-        <button id="ccAltCancel" type="button">Cancel</button>
-        <button id="ccAltSave" class="primary" type="button">Save</button>
-      </div>
-    </div>
-  </div>
 
   <script src="/ui/nav.js"></script>
   <script>
@@ -652,30 +640,8 @@
       $('ccEditSave').disabled = false;
     });
 
-    // ---- alternate-websites admin ----
-    function closeAlt() { $('ccAltModal').style.display = 'none'; }
-    $('ccAltCfg').addEventListener('click', async () => {
-      $('ccAltMsg').className = 'modal-msg'; $('ccAltMsg').textContent = 'Loading…'; $('ccAltModal').style.display = 'flex';
-      try { const r = await fetch('/api/companies/alt-websites'); const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status)); $('ccAltList').value = (d.patterns || []).join('\n'); $('ccAltMsg').textContent = ''; }
-      catch (e) { $('ccAltMsg').className = 'modal-msg err'; $('ccAltMsg').textContent = 'Load failed: ' + e.message; }
-    });
-    $('ccAltX').addEventListener('click', closeAlt);
-    $('ccAltCancel').addEventListener('click', closeAlt);
-    $('ccAltModal').addEventListener('click', (e) => { if (e.target.id === 'ccAltModal') closeAlt(); });
-    $('ccAltSave').addEventListener('click', async () => {
-      const patterns = $('ccAltList').value.split('\n').map((s) => s.trim()).filter(Boolean);
-      $('ccAltSave').disabled = true; $('ccAltMsg').className = 'modal-msg'; $('ccAltMsg').textContent = 'Saving…';
-      try {
-        const r = await fetch('/api/companies/alt-websites', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ patterns }) });
-        const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-        $('ccAltMsg').className = 'modal-msg ok'; $('ccAltMsg').textContent = 'Saved ' + d.saved + ' patterns.';
-        setTimeout(closeAlt, 900);
-      } catch (e) { $('ccAltMsg').className = 'modal-msg err'; $('ccAltMsg').textContent = 'Save failed: ' + e.message + (/403/.test(e.message) ? ' (admin only)' : ''); }
-      $('ccAltSave').disabled = false;
-    });
-
     // Esc closes any open modal
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDrawer(); closeEdit(); closeAlt(); } });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDrawer(); closeEdit(); } });
 
     // seed the size facet (counts fill in after first search)
     renderFacet('size', $('facetSize'), [], SIZE_BANDS);

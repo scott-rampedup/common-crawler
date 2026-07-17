@@ -66,6 +66,14 @@
       </section>
 
       <section class="admin-section">
+        <h2>Alternate Websites</h2>
+        <p class="admin-hint">One pattern per line (host or host/path). When a company's Website matches one, the Company-Crawler enricher moves it to that company's <b>Alternate Websites</b> and blanks the Website. e.g. <code>linktr.ee</code>, <code>youtube.com</code>, <code>amazon.com/shop</code>.</p>
+        <textarea id="altList" rows="10" style="width:100%;box-sizing:border-box;font-family:ui-monospace,Consolas,monospace;font-size:0.85rem;padding:10px 12px;border:1px solid #d1d5db;border-radius:10px;"></textarea>
+        <div style="margin-top:10px"><button id="altSave" class="primary" type="button">Save patterns</button></div>
+        <p id="altMsg" class="admin-msg"></p>
+      </section>
+
+      <section class="admin-section">
         <h2>Sitemap Monitor <span id="monBadge" class="pending-badge"></span></h2>
         <p class="admin-hint">Watches the <b>bio-dedicated child sitemaps</b> of the sites you add and, on a schedule, flags new bio URLs as candidate <b>new hires</b> — auto-extracted into the Contact Crawler and tagged <b>NEW HIRE</b> — and removed URLs as departures. Unchanged sitemaps are skipped via <code>&lt;lastmod&gt;</code>, so a pass costs almost nothing.</p>
         <div class="mon-form">

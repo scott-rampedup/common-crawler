@@ -1027,7 +1027,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/company-crawler' || url.pathname === '/company-crawler.html') {
-    if (!isAnalyst) { res.writeHead(302, { Location: '/search' }); res.end(); return; }   // analyst+
+    // view-only 'user' role can browse the Company Crawler; write actions stay analyst+/admin (API-gated + UI-hidden)
     serveStaticFile(res, path.join(PUBLIC_DIR, 'company-crawler.html'));
     return;
   }
@@ -1393,7 +1393,7 @@ const server = http.createServer(async (req, res) => {
     ids: q.get('ids') ? q.get('ids').split(',').filter(Boolean) : undefined,
   });
   if (url.pathname === '/api/companies/search' && req.method === 'GET') {
-    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    // any signed-in user may READ the company index (view-only 'user' role included)
     if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
     const q = url.searchParams;
     const from = Math.max(0, Number(q.get('from')) || 0);
@@ -1404,7 +1404,6 @@ const server = http.createServer(async (req, res) => {
   }
   // Live facet counts (industry / size / country) for the current filter set — drives the sidebar checklists.
   if (url.pathname === '/api/companies/facets' && req.method === 'GET') {
-    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
     try { sendJson(res, await companies.facets(companiesClient, companyFilters(url.searchParams))); }
     catch (e) { jsonErr(res, 500, e.message); }

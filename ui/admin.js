@@ -209,7 +209,22 @@ if ($('monWatches')) {
   $('monEventFilter').addEventListener('change', monLoadChanges);
 }
 
+// ---- Alternate Websites (moved here from the Company Crawler UI) ----
+async function loadAltWebsites() {
+  try { const d = await api('GET', '/api/companies/alt-websites'); if ($('altList')) $('altList').value = (d.patterns || []).join('\n'); }
+  catch (e) { /* companies index may be off; leave blank */ }
+}
+if ($('altSave')) {
+  $('altSave').addEventListener('click', async () => {
+    const patterns = $('altList').value.split('\n').map((s) => s.trim()).filter(Boolean);
+    const msg = $('altMsg'); msg.textContent = 'Saving…'; msg.className = 'admin-msg';
+    try { const d = await api('POST', '/api/companies/alt-websites', { patterns }); msg.textContent = `Saved ${d.saved} pattern(s).`; msg.className = 'admin-msg ok'; }
+    catch (e) { msg.textContent = 'Failed: ' + e.message; msg.className = 'admin-msg err'; }
+  });
+}
+
 loadUsers();
 loadPages();
 loadEmailStatus();
+loadAltWebsites();
 monRefresh();
