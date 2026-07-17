@@ -35,8 +35,10 @@ function fields(r) {
   for (let i = 4; i < si - 1; i++) { const v = clean0(r[i]); if (v && v !== '#N/A' && !/^\d+$/.test(v) && !/^(m|f|male|female|unisex)$/i.test(v) && !/^https?:/i.test(v) && v.length > name.length) name = v; }
   if (!name) name = clean0(r[4]) === '#N/A' ? '' : clean0(r[4]);
   const end = (n) => clean0(r[len - n]);                            // xb_* live at fixed offsets from the end
+  // the cid COLUMN is Excel-mangled (scientific notation) — take the real one from the Maps URL (col 2).
+  const cid = (String(r[2] || '').match(/[?&]cid=(-?\d+)/) || [])[1] || clean0(r[1]);
   return {
-    cid: clean0(r[1]), address: clean0(r[3]), name,
+    cid, address: clean0(r[3]), name,
     status: clean0(r[si]), website_url: clean0(r[si + 1]), website_location: clean0(r[si + 2]),
     category: clean0(r[si + 4]), phone: clean0(r[si - 1]),
     xb_emails: end(18), xb_whatsapp: end(14), xb_facebook: end(13), xb_instagram: end(12),
