@@ -21,8 +21,15 @@ pipeline_run_output.txt
 # image (they're build/staging inputs), and baking them in made the build context
 # ~1GB and the upload crawl. phone-blocks.csv / Sitemap*.csv stay (loaded at runtime).
 *.jsonl
+*.ndjson
 BIO URL Repository.txt
 bio-url-splits/
+# universe-refresh staging (dumps/logs/watermark) + the Lambda deploy package — all local-only,
+# never needed in the Fly image. These bloated the build context to ~1.5GB and stalled deploys.
+_universe/
+logs/
+.universe-state.json
+lambda-build/
 .env
 .env.local
 .claude/
