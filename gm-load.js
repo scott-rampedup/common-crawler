@@ -1,0 +1,134 @@
+/**
+ * gm-load.js — Phase 1 of the Google-Maps -> Company Crawler ETL: parse the Google Maps Contact-Info
+ * CSVs, keep only OPEN businesses that have a website, and transform each into a normalized "Location"
+ * record (Company Crawler field shape) using the shared Common-Crawler logic. Emits:
+ *   - gm-locations.ndjson : one JSON Location record per line (grouped/rolled up in Phase 2)
+ *   - gm-bio-urls.txt     : the validated bio URLs (isBioOrContactUrl) to push into Hop-2 extraction
+ *
+ * The source CSV header is unreliable (43 cols w/ duplicates) but the DATA rows are a clean 37 columns;
+ * we read by fixed position. Fields with commas/quotes/newlines need the streaming state-machine parser.
+ *
+ *   node gm-load.js [--limit N] [--src "../Google Maps"] [--out "../Google Maps"]
+ */
+const fs = require('fs');
+const path = require('path');
+const ex = require('./extractor');
+const co = require('./companies');
+const { rootDomain } = require('./email-model');
+let ccEngine = null; try { ccEngine = require('./cc-engine'); } catch (e) { /* isBioOrContactUrl optional */ }
+
+const arg = (f, d) => { const i = process.argv.indexOf(f); return i > -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : d; };
+const LIMIT = Number(arg('--limit', '0')) || 0;
+const SRC = arg('--src', path.join(__dirname, '..', 'Google Maps'));
+const OUT = arg('--out', SRC);
+
+const clean0 = (s) => String(s == null ? '' : s).trim();
+// The scrapes ship in TWO layouts (clean 37-col + a messy 43-col). Rather than fixed maps, anchor on the
+// status value ("Open"/"Closed"/…) — website/category/phone sit at fixed offsets around it — and read the
+// xb_* enrichment fields from FIXED offsets off the END of the row (identical tail in both layouts).
+const STATUS_RE = /^(Open|Closed|Permanently closed|Temporarily closed)$/i;
+function fields(r) {
+  const len = r.length;
+  const si = r.findIndex((v) => STATUS_RE.test(clean0(v)));
+  if (si < 3 || si + 4 >= len) return null;                         // couldn't locate the status block
+  let name = '';
+  for (let i = 4; i < si - 1; i++) { const v = clean0(r[i]); if (v && v !== '#N/A' && !/^\d+$/.test(v) && !/^(m|f|male|female|unisex)$/i.test(v) && !/^https?:/i.test(v) && v.length > name.length) name = v; }
+  if (!name) name = clean0(r[4]) === '#N/A' ? '' : clean0(r[4]);
+  const end = (n) => clean0(r[len - n]);                            // xb_* live at fixed offsets from the end
+  return {
+    cid: clean0(r[1]), address: clean0(r[3]), name,
+    status: clean0(r[si]), website_url: clean0(r[si + 1]), website_location: clean0(r[si + 2]),
+    category: clean0(r[si + 4]), phone: clean0(r[si - 1]),
+    xb_emails: end(18), xb_whatsapp: end(14), xb_facebook: end(13), xb_instagram: end(12),
+    xb_linkedin_profile: end(8), xb_team_profile_urls: end(5), xb_team_page: end(3), xb_crawled_at: end(1),
+  };
+}
+
+const genderMap = ex.loadGenderMap(path.join(__dirname, 'names-genders.csv'));
+const wbc = require('./wireless-block-classifier');
+let wireless = null; try { wireless = wbc.loadWirelessBlocks(wbc.PHONE_BLOCKS_CSV); console.error('phone-blocks loaded for line-type classification'); } catch (e) { console.error('phone-blocks not loaded -> phone_type blank'); }
+const phoneType = (p) => { if (!wireless || !p) return ''; try { const t = wbc.classifyLineType(p, wireless); return (t && t.type && t.type !== 'Unknown') ? t.type : ''; } catch (e) { return ''; } };
+let dirRules = {}; try { dirRules = ex.loadDirectoryRules(path.join(__dirname, 'data', 'directory-rules.json')); } catch (e) { /* built-in BIO_DIRS still apply */ }
+
+const clean = (s) => String(s == null ? '' : s).trim();
+const abs = (u) => { u = clean(u); return /^https?:/i.test(u) ? u : (u ? 'https://' + u : ''); };
+const splitMulti = (s) => clean(s).split(/\s*\|\|\s*|\s*;\s*|\s*,\s*/).map((x) => x.trim()).filter(Boolean);
+
+const PEOPLE_SUB = new Set(['agent', 'agents', 'advisor', 'advisors', 'realtor', 'realtors', 'provider', 'providers', 'doctor', 'doctors', 'physician', 'physicians']);
+const LOC_SUB = new Set(['location', 'locations', 'store', 'stores', 'bank', 'banks']);
+function websiteType(websiteLocation) {
+  const u = abs(websiteLocation); if (!u) return '';
+  try {
+    const host = new URL(u).hostname.toLowerCase().replace(/^www\./, '');
+    const labels = host.split('.');
+    if (labels.length > 2) { const first = labels[0]; if (PEOPLE_SUB.has(first)) return 'People'; if (LOC_SUB.has(first)) return 'Location'; }
+  } catch (e) { /* fall through */ }
+  try { const pid = ex.pathIdFromUrl(u); if (pid && pid.id) return pid.id; } catch (e) { /* */ }
+  try { const d = ex.classifyDirectory(u, '', dirRules, genderMap); if (d && d !== 'Contact Us') return d; } catch (e) { /* */ }
+  return '';
+}
+const isBio = (u) => { try { return ccEngine ? ccEngine.isBioOrContactUrl(abs(u), dirRules, genderMap) : /\/(team|people|our-team|staff|attorney|agent|advisor|profile|bio|about-us)\//i.test(u); } catch (e) { return false; } };
+
+// ---- streaming CSV state-machine parser (quotes + embedded newlines) ----
+async function eachRecord(file, onRec) {
+  return new Promise((resolve, reject) => {
+    const stream = fs.createReadStream(file, { encoding: 'utf8' });
+    let field = '', row = [], q = false, header = false, stopped = false;
+    const endField = () => { row.push(field); field = ''; };
+    const endRow = () => { endField(); if (!header) header = true; else if (!stopped) { if (onRec(row) === false) { stopped = true; stream.destroy(); } } row = []; };
+    stream.on('data', (chunk) => {
+      if (stopped) return;
+      for (let i = 0; i < chunk.length; i++) {
+        const c = chunk[i];
+        if (q) { if (c === '"') { if (chunk[i + 1] === '"') { field += '"'; i++; } else q = false; } else field += c; }
+        else if (c === '"') q = true;
+        else if (c === ',') endField();
+        else if (c === '\n') { endRow(); if (stopped) break; }
+        else if (c !== '\r') field += c;
+      }
+    });
+    stream.on('close', resolve); stream.on('end', resolve); stream.on('error', reject);
+  });
+}
+
+(async () => {
+  const files = fs.readdirSync(SRC).filter((f) => /\.csv$/i.test(f)).map((f) => path.join(SRC, f));
+  console.error(`source CSVs: ${files.length} | out: ${OUT}`);
+  const locOut = fs.createWriteStream(path.join(OUT, 'gm-locations.ndjson'));
+  const bioSet = new Set();
+  let seen = 0, kept = 0, skippedClosed = 0, skippedNoWeb = 0; const t0 = Date.now();
+
+  for (const file of files) {
+    await eachRecord(file, (r) => {
+      seen++;
+      if (LIMIT && kept >= LIMIT) return false;
+      const f = fields(r);
+      if (!f || f.status !== 'Open') { skippedClosed++; return; }  // skip unparseable + non-Open
+      const webLoc = f.website_location || f.website_url;
+      const dom = co.normDomain(webLoc) || rootDomain(webLoc);
+      if (!dom) { skippedNoWeb++; return; }                       // decision: skip website-less records
+      const bio = splitMulti(f.xb_team_profile_urls).filter(isBio);
+      for (const b of bio) bioSet.add(b);
+      const email = (splitMulti(f.xb_emails)[0] || '').toLowerCase();
+      const out = {
+        company_type: 'Location', root_domain: dom, cid: f.cid,
+        name: f.name, full_address: f.address,
+        website: 'https://' + dom + '/', website_type: websiteType(webLoc),
+        category: f.category,
+        email, email_type: email ? ex.classifyEmail(email) : '',
+        phone: f.phone, phone_type: phoneType(f.phone),
+        whatsapp: f.xb_whatsapp, facebook: f.xb_facebook, instagram: f.xb_instagram,
+        linkedin_contact: splitMulti(f.xb_linkedin_profile).join('; '),
+        bio_url: bio.join('; '), team_page: f.xb_team_page,
+        time_stamp: f.xb_crawled_at,
+      };
+      locOut.write(JSON.stringify(out) + '\n');
+      kept++;
+      if (kept % 50000 === 0) console.error(`  seen ${seen.toLocaleString()} | kept ${kept.toLocaleString()} | ${Math.round(kept / ((Date.now() - t0) / 1000))}/s`);
+    });
+    if (LIMIT && kept >= LIMIT) break;
+  }
+  fs.writeFileSync(path.join(OUT, 'gm-bio-urls.txt'), [...bioSet].join('\n') + '\n');
+  locOut.end();
+  console.error(`DONE: ${seen.toLocaleString()} seen -> ${kept.toLocaleString()} Location records | skipped ${skippedClosed.toLocaleString()} closed + ${skippedNoWeb.toLocaleString()} no-website | ${bioSet.size.toLocaleString()} bio URLs | ${Math.round((Date.now() - t0) / 1000)}s`);
+})().catch((e) => { console.error('ERR', e && e.stack || e); process.exit(1); });
