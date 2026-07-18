@@ -23,8 +23,9 @@ const LIMIT_DOMAINS = Number(arg('--limit-domains', '0')) || 0;
 const CONC = Number(process.env.CONC) || 12;
 if (!IN || !process.env.OPENSEARCH_ENDPOINT) { console.error('need --in <gm-locations.ndjson> + OPENSEARCH_ENDPOINT'); process.exit(1); }
 
-const client = co.makeClient(process.env.OPENSEARCH_ENDPOINT);
+let client = co.makeClient(process.env.OPENSEARCH_ENDPOINT);
 const genderMap = ex.loadGenderMap(path.join(__dirname, 'names-genders.csv'));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---- address -> {city,region,country} (US-biased heuristic) ----
 const COUNTRIES = new Set(['united states', 'usa', 'us', 'united kingdom', 'uk', 'canada', 'australia', 'ireland', 'new zealand', 'india', 'germany']);
@@ -40,13 +41,23 @@ function parseAddr(addr) {
 const splitL = (s) => String(s || '').split(/[\s;]+/).map((x) => x.trim()).filter(Boolean);
 const score = (r) => (r.email ? 2 : 0) + (r.website ? 1 : 0) + (r.phone ? 1 : 0) + (r.bio_url ? 2 : 0) + (r.name ? 1 : 0) + (r.full_address ? 1 : 0);
 
+// Retry hard + reconnect on failure. Crucially: a connection error must NOT be treated as "no match"
+// (that falsely synthesizes an HQ) — after retries it THROWS so the group is skipped, not corrupted.
 async function lookupHQ(domain) {
-  try {
-    const r = await client.search({ index: co.INDEX, body: { size: 1, query: { term: { domain } },
-      _source: ['id', 'name', 'website', 'locality', 'region', 'country', 'phone', 'full_address', 'linkedin_url', 'email', 'facebook', 'instagram', 'bio_url', 'linkedin_contact'] } });
-    const h = (r.body || r).hits.hits[0];
-    return h ? { ...h._source, _id: h._id } : null;
-  } catch (e) { return null; }
+  let last;
+  for (let a = 0; a < 7; a++) {
+    try {
+      const r = await client.search({ index: co.INDEX, body: { size: 1, query: { term: { domain } },
+        _source: ['id', 'name', 'website', 'locality', 'region', 'country', 'phone', 'full_address', 'linkedin_url', 'email', 'facebook', 'instagram', 'bio_url', 'linkedin_contact'] } });
+      const h = (r.body || r).hits.hits[0];
+      return h ? { ...h._source, _id: h._id } : null;                 // genuine result (found or truly no-match)
+    } catch (e) {
+      last = e;
+      if (a === 2 || a === 4) { try { client = co.makeClient(process.env.OPENSEARCH_ENDPOINT); } catch (x) {} }  // rebuild a fresh connection
+      await sleep(Math.min(8000, 300 * 2 ** a));
+    }
+  }
+  throw last;                                                          // give up loudly -> group is skipped, not synthesized
 }
 
 async function processGroup(domain, locs) {
@@ -108,7 +119,7 @@ async function processGroup(domain, locs) {
   const hqW = fs.createWriteStream(path.join(OUT, 'gm-hq.ndjson'));
   const locW = fs.createWriteStream(path.join(OUT, 'gm-loc.ndjson'));
   const conW = fs.createWriteStream(path.join(OUT, 'gm-contacts.ndjson'));
-  let domains = 0, hqNew = 0, hqUpd = 0, childN = 0, conN = 0; const t0 = Date.now();
+  let domains = 0, hqNew = 0, hqUpd = 0, childN = 0, conN = 0, failed = 0; const t0 = Date.now();
 
   // stream sorted, dispatch each completed domain group to a bounded pool
   const rl = readline.createInterface({ input: fs.createReadStream(sorted), crlfDelay: Infinity });
@@ -119,7 +130,7 @@ async function processGroup(domain, locs) {
       hqW.write(JSON.stringify({ id: r.hqId, isNew: r.isNew, doc: r.hqDoc }) + '\n'); r.isNew ? hqNew++ : hqUpd++;
       for (const c of r.childDocs) { locW.write(JSON.stringify({ id: c.cid || ('gm:' + r.domain + ':' + Math.random().toString(36).slice(2)), doc: c }) + '\n'); childN++; }
       for (const ct of r.contacts) { conW.write(JSON.stringify(ct) + '\n'); conN++; }
-    })().catch(() => {}).finally(() => inflight.delete(p));
+    })().catch(() => { failed++; }).finally(() => inflight.delete(p));
     inflight.add(p);
     if (inflight.size >= CONC) await Promise.race(inflight);
   }
@@ -129,7 +140,7 @@ async function processGroup(domain, locs) {
     const dom = line.slice(0, tab); const json = line.slice(tab + 1);
     let o; try { o = JSON.parse(json); } catch { continue; }
     if (dom !== curDom) {
-      if (curDom && group.length) { await dispatch(curDom, group); domains++; if (domains % 20000 === 0) console.error(`  ${domains.toLocaleString()} domains | ${hqUpd} upd + ${hqNew} new HQ | ${childN} loc | ${conN} contacts | ${Math.round(domains / ((Date.now() - t0) / 1000))}/s`); if (LIMIT_DOMAINS && domains >= LIMIT_DOMAINS) { stop = true; break; } }
+      if (curDom && group.length) { await dispatch(curDom, group); domains++; if (domains % 20000 === 0) console.error(`  ${domains.toLocaleString()} domains | ${hqUpd} upd + ${hqNew} new HQ | ${childN} loc | ${conN} contacts | ${failed} failed | ${Math.round(domains / ((Date.now() - t0) / 1000))}/s`); if (LIMIT_DOMAINS && domains >= LIMIT_DOMAINS) { stop = true; break; } }
       curDom = dom; group = [];
     }
     group.push(o);
@@ -138,5 +149,5 @@ async function processGroup(domain, locs) {
   await Promise.all(inflight);
   for (const w of [hqW, locW, conW]) await new Promise((r) => w.end(r));
   try { fs.unlinkSync(tmp); if (!LIMIT_DOMAINS) fs.unlinkSync(sorted); } catch (e) { /* keep for debug */ }
-  console.error(`DONE: ${domains.toLocaleString()} domains -> ${hqUpd.toLocaleString()} HQ updates + ${hqNew.toLocaleString()} synthesized HQ | ${childN.toLocaleString()} child Locations | ${conN.toLocaleString()} contacts | ${Math.round((Date.now() - t0) / 1000)}s`);
+  console.error(`DONE: ${domains.toLocaleString()} domains -> ${hqUpd.toLocaleString()} HQ updates + ${hqNew.toLocaleString()} synthesized HQ | ${childN.toLocaleString()} child Locations | ${conN.toLocaleString()} contacts | ${failed.toLocaleString()} skipped(lookup-fail) | ${Math.round((Date.now() - t0) / 1000)}s`);
 })().catch((e) => { console.error('ERR', e && e.stack || e); process.exit(1); });

@@ -52,15 +52,6 @@ async function loadFile(file, toActions, label) {
 
 (async () => {
   if (!process.env.OPENSEARCH_ENDPOINT) { console.error('OPENSEARCH_ENDPOINT required'); process.exit(1); }
-
-  if (process.argv.includes('--backfill-hq')) {
-    console.error('backfilling company_type=HQ on all existing companies (update_by_query, may take a while)…');
-    const r = await client.updateByQuery({ index: co.INDEX, conflicts: 'proceed', wait_for_completion: false,
-      body: { query: { bool: { must_not: [{ exists: { field: 'company_type' } }] } }, script: { lang: 'painless', source: "ctx._source.company_type='HQ'" } } });
-    console.error('  submitted as task:', (r.body || r).task, '(track: GET _tasks/<task>)');
-  }
-  if (!IN) { console.error('no --in dir; done.'); return; }
-
   const t0 = Date.now();
   // HQ: existing -> partial update (company_type + rollups + location_count); synthesized -> index new
   await loadFile(path.join(IN, 'gm-hq.ndjson'), (o) => o.isNew
@@ -78,6 +69,16 @@ async function loadFile(file, toActions, label) {
         if (doc.email) { buf.push(doc); n++; } if (buf.length >= 2000) await flush(); }
       await flush(); console.error(`  contacts: ${n.toLocaleString()} upserted to Master DB`); }
     else console.error('  (no gm-contacts.ndjson)'); }
+
+  // backfill LAST (retried) so a connection blip on the big 35.6M update_by_query can't abort the GM writes
+  if (process.argv.includes('--backfill-hq')) {
+    console.error('backfilling company_type=HQ on all existing companies (update_by_query, async)…');
+    try {
+      const r = await withRetry(() => client.updateByQuery({ index: co.INDEX, conflicts: 'proceed', wait_for_completion: false, requestTimeout: 120000,
+        body: { query: { bool: { must_not: [{ exists: { field: 'company_type' } }] } }, script: { lang: 'painless', source: "ctx._source.company_type='HQ'" } } }));
+      console.error('  submitted as task:', (r.body || r).task, '(runs server-side; track: GET _tasks/<task>)');
+    } catch (e) { console.error('  backfill submit failed:', e.message, '(re-run: node gm-upsert.js --backfill-hq)'); }
+  }
 
   console.error(`DONE in ${Math.round((Date.now() - t0) / 1000)}s`);
 })().catch((e) => { console.error('ERR', e && e.stack || e); process.exit(1); });
