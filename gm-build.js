@@ -45,36 +45,48 @@ const LI_CO = /linkedin\.com\/(company|school|showcase)\//i;          // company
 const score = (r) => (r.email ? 2 : 0) + (r.website ? 1 : 0) + (r.phone ? 1 : 0) + (r.bio_url ? 2 : 0) + (r.name ? 1 : 0) + (r.full_address ? 1 : 0);
 
 const HQ_SRC = ['id', 'name', 'website', 'domain', 'locality', 'region', 'country', 'phone', 'full_address', 'linkedin_url', 'email', 'facebook', 'instagram', 'bio_url', 'linkedin_contact'];
-// Batch-resolve HQs with msearch: one HTTP round-trip per CHUNK domains instead of one per domain.
-// This is the fix for the 34-hour runs — 1.5M sequential lookups over a flaky link became ~5k batched
-// requests. Same per-domain size:1 term semantics as before. Fails LOUDLY on a dead link after retries
-// (a partial resolve would falsely synthesize HQs), so the whole run aborts rather than corrupting.
+// Resolve one CHUNK of domains via msearch (one HTTP round-trip). Retries+reconnects on a link blip;
+// returns false if the chunk still fails after retries so the caller can DEFER it (never treat a
+// connection error as "no match" — that would false-synthesize an HQ).
+async function resolveChunk(chunk, map) {
+  const body = [];
+  for (const d of chunk) { body.push({ index: co.INDEX }); body.push({ size: 1, query: { term: { domain: d } }, _source: HQ_SRC }); }
+  for (let a = 0; a < 6; a++) {
+    try {
+      const r = await client.msearch({ body });
+      const resps = (r.body || r).responses || [];
+      for (let j = 0; j < chunk.length; j++) {
+        const h = resps[j] && resps[j].hits && resps[j].hits.hits && resps[j].hits.hits[0];
+        if (h) map.set(chunk[j], { ...h._source, _id: h._id });
+      }
+      return true;
+    } catch (e) {
+      if (a === 1 || a === 3) { try { client = co.makeClient(process.env.OPENSEARCH_ENDPOINT); } catch (x) {} }
+      await sleep(Math.min(8000, 300 * 2 ** a));
+    }
+  }
+  return false;
+}
+
+// Batch-resolve HQs with msearch (~6.5k requests for 1.9M domains vs 1.9M sequential lookups = the 34h fix).
+// Resilient to the flaky local->managed link: a chunk that can't resolve is DEFERRED and retried in a later
+// round once the link recovers, so a transient blip no longer aborts a multi-hour run. Only a persistent
+// outage (domains still unresolved after all rounds) throws — a partial resolve would false-synthesize HQs.
 async function batchResolve(domains) {
   const map = new Map();
   const CHUNK = 300;
-  for (let i = 0; i < domains.length; i += CHUNK) {
-    const chunk = domains.slice(i, i + CHUNK);
-    const body = [];
-    for (const d of chunk) { body.push({ index: co.INDEX }); body.push({ size: 1, query: { term: { domain: d } }, _source: HQ_SRC }); }
-    let ok = false, last;
-    for (let a = 0; a < 7 && !ok; a++) {
-      try {
-        const r = await client.msearch({ body });
-        const resps = (r.body || r).responses || [];
-        for (let j = 0; j < chunk.length; j++) {
-          const h = resps[j] && resps[j].hits && resps[j].hits.hits && resps[j].hits.hits[0];
-          if (h) map.set(chunk[j], { ...h._source, _id: h._id });
-        }
-        ok = true;
-      } catch (e) {
-        last = e;
-        if (a === 2 || a === 4) { try { client = co.makeClient(process.env.OPENSEARCH_ENDPOINT); } catch (x) {} }
-        await sleep(Math.min(8000, 300 * 2 ** a));
-      }
+  let pending = domains.slice();
+  for (let round = 0; round < 8 && pending.length; round++) {
+    const deferred = [];
+    for (let i = 0; i < pending.length; i += CHUNK) {
+      const chunk = pending.slice(i, i + CHUNK);
+      if (!(await resolveChunk(chunk, map))) deferred.push(...chunk);   // defer, don't die
+      if ((i / CHUNK) % 50 === 0) console.error(`  round ${round}: ${Math.min(i + CHUNK, pending.length).toLocaleString()}/${pending.length.toLocaleString()} | matched ${map.size.toLocaleString()} | deferred ${deferred.length.toLocaleString()}`);
     }
-    if (!ok) throw last;                                               // give up loudly -> abort, don't under-resolve
-    if ((i / CHUNK) % 25 === 0) console.error(`  resolve ${Math.min(i + CHUNK, domains.length).toLocaleString()}/${domains.length.toLocaleString()} | matched ${map.size.toLocaleString()}`);
+    if (deferred.length) { console.error(`  round ${round}: ${deferred.length.toLocaleString()} domains deferred (link blip) — pausing 20s, rebuilding client, retrying`); await sleep(20000); try { client = co.makeClient(process.env.OPENSEARCH_ENDPOINT); } catch (x) {} }
+    pending = deferred;
   }
+  if (pending.length) throw new Error(`batchResolve: ${pending.length} domains unresolved after 8 rounds — aborting (would false-synthesize)`);
   return map;
 }
 
@@ -133,13 +145,17 @@ function processGroup(domain, locs, hq0) {
 (async () => {
   // ---- external sort by root_domain: write "domain\tline" -> sort -> stream grouped ----
   const tmp = path.join(OUT, '_gm-keyed.tsv'), sorted = path.join(OUT, '_gm-sorted.tsv');
-  console.error('keying by root_domain…');
-  { const w = fs.createWriteStream(tmp); const rl = readline.createInterface({ input: fs.createReadStream(IN), crlfDelay: Infinity });
-    for await (const l of rl) { if (!l.trim()) continue; let o; try { o = JSON.parse(l); } catch { continue; } if (o.root_domain) w.write(o.root_domain + '\t' + l + '\n'); }
-    await new Promise((r) => w.end(r)); }
-  console.error('sorting…');
-  const s = spawnSync('sort', ['-t', '\t', '-k1,1', '-T', OUT, tmp, '-o', sorted], { stdio: 'inherit' });
-  if (s.status !== 0) { console.error('sort failed'); process.exit(1); }
+  if (process.argv.includes('--resume') && fs.existsSync(sorted) && fs.statSync(sorted).size > 0) {
+    console.error(`resuming from existing sorted file (${(fs.statSync(sorted).size / 1e9).toFixed(1)}GB) — skipping key+sort`);
+  } else {
+    console.error('keying by root_domain…');
+    { const w = fs.createWriteStream(tmp); const rl = readline.createInterface({ input: fs.createReadStream(IN), crlfDelay: Infinity });
+      for await (const l of rl) { if (!l.trim()) continue; let o; try { o = JSON.parse(l); } catch { continue; } if (o.root_domain) w.write(o.root_domain + '\t' + l + '\n'); }
+      await new Promise((r) => w.end(r)); }
+    console.error('sorting…');
+    const s = spawnSync('sort', ['-t', '\t', '-k1,1', '-T', OUT, tmp, '-o', sorted], { stdio: 'inherit' });
+    if (s.status !== 0) { console.error('sort failed'); process.exit(1); }
+  }
 
   // ---- pass 1: collect the unique (already-sorted) domain list ----
   console.error('collecting domains…');
