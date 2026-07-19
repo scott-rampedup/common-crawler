@@ -20,7 +20,6 @@ const che = require('./cc-home-enrich');
 const arg = (f, d) => { const i = process.argv.indexOf(f); return i > -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : d; };
 const IN = arg('--in', ''); const OUT = arg('--out', path.dirname(IN || '.'));
 const LIMIT_DOMAINS = Number(arg('--limit-domains', '0')) || 0;
-const CONC = Number(process.env.CONC) || 12;
 if (!IN || !process.env.OPENSEARCH_ENDPOINT) { console.error('need --in <gm-locations.ndjson> + OPENSEARCH_ENDPOINT'); process.exit(1); }
 
 let client = co.makeClient(process.env.OPENSEARCH_ENDPOINT);
@@ -38,34 +37,50 @@ function parseAddr(addr) {
   city = parts[parts.length - 2] || '';
   return { city: city.toLowerCase(), region: region.toLowerCase(), country: (country || '').toLowerCase() };
 }
+// prefer a record's componentized city/region/country (Bing UK) over parsing the free-text address (Google US)
+const crcOf = (r) => (r && (r.region || r.locality)) ? { city: (r.locality || '').toLowerCase(), region: (r.region || '').toLowerCase(), country: (r.country || '').toLowerCase() } : parseAddr(r ? r.full_address : '');
 const splitL = (s) => String(s || '').split(/[\s;]+/).map((x) => x.trim()).filter(Boolean);
 const score = (r) => (r.email ? 2 : 0) + (r.website ? 1 : 0) + (r.phone ? 1 : 0) + (r.bio_url ? 2 : 0) + (r.name ? 1 : 0) + (r.full_address ? 1 : 0);
 
-// Retry hard + reconnect on failure. Crucially: a connection error must NOT be treated as "no match"
-// (that falsely synthesizes an HQ) — after retries it THROWS so the group is skipped, not corrupted.
-async function lookupHQ(domain) {
-  let last;
-  for (let a = 0; a < 7; a++) {
-    try {
-      const r = await client.search({ index: co.INDEX, body: { size: 1, query: { term: { domain } },
-        _source: ['id', 'name', 'website', 'locality', 'region', 'country', 'phone', 'full_address', 'linkedin_url', 'email', 'facebook', 'instagram', 'bio_url', 'linkedin_contact'] } });
-      const h = (r.body || r).hits.hits[0];
-      return h ? { ...h._source, _id: h._id } : null;                 // genuine result (found or truly no-match)
-    } catch (e) {
-      last = e;
-      if (a === 2 || a === 4) { try { client = co.makeClient(process.env.OPENSEARCH_ENDPOINT); } catch (x) {} }  // rebuild a fresh connection
-      await sleep(Math.min(8000, 300 * 2 ** a));
+const HQ_SRC = ['id', 'name', 'website', 'domain', 'locality', 'region', 'country', 'phone', 'full_address', 'linkedin_url', 'email', 'facebook', 'instagram', 'bio_url', 'linkedin_contact'];
+// Batch-resolve HQs with msearch: one HTTP round-trip per CHUNK domains instead of one per domain.
+// This is the fix for the 34-hour runs — 1.5M sequential lookups over a flaky link became ~5k batched
+// requests. Same per-domain size:1 term semantics as before. Fails LOUDLY on a dead link after retries
+// (a partial resolve would falsely synthesize HQs), so the whole run aborts rather than corrupting.
+async function batchResolve(domains) {
+  const map = new Map();
+  const CHUNK = 300;
+  for (let i = 0; i < domains.length; i += CHUNK) {
+    const chunk = domains.slice(i, i + CHUNK);
+    const body = [];
+    for (const d of chunk) { body.push({ index: co.INDEX }); body.push({ size: 1, query: { term: { domain: d } }, _source: HQ_SRC }); }
+    let ok = false, last;
+    for (let a = 0; a < 7 && !ok; a++) {
+      try {
+        const r = await client.msearch({ body });
+        const resps = (r.body || r).responses || [];
+        for (let j = 0; j < chunk.length; j++) {
+          const h = resps[j] && resps[j].hits && resps[j].hits.hits && resps[j].hits.hits[0];
+          if (h) map.set(chunk[j], { ...h._source, _id: h._id });
+        }
+        ok = true;
+      } catch (e) {
+        last = e;
+        if (a === 2 || a === 4) { try { client = co.makeClient(process.env.OPENSEARCH_ENDPOINT); } catch (x) {} }
+        await sleep(Math.min(8000, 300 * 2 ** a));
+      }
     }
+    if (!ok) throw last;                                               // give up loudly -> abort, don't under-resolve
+    if ((i / CHUNK) % 25 === 0) console.error(`  resolve ${Math.min(i + CHUNK, domains.length).toLocaleString()}/${domains.length.toLocaleString()} | matched ${map.size.toLocaleString()}`);
   }
-  throw last;                                                          // give up loudly -> group is skipped, not synthesized
+  return map;
 }
 
-async function processGroup(domain, locs) {
-  const hq0 = await lookupHQ(domain);
+function processGroup(domain, locs, hq0) {
   const rep = locs.reduce((a, b) => (score(b) > score(a) ? b : a), locs[0]);   // most complete Location
   const hqCRC = hq0 && (hq0.locality || hq0.region)
     ? { city: (hq0.locality || '').toLowerCase(), region: (hq0.region || '').toLowerCase(), country: (hq0.country || '').toLowerCase() }
-    : parseAddr(rep.full_address);
+    : crcOf(rep);
 
   // rollup sets (from HQ + every Location)
   const bio = new Set(), li = new Set(), emails = new Set();
@@ -77,7 +92,7 @@ async function processGroup(domain, locs) {
   const children = [];
   for (const loc of locs) {
     if (hq0 == null && loc === rep) continue;                 // rep becomes the synthesized HQ, not a child
-    const crc = parseAddr(loc.full_address);
+    const crc = crcOf(loc);
     const same = crc.city && crc.city === hqCRC.city && crc.region === hqCRC.region;
     if (!same) children.push(loc);
   }
@@ -86,7 +101,7 @@ async function processGroup(domain, locs) {
   const hqDoc = hq0
     ? { company_type: 'HQ' }                                   // enrich the existing company
     : { company_type: 'HQ', name: rep.name, website: rep.website, domain, category: rep.category, full_address: rep.full_address, phone: rep.phone, phone_type: rep.phone_type,
-        website_type: rep.website_type, facebook: rep.facebook, instagram: rep.instagram, whatsapp: rep.whatsapp, cid: rep.cid, time_stamp: rep.time_stamp,
+        website_type: rep.website_type, facebook: rep.facebook, instagram: rep.instagram, whatsapp: rep.whatsapp, cid: rep.cid, time_stamp: rep.time_stamp, source_map: rep.source_map,
         locality: hqCRC.city, region: hqCRC.region, country: hqCRC.country };
   // rolled-up contact fields onto the HQ (dedup already via sets)
   hqDoc.bio_url = [...bio].join('; ');
@@ -116,38 +131,45 @@ async function processGroup(domain, locs) {
   const s = spawnSync('sort', ['-t', '\t', '-k1,1', '-T', OUT, tmp, '-o', sorted], { stdio: 'inherit' });
   if (s.status !== 0) { console.error('sort failed'); process.exit(1); }
 
+  // ---- pass 1: collect the unique (already-sorted) domain list ----
+  console.error('collecting domains…');
+  const domainList = [];
+  { let last = null; const rl0 = readline.createInterface({ input: fs.createReadStream(sorted), crlfDelay: Infinity });
+    for await (const line of rl0) { const tab = line.indexOf('\t'); if (tab < 0) continue; const d = line.slice(0, tab); if (d !== last) { domainList.push(d); last = d; } } }
+  const capped = LIMIT_DOMAINS ? domainList.slice(0, LIMIT_DOMAINS) : domainList;
+  console.error(`${capped.length.toLocaleString()} unique domains — batch-resolving existing HQs (msearch)…`);
+  const hqMap = await batchResolve(capped);
+  console.error(`resolved ${hqMap.size.toLocaleString()} existing HQs | ${(capped.length - hqMap.size).toLocaleString()} will synthesize`);
+
+  // ---- pass 2: stream groups, process each with its pre-resolved HQ (CPU-only, no per-group network) ----
   const hqW = fs.createWriteStream(path.join(OUT, 'gm-hq.ndjson'));
   const locW = fs.createWriteStream(path.join(OUT, 'gm-loc.ndjson'));
   const conW = fs.createWriteStream(path.join(OUT, 'gm-contacts.ndjson'));
   let domains = 0, hqNew = 0, hqUpd = 0, childN = 0, conN = 0, failed = 0; const t0 = Date.now();
-
-  // stream sorted, dispatch each completed domain group to a bounded pool
-  const rl = readline.createInterface({ input: fs.createReadStream(sorted), crlfDelay: Infinity });
-  let curDom = null, group = []; const inflight = new Set(); let stop = false;
-  async function dispatch(domain, locs) {
-    const p = (async () => {
-      const r = await processGroup(domain, locs);
+  const flush = (dom, locs) => {
+    try {
+      const r = processGroup(dom, locs, hqMap.get(dom) || null);
       hqW.write(JSON.stringify({ id: r.hqId, isNew: r.isNew, doc: r.hqDoc }) + '\n'); r.isNew ? hqNew++ : hqUpd++;
-      for (const c of r.childDocs) { locW.write(JSON.stringify({ id: c.cid || ('gm:' + r.domain + ':' + Math.random().toString(36).slice(2)), doc: c }) + '\n'); childN++; }
+      for (const c of r.childDocs) { locW.write(JSON.stringify({ id: c.cid || ('gm:' + r.domain + ':' + childN), doc: c }) + '\n'); childN++; }
       for (const ct of r.contacts) { conW.write(JSON.stringify(ct) + '\n'); conN++; }
-    })().catch(() => { failed++; }).finally(() => inflight.delete(p));
-    inflight.add(p);
-    if (inflight.size >= CONC) await Promise.race(inflight);
-  }
+    } catch (e) { failed++; }
+  };
+
+  const rl = readline.createInterface({ input: fs.createReadStream(sorted), crlfDelay: Infinity });
+  let curDom = null, group = []; let stop = false;
   for await (const line of rl) {
     if (stop) break;
     const tab = line.indexOf('\t'); if (tab < 0) continue;
     const dom = line.slice(0, tab); const json = line.slice(tab + 1);
     let o; try { o = JSON.parse(json); } catch { continue; }
     if (dom !== curDom) {
-      if (curDom && group.length) { await dispatch(curDom, group); domains++; if (domains % 20000 === 0) console.error(`  ${domains.toLocaleString()} domains | ${hqUpd} upd + ${hqNew} new HQ | ${childN} loc | ${conN} contacts | ${failed} failed | ${Math.round(domains / ((Date.now() - t0) / 1000))}/s`); if (LIMIT_DOMAINS && domains >= LIMIT_DOMAINS) { stop = true; break; } }
+      if (curDom && group.length) { flush(curDom, group); domains++; if (domains % 50000 === 0) console.error(`  ${domains.toLocaleString()} domains | ${hqUpd} upd + ${hqNew} new HQ | ${childN} loc | ${conN} contacts | ${failed} failed | ${Math.round(domains / ((Date.now() - t0) / 1000))}/s`); if (LIMIT_DOMAINS && domains >= LIMIT_DOMAINS) { stop = true; break; } }
       curDom = dom; group = [];
     }
     group.push(o);
   }
-  if (!stop && curDom && group.length) { await dispatch(curDom, group); domains++; }
-  await Promise.all(inflight);
+  if (!stop && curDom && group.length) { flush(curDom, group); domains++; }
   for (const w of [hqW, locW, conW]) await new Promise((r) => w.end(r));
   try { fs.unlinkSync(tmp); if (!LIMIT_DOMAINS) fs.unlinkSync(sorted); } catch (e) { /* keep for debug */ }
-  console.error(`DONE: ${domains.toLocaleString()} domains -> ${hqUpd.toLocaleString()} HQ updates + ${hqNew.toLocaleString()} synthesized HQ | ${childN.toLocaleString()} child Locations | ${conN.toLocaleString()} contacts | ${failed.toLocaleString()} skipped(lookup-fail) | ${Math.round((Date.now() - t0) / 1000)}s`);
+  console.error(`DONE: ${domains.toLocaleString()} domains -> ${hqUpd.toLocaleString()} HQ updates + ${hqNew.toLocaleString()} synthesized HQ | ${childN.toLocaleString()} child Locations | ${conN.toLocaleString()} contacts | ${failed.toLocaleString()} skipped | ${Math.round((Date.now() - t0) / 1000)}s`);
 })().catch((e) => { console.error('ERR', e && e.stack || e); process.exit(1); });

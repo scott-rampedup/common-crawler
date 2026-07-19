@@ -23,7 +23,10 @@ async function withRetry(fn) { for (let a = 0; ; a++) { try { return await fn();
 const CC = (g) => ({ name: g.name || '', website: g.website || '', category: g.category || '', full_address: g.full_address || '',
   phone: g.phone || '', phone_type: g.phone_type || '', website_type: g.website_type || '', facebook: g.facebook || '', instagram: g.instagram || '',
   whatsapp: g.whatsapp || '', cid: g.cid || '', team_page: g.team_page || '', bio_url: g.bio_url || '', linkedin_contact: g.linkedin_contact || '',
-  email: g.email || '', email_type: g.email_type || '' });
+  email: g.email || '', email_type: g.email_type || '',
+  // componentized geo (Bing UK carries these) + provenance; Google leaves them blank and keeps full_address
+  ...(g.locality ? { locality: g.locality } : {}), ...(g.region ? { region: g.region } : {}), ...(g.country ? { country: g.country } : {}),
+  ...(g.time_stamp ? { time_stamp: g.time_stamp } : {}), ...(g.source_map ? { source_map: g.source_map } : {}) });
 const locToDoc = (g) => ({ id: g.cid || ('gm:' + g.root_domain), domain: g.root_domain, company_type: 'Location', cc_refreshed_at: now, ...CC(g) });
 const hqNewToDoc = (id, d) => ({ id, domain: d.domain, company_type: 'HQ', locality: d.locality || '', region: d.region || '', country: d.country || '',
   location_count: d.location_count || 0, cc_refreshed_at: now, ...CC(d) });
