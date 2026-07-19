@@ -40,6 +40,8 @@ function parseAddr(addr) {
 // prefer a record's componentized city/region/country (Bing UK) over parsing the free-text address (Google US)
 const crcOf = (r) => (r && (r.region || r.locality)) ? { city: (r.locality || '').toLowerCase(), region: (r.region || '').toLowerCase(), country: (r.country || '').toLowerCase() } : parseAddr(r ? r.full_address : '');
 const splitL = (s) => String(s || '').split(/[\s;]+/).map((x) => x.trim()).filter(Boolean);
+const LI_IN = /linkedin\.com\/in\//i;                                 // personal profile  -> linkedin_contact
+const LI_CO = /linkedin\.com\/(company|school|showcase)\//i;          // company page      -> linkedin_url
 const score = (r) => (r.email ? 2 : 0) + (r.website ? 1 : 0) + (r.phone ? 1 : 0) + (r.bio_url ? 2 : 0) + (r.name ? 1 : 0) + (r.full_address ? 1 : 0);
 
 const HQ_SRC = ['id', 'name', 'website', 'domain', 'locality', 'region', 'country', 'phone', 'full_address', 'linkedin_url', 'email', 'facebook', 'instagram', 'bio_url', 'linkedin_contact'];
@@ -82,10 +84,17 @@ function processGroup(domain, locs, hq0) {
     ? { city: (hq0.locality || '').toLowerCase(), region: (hq0.region || '').toLowerCase(), country: (hq0.country || '').toLowerCase() }
     : crcOf(rep);
 
-  // rollup sets (from HQ + every Location)
-  const bio = new Set(), li = new Set(), emails = new Set();
-  const collect = (r) => { splitL(r.bio_url).forEach((u) => bio.add(u)); splitL(r.linkedin_contact).forEach((u) => li.add(u)); if (r.email) emails.add(r.email); };
-  if (hq0) { collect(hq0); if (hq0.linkedin_url) li.add(hq0.linkedin_url); }
+  // rollup sets (from HQ + every Location). Keep the two LinkedIn kinds STRICTLY apart:
+  //   li   = personal profiles (linkedin.com/in)     -> linkedin_contact  (+ person contacts)
+  //   coLi = company pages     (linkedin.com/company) -> linkedin_url      (company-level, NOT a contact)
+  const bio = new Set(), li = new Set(), coLi = new Set(), emails = new Set();
+  const collect = (r) => {
+    splitL(r.bio_url).forEach((u) => bio.add(u));
+    splitL(r.linkedin_contact).forEach((u) => { if (LI_IN.test(u)) li.add(u); });
+    splitL(r.linkedin_url).forEach((u) => { if (LI_CO.test(u)) coLi.add(u); });   // hq0 (PDL) or GM company page
+    if (r.email) emails.add(r.email);
+  };
+  if (hq0) collect(hq0);
   locs.forEach(collect);
 
   // merge (same City+Region as HQ) vs keep as child
@@ -105,12 +114,13 @@ function processGroup(domain, locs, hq0) {
         locality: hqCRC.city, region: hqCRC.region, country: hqCRC.country };
   // rolled-up contact fields onto the HQ (dedup already via sets)
   hqDoc.bio_url = [...bio].join('; ');
-  hqDoc.linkedin_contact = [...li].join('; ');
+  hqDoc.linkedin_contact = [...li].join('; ');       // personal profiles (linkedin.com/in)
+  hqDoc.linkedin_url = [...coLi].join('; ');         // company page (linkedin.com/company)
   if (emails.size) { hqDoc.email = [...emails][0]; hqDoc.email_type = ex.classifyEmail([...emails][0]); }
   hqDoc.location_count = locs.length;
 
-  // strip the rolled-up fields off the child Location records
-  const childDocs = children.map((c) => ({ ...c, bio_url: '', linkedin_contact: '', email: '', email_type: '' }));
+  // strip the rolled-up fields off the child Location records (all roll up to the HQ)
+  const childDocs = children.map((c) => ({ ...c, bio_url: '', linkedin_contact: '', linkedin_url: '', email: '', email_type: '' }));
 
   // Phase 5 — contacts from the HQ's rolled-up signals
   let contacts = [];

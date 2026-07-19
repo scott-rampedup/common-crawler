@@ -22,7 +22,8 @@ async function withRetry(fn) { for (let a = 0; ; a++) { try { return await fn();
 
 const CC = (g) => ({ name: g.name || '', website: g.website || '', category: g.category || '', full_address: g.full_address || '',
   phone: g.phone || '', phone_type: g.phone_type || '', website_type: g.website_type || '', facebook: g.facebook || '', instagram: g.instagram || '',
-  whatsapp: g.whatsapp || '', cid: g.cid || '', team_page: g.team_page || '', bio_url: g.bio_url || '', linkedin_contact: g.linkedin_contact || '',
+  whatsapp: g.whatsapp || '', cid: g.cid || '', team_page: g.team_page || '', bio_url: g.bio_url || '',
+  linkedin_contact: g.linkedin_contact || '', linkedin_url: g.linkedin_url || '',   // /in vs /company kept distinct
   email: g.email || '', email_type: g.email_type || '',
   // componentized geo (Bing UK carries these) + provenance; Google leaves them blank and keeps full_address
   ...(g.locality ? { locality: g.locality } : {}), ...(g.region ? { region: g.region } : {}), ...(g.country ? { country: g.country } : {}),
@@ -59,7 +60,7 @@ async function loadFile(file, toActions, label) {
   // HQ: existing -> partial update (company_type + rollups + location_count); synthesized -> index new
   await loadFile(path.join(IN, 'gm-hq.ndjson'), (o) => o.isNew
     ? [{ index: { _index: co.INDEX, _id: o.id } }, hqNewToDoc(o.id, o.doc)]
-    : [{ update: { _index: co.INDEX, _id: o.id } }, { doc: { company_type: 'HQ', location_count: o.doc.location_count || 0, bio_url: o.doc.bio_url || '', linkedin_contact: o.doc.linkedin_contact || '', ...(o.doc.email ? { email: o.doc.email, email_type: o.doc.email_type || '' } : {}) } }], 'HQ');
+    : [{ update: { _index: co.INDEX, _id: o.id } }, { doc: { company_type: 'HQ', location_count: o.doc.location_count || 0, bio_url: o.doc.bio_url || '', linkedin_contact: o.doc.linkedin_contact || '', ...(o.doc.linkedin_url ? { linkedin_url: o.doc.linkedin_url } : {}), ...(o.doc.email ? { email: o.doc.email, email_type: o.doc.email_type || '' } : {}) } }], 'HQ');
   // child Locations -> index by cid (dedupes the same business across scrape dates)
   await loadFile(path.join(IN, 'gm-loc.ndjson'), (o) => { const d = locToDoc(o.doc); return [{ index: { _index: co.INDEX, _id: d.id } }, d]; }, 'Locations');
   // contacts -> score-gated upsert into the Master DB (email-keyed)

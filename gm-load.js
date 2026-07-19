@@ -42,7 +42,7 @@ function fields(r) {
     status: clean0(r[si]), website_url: clean0(r[si + 1]), website_location: clean0(r[si + 2]),
     category: clean0(r[si + 4]), phone: clean0(r[si - 1]),
     xb_emails: end(18), xb_whatsapp: end(14), xb_facebook: end(13), xb_instagram: end(12),
-    xb_linkedin_profile: end(8), xb_team_profile_urls: end(5), xb_team_page: end(3), xb_crawled_at: end(1),
+    xb_linkedin_company: end(9), xb_linkedin_profile: end(8), xb_team_profile_urls: end(5), xb_team_page: end(3), xb_crawled_at: end(1),
   };
 }
 
@@ -55,6 +55,13 @@ let dirRules = {}; try { dirRules = ex.loadDirectoryRules(path.join(__dirname, '
 const clean = (s) => String(s == null ? '' : s).trim();
 const abs = (u) => { u = clean(u); return /^https?:/i.test(u) ? u : (u ? 'https://' + u : ''); };
 const splitMulti = (s) => clean(s).split(/\s*\|\|\s*|\s*;\s*|\s*,\s*/).map((x) => x.trim()).filter(Boolean);
+// LinkedIn Contact = personal profile (linkedin.com/in, from xb_linkedin_profile);
+// LinkedIn URL = company page (linkedin.com/company, from xb_linkedin_company). Enforce BOTH the
+// source column AND the URL shape so the two never cross-contaminate.
+const LI_IN = /linkedin\.com\/in\//i;
+const LI_CO = /linkedin\.com\/(company|school|showcase)\//i;
+const liProfiles = (s) => splitMulti(s).filter((u) => LI_IN.test(u));
+const liCompanies = (s) => splitMulti(s).filter((u) => LI_CO.test(u));
 
 const PEOPLE_SUB = new Set(['agent', 'agents', 'advisor', 'advisors', 'realtor', 'realtors', 'provider', 'providers', 'doctor', 'doctors', 'physician', 'physicians']);
 const LOC_SUB = new Set(['location', 'locations', 'store', 'stores', 'bank', 'banks']);
@@ -120,7 +127,8 @@ async function eachRecord(file, onRec) {
         email, email_type: email ? ex.classifyEmail(email) : '',
         phone: f.phone, phone_type: phoneType(f.phone),
         whatsapp: f.xb_whatsapp, facebook: f.xb_facebook, instagram: f.xb_instagram,
-        linkedin_contact: splitMulti(f.xb_linkedin_profile).join('; '),
+        linkedin_contact: liProfiles(f.xb_linkedin_profile).join('; '),   // personal profiles (linkedin.com/in)
+        linkedin_url: liCompanies(f.xb_linkedin_company).join('; '),      // company page (linkedin.com/company)
         bio_url: bio.join('; '), team_page: f.xb_team_page,
         time_stamp: f.xb_crawled_at,
       };
