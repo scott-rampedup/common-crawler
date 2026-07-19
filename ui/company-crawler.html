@@ -137,6 +137,13 @@
               <option value="Location">Location only (Google Maps)</option>
             </select>
           </label>
+          <label>Website Type
+            <input id="fWebsiteType" type="search" list="websiteTypes" placeholder="e.g. People, Location, BIO URL" />
+            <datalist id="websiteTypes">
+              <option value="Company"></option><option value="People"></option><option value="Location"></option>
+              <option value="BIO URL"></option><option value="Directory"></option><option value="Contacts"></option>
+            </datalist>
+          </label>
 
           <div class="facet" data-field="industry">
             <div class="facet-h"><b>Industry</b></div>
@@ -301,6 +308,7 @@
         founded_min: $('fFoundedMin').value.trim(), founded_max: $('fFoundedMax').value.trim(),
         contactMin: $('fContactMin').value.trim(), sitemap: $('fSitemap').value.trim(),
         companyType: $('fCompanyType').value,
+        websiteType: $('fWebsiteType').value.trim(),
         linkedin: $('fLinkedin').checked ? 'yes' : '',
       };
     }
@@ -492,7 +500,7 @@
     }
 
     function reset() {
-      ['fName','fDomain','fRegion','fLocality','fFoundedMin','fFoundedMax','fContactMin','fSitemap','addIndustry','addCountry'].forEach((i) => { $(i).value = ''; });
+      ['fName','fDomain','fRegion','fLocality','fFoundedMin','fFoundedMax','fContactMin','fSitemap','addIndustry','addCountry','fWebsiteType'].forEach((i) => { $(i).value = ''; });
       $('fCompanyType').value = '';
       $('fLinkedin').checked = false;
       sel.industry.clear(); sel.size.clear(); sel.country.clear();

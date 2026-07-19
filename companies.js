@@ -9,10 +9,11 @@
 const os = require('./opensearch');
 
 const INDEX = process.env.COMPANIES_INDEX || 'companies';
-const OUT_COLS = ['name', 'website', 'domain', 'contact_count', 'sitemap_url', 'industry', 'size', 'founded',
-  'locality', 'region', 'country', 'linkedin_url', 'phone', 'full_address', 'category', 'cid',
-  'description', 'email', 'email_type', 'facebook', 'instagram', 'map', 'linkedin_contact', 'bio_url',
-  'alternate_websites', 'contacts', 'contacts_count'];
+const OUT_COLS = ['name', 'website', 'domain', 'company_type', 'website_type', 'location_count',
+  'contact_count', 'sitemap_url', 'industry', 'size', 'founded',
+  'locality', 'region', 'country', 'linkedin_url', 'phone', 'phone_type', 'full_address', 'category', 'cid',
+  'description', 'email', 'email_type', 'facebook', 'instagram', 'whatsapp', 'linkedin_contact', 'bio_url', 'team_page',
+  'source_map', 'cc_refreshed_at', 'map', 'alternate_websites', 'contacts', 'contacts_count'];
 // CC home-page enrichment fields (populated by cc-home-enrich via /api/companies/cc-enrich).
 const CC_FIELDS = ['description', 'email', 'email_type', 'facebook', 'instagram', 'map', 'linkedin_contact', 'bio_url', 'alternate_websites', 'contacts', 'contacts_count'];
 
@@ -94,6 +95,7 @@ function buildQuery(f) {
   // sitemap search: users type a sitemap URL or a domain — match on the (shared) root domain either way
   if (f.sitemap) { const d = normDomain(f.sitemap); if (d) filter.push({ term: { domain: d } }); }
   if (f.companyType) filter.push({ term: { 'company_type.keyword': String(f.companyType) } });   // HQ | Location (Google Maps)
+  if (f.websiteType) filter.push({ match_phrase: { website_type: String(f.websiteType) } });      // People | Location | BIO URL | Company | … (case-insensitive)
   if (Array.isArray(f.ids) && f.ids.length) filter.push({ ids: { values: f.ids.slice(0, 10000) } });
   if (!must.length && !filter.length) return { match_all: {} };
   return { bool: { must: must.length ? must : undefined, filter: filter.length ? filter : undefined } };
@@ -229,10 +231,11 @@ function prettyRow(d) {
 const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
 function rowToCsvLine(d0) {
   const d = prettyRow(d0);
-  return [d.name, d.website, d.domain, d.contact_count || 0, effectiveSitemap(d0), d.industry, d.size, d.founded,
-    d.locality, d.region, d.country, d.linkedin_url, d.phone, d.full_address, d.category, d.cid,
-    d.description, d.email, d.email_type, d.facebook, d.instagram, d.map, d.linkedin_contact, d.bio_url,
-    d.alternate_websites, d.contacts, d.contacts_count || 0].map(esc).join(',');
+  return [d.name, d.website, d.domain, d.company_type, d.website_type, d.location_count || 0,
+    d.contact_count || 0, effectiveSitemap(d0), d.industry, d.size, d.founded,
+    d.locality, d.region, d.country, d.linkedin_url, d.phone, d.phone_type, d.full_address, d.category, d.cid,
+    d.description, d.email, d.email_type, d.facebook, d.instagram, d.whatsapp, d.linkedin_contact, d.bio_url, d.team_page,
+    d.source_map, d.cc_refreshed_at, d.map, d.alternate_websites, d.contacts, d.contacts_count || 0].map(esc).join(',');
 }
 const csvHeader = () => OUT_COLS.join(',');
 
