@@ -130,6 +130,13 @@
           <label>Website / domain
             <input id="fDomain" type="search" placeholder="e.g. bakertilly.com" />
           </label>
+          <label>Company Type
+            <select id="fCompanyType">
+              <option value="">All (HQ + Location)</option>
+              <option value="HQ">HQ only</option>
+              <option value="Location">Location only (Google Maps)</option>
+            </select>
+          </label>
 
           <div class="facet" data-field="industry">
             <div class="facet-h"><b>Industry</b></div>
@@ -293,6 +300,7 @@
         region: $('fRegion').value.trim(), locality: $('fLocality').value.trim(),
         founded_min: $('fFoundedMin').value.trim(), founded_max: $('fFoundedMax').value.trim(),
         contactMin: $('fContactMin').value.trim(), sitemap: $('fSitemap').value.trim(),
+        companyType: $('fCompanyType').value,
         linkedin: $('fLinkedin').checked ? 'yes' : '',
       };
     }
@@ -485,6 +493,7 @@
 
     function reset() {
       ['fName','fDomain','fRegion','fLocality','fFoundedMin','fFoundedMax','fContactMin','fSitemap','addIndustry','addCountry'].forEach((i) => { $(i).value = ''; });
+      $('fCompanyType').value = '';
       $('fLinkedin').checked = false;
       sel.industry.clear(); sel.size.clear(); sel.country.clear();
       sortState.col = ''; sortState.dir = 'asc'; selected.clear(); updateSel();
@@ -562,6 +571,9 @@
       $('drSub').innerHTML = d.website ? asLink(d.website, d.website) : (d.domain ? esc(d.domain) : '');
       let h = '';
       h += drSec('Firmographics',
+        drRow('Company Type', d.company_type ? '<span class="cc-pill">' + esc(d.company_type) + '</span>' : '') +
+        drRow('Locations', d.location_count ? esc(String(d.location_count)) : '') +
+        drRow('Website Type', d.website_type ? esc(d.website_type) : '') +
         drRow('Industry', d.industry ? esc(tc(d.industry)) : '') +
         drRow('Employees', d.size ? '<span class="cc-pill">' + esc(d.size) + '</span>' : '') +
         drRow('Founded', d.founded ? esc(d.founded) : '') +
@@ -573,6 +585,7 @@
         drRow('Address', d.full_address ? esc(d.full_address) : '') +
         drRow('Email', d.email ? ('<a href="mailto:' + esc(d.email) + '">' + esc(d.email) + '</a>' + (d.email_type ? ' <span class="dr-tag">' + esc(d.email_type) + '</span>' : '')) : '') +
         drRow('Category', d.category ? esc(tc(d.category)) : '') +
+        drRow('Team page', d.team_page ? asLink(d.team_page, 'Team page') : '') +
         drRow('Facebook', d.facebook ? asLink(d.facebook, 'Facebook') : '') +
         drRow('Instagram', d.instagram ? asLink(d.instagram, 'Instagram') : '') +
         drRow('Map', d.map ? asLink(d.map, 'Open map') : ''));

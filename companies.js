@@ -93,6 +93,7 @@ function buildQuery(f) {
   if (f.contactMin) filter.push({ range: { contact_count: { gte: Number(f.contactMin) } } });
   // sitemap search: users type a sitemap URL or a domain — match on the (shared) root domain either way
   if (f.sitemap) { const d = normDomain(f.sitemap); if (d) filter.push({ term: { domain: d } }); }
+  if (f.companyType) filter.push({ term: { 'company_type.keyword': String(f.companyType) } });   // HQ | Location (Google Maps)
   if (Array.isArray(f.ids) && f.ids.length) filter.push({ ids: { values: f.ids.slice(0, 10000) } });
   if (!must.length && !filter.length) return { match_all: {} };
   return { bool: { must: must.length ? must : undefined, filter: filter.length ? filter : undefined } };

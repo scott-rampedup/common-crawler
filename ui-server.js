@@ -1389,7 +1389,7 @@ const server = http.createServer(async (req, res) => {
     name: q.get('name'), domain: q.get('domain'), industry: q.get('industry'), size: q.get('size'),
     country: q.get('country'), region: q.get('region'), locality: q.get('locality'),
     founded_min: q.get('founded_min'), founded_max: q.get('founded_max'), linkedin: q.get('linkedin'),
-    contactMin: q.get('contactMin'), sitemap: q.get('sitemap'),
+    contactMin: q.get('contactMin'), sitemap: q.get('sitemap'), companyType: q.get('companyType'),
     ids: q.get('ids') ? q.get('ids').split(',').filter(Boolean) : undefined,
   });
   if (url.pathname === '/api/companies/search' && req.method === 'GET') {

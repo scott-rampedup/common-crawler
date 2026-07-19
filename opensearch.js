@@ -219,8 +219,9 @@ function buildQuery(o = {}) {
 function sortFor(o = {}) {
   let col = colName(o.sort || ''); if (o.sort === 'Domain') col = 'domain';
   if (SORTABLE[col]) return [{ [SORTABLE[col]]: { order: Number(o.dir) === -1 ? 'desc' : 'asc', missing: '_last' } }];
-  // Default: newest-scanned first (updated_at is an ISO string / date).
-  return [{ updated_at: { order: Number(o.dir) === -1 ? 'asc' : 'desc', missing: '_last' } }];
+  // Default view: NEW HIRES (Sitemap Monitor) first, then newest-scanned. So each morning's fresh
+  // new-hire detections surface at the top of the Contact Crawler.
+  return [{ new_hire: { order: 'desc', missing: '_last' } }, { updated_at: { order: Number(o.dir) === -1 ? 'asc' : 'desc', missing: '_last' } }];
 }
 
 async function search(client, o = {}) {
@@ -286,6 +287,7 @@ function recordToDoc(rec, updatedAt) {
   doc.domain = rec['Domain'] || '';
   doc.company = rec['Domain'] || doc.company || '';
   doc.score = recordScore(rec);
+  doc.new_hire = rec['Source'] === 'Sitemap Monitor';   // drives the default "new hires first" sort
   doc.updated_at = updatedAt || null;
   return doc;
 }
