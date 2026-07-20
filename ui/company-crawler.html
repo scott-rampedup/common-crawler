@@ -144,6 +144,9 @@
               <option value="BIO URL"></option><option value="Directory"></option><option value="Contacts"></option>
             </datalist>
           </label>
+          <label>NAICS (code or title)
+            <input id="fNaics" type="search" placeholder="e.g. 722511 or Restaurants" />
+          </label>
 
           <div class="facet" data-field="industry">
             <div class="facet-h"><b>Industry</b></div>
@@ -309,6 +312,7 @@
         contactMin: $('fContactMin').value.trim(), sitemap: $('fSitemap').value.trim(),
         companyType: $('fCompanyType').value,
         websiteType: $('fWebsiteType').value.trim(),
+        naics: $('fNaics').value.trim(),
         linkedin: $('fLinkedin').checked ? 'yes' : '',
       };
     }
@@ -500,7 +504,7 @@
     }
 
     function reset() {
-      ['fName','fDomain','fRegion','fLocality','fFoundedMin','fFoundedMax','fContactMin','fSitemap','addIndustry','addCountry','fWebsiteType'].forEach((i) => { $(i).value = ''; });
+      ['fName','fDomain','fRegion','fLocality','fFoundedMin','fFoundedMax','fContactMin','fSitemap','addIndustry','addCountry','fWebsiteType','fNaics'].forEach((i) => { $(i).value = ''; });
       $('fCompanyType').value = '';
       $('fLinkedin').checked = false;
       sel.industry.clear(); sel.size.clear(); sel.country.clear();
@@ -582,6 +586,8 @@
         drRow('Company Type', d.company_type ? '<span class="cc-pill">' + esc(d.company_type) + '</span>' : '') +
         drRow('Locations', d.location_count ? esc(String(d.location_count)) : '') +
         drRow('Website Type', d.website_type ? esc(d.website_type) : '') +
+        drRow('Category', d.category ? esc(d.category) : '') +
+        drRow('NAICS', d.naics_code ? esc(d.naics_code + (d.naics_title ? ' — ' + d.naics_title : '')) : '') +
         drRow('Industry', d.industry ? esc(tc(d.industry)) : '') +
         drRow('Employees', d.size ? '<span class="cc-pill">' + esc(d.size) + '</span>' : '') +
         drRow('Founded', d.founded ? esc(d.founded) : '') +

@@ -11,7 +11,7 @@ const os = require('./opensearch');
 const INDEX = process.env.COMPANIES_INDEX || 'companies';
 const OUT_COLS = ['name', 'website', 'domain', 'company_type', 'website_type', 'location_count',
   'contact_count', 'sitemap_url', 'industry', 'size', 'founded',
-  'locality', 'region', 'country', 'linkedin_url', 'phone', 'phone_type', 'full_address', 'category', 'cid',
+  'locality', 'region', 'country', 'linkedin_url', 'phone', 'phone_type', 'full_address', 'category', 'naics_code', 'naics_title', 'cid',
   'description', 'email', 'email_type', 'facebook', 'instagram', 'whatsapp', 'linkedin_contact', 'bio_url', 'team_page',
   'source_map', 'cc_refreshed_at', 'map', 'alternate_websites', 'contacts', 'contacts_count'];
 // CC home-page enrichment fields (populated by cc-home-enrich via /api/companies/cc-enrich).
@@ -34,6 +34,8 @@ const MAPPING = {
       linkedin_url: { type: 'keyword' },
       contact_count: { type: 'integer' },   // # contacts sharing this root domain (set by count-sitemap batch)
       sitemap_url:   { type: 'keyword' },    // discovered bio sitemap (else render constructs {domain}/sitemap.xml)
+      naics_code:   { type: 'keyword' },                                 // NAICS 6 code from category (or industry) via naics-enrich
+      naics_title:  { type: 'text', fields: { kw: { type: 'keyword' } } },
     },
   },
 };
@@ -96,6 +98,8 @@ function buildQuery(f) {
   if (f.sitemap) { const d = normDomain(f.sitemap); if (d) filter.push({ term: { domain: d } }); }
   if (f.companyType) filter.push({ term: { 'company_type.keyword': String(f.companyType) } });   // HQ | Location (Google Maps)
   if (f.websiteType) filter.push({ match_phrase: { website_type: String(f.websiteType) } });      // People | Location | BIO URL | Company | … (case-insensitive)
+  if (f.naics) { const s = String(f.naics).trim(); filter.push({ bool: { should: [   // NAICS code (exact) OR title (phrase)
+    { term: { naics_code: s } }, { term: { 'naics_code.keyword': s } }, { match_phrase: { naics_title: s } }], minimum_should_match: 1 } }); }
   if (Array.isArray(f.ids) && f.ids.length) filter.push({ ids: { values: f.ids.slice(0, 10000) } });
   if (!must.length && !filter.length) return { match_all: {} };
   return { bool: { must: must.length ? must : undefined, filter: filter.length ? filter : undefined } };
@@ -233,7 +237,7 @@ function rowToCsvLine(d0) {
   const d = prettyRow(d0);
   return [d.name, d.website, d.domain, d.company_type, d.website_type, d.location_count || 0,
     d.contact_count || 0, effectiveSitemap(d0), d.industry, d.size, d.founded,
-    d.locality, d.region, d.country, d.linkedin_url, d.phone, d.phone_type, d.full_address, d.category, d.cid,
+    d.locality, d.region, d.country, d.linkedin_url, d.phone, d.phone_type, d.full_address, d.category, d.naics_code, d.naics_title, d.cid,
     d.description, d.email, d.email_type, d.facebook, d.instagram, d.whatsapp, d.linkedin_contact, d.bio_url, d.team_page,
     d.source_map, d.cc_refreshed_at, d.map, d.alternate_websites, d.contacts, d.contacts_count || 0].map(esc).join(',');
 }
