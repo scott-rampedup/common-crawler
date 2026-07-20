@@ -98,6 +98,11 @@ function makeProxyAgents(url){
 const PROXY_URL = process.env.PROXY_URL || "";
 const PROXY_FALLBACK_URL = process.env.PROXY_FALLBACK_URL || "";
 const UNBLOCKER_API_URL = process.env.UNBLOCKER_API_URL || "";
+// Live-fetch tuning. A blocked/unreachable page costs a full timeout, so keep it short (was hard-coded 15s)
+// and BAIL a domain after a run of consecutive failures instead of grinding all LIVE_MAX_PAGES × timeout —
+// the big win for batches of bot-protected sites (e.g. hospital provider directories behind Akamai).
+const LIVE_TIMEOUT = Number(process.env.LIVE_FETCH_TIMEOUT) || 6000;
+const LIVE_BLOCK_LIMIT = Number(process.env.LIVE_BLOCK_STREAK) || 6;
 const _proxyPrimary   = makeProxyAgents(PROXY_URL);
 const _proxyFallback  = makeProxyAgents(PROXY_FALLBACK_URL);
 let proxyAgentHttp = _proxyPrimary.http, proxyAgentHttps = _proxyPrimary.https;
@@ -1022,7 +1027,7 @@ async function liveFetchPage(url){
       const res = await fetchImpl(url, {
         headers:{ "User-Agent":UA, "Accept":"text/html,application/xhtml+xml" },
         redirect:"follow",
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(LIVE_TIMEOUT),
       });
       if(res.status === 429 || res.status === 503 || res.status === 403){ _net.blocked++; return ""; }
       if(!res.ok) { _net.fetched++; return ""; }
@@ -1044,7 +1049,7 @@ async function liveFetchPage(url){
     const rotates = tier.proxied;                            // a gateway is in front -> a fresh IP per attempt
     for(let attempt = 0; attempt < tier.attempts; attempt++){
       const r = await httpGetRaw(url, { accept: /html/, maxBytes: HTML_MAX_BYTES, returnMeta: true,
-        proxyTier: tier.name, timeout: 15000, userAgent: tier.proxied ? BROWSER_UA : UA });
+        proxyTier: tier.name, timeout: LIVE_TIMEOUT, userAgent: tier.proxied ? BROWSER_UA : UA });
       if(r.status === 200){ _net.fetched++; return r.body; }
       if(r.status === 403 || r.status === 429 || r.status === 503){                            // blocked
         _net.blocked++;
@@ -1134,7 +1139,8 @@ async function liveCrawl(domain, opts = {}){
       if(isBioOrContactUrl(u, directoryRules, genderMap)) enqueue(u);
     }
   }
-  for(const p of LIVE_PROBE_PATHS) enqueue(`https://${domain}${p}`);
+  const probeSet = new Set();                                    // static probe paths often 404 legitimately —
+  for(const p of LIVE_PROBE_PATHS){ const pu = `https://${domain}${p}`; probeSet.add(pu); enqueue(pu); }  // don't let them trip the block-streak
 
   if(sitemapMatches > maxPages){
     console.log(`  ${domain}: ${sitemapMatches} matching pages in sitemaps — fetching first ${maxPages} (raise LIVE_MAX_PAGES to get all)`);
@@ -1146,24 +1152,28 @@ async function liveCrawl(domain, opts = {}){
   const inSite = Math.max(1, opts.inSiteConcurrency || Number(process.env.IN_SITE_CONCURRENCY) || 3);
   const perHostDelay = opts.perHostDelay != null ? opts.perHostDelay : 200;
   const shouldStop = opts.shouldStop || (() => false);
-  let qi = 0, active = 0, fetchedPages = 0;
+  let qi = 0, active = 0, fetchedPages = 0, blockStreak = 0, bailed = false;
 
   await new Promise((resolve) => {
     const tick = () => {
-      if(active === 0 && (qi >= queue.length || records.length >= perDomainCap || fetchedPages >= maxPages || shouldStop())){
+      if(active === 0 && (qi >= queue.length || records.length >= perDomainCap || fetchedPages >= maxPages || bailed || shouldStop())){
         return resolve();
       }
-      while(active < inSite && qi < queue.length && records.length < perDomainCap && fetchedPages < maxPages && !shouldStop()){
+      while(active < inSite && qi < queue.length && records.length < perDomainCap && fetchedPages < maxPages && !bailed && !shouldStop()){
         const url = queue[qi++]; active++; fetchedPages++;
         (async () => {
           const html = await liveFetch(url);
           await sleep(perHostDelay);              // polite pause per fetch (with ~inSite in flight)
           if(html){
+            blockStreak = 0;                      // reachable -> reset the fast-fail streak
             const out = extractRecord(html, url, { wireless, genderMap, directoryRules, source:"Live Crawl", timestamp: today });
             if(out) records.push(out);
             for(const sub of extractSameDomainLinks(html, url, domain)){
               if(isBioOrContactUrl(sub, directoryRules, genderMap)) enqueue(sub);
             }
+          } else if(!probeSet.has(url) && ++blockStreak >= LIVE_BLOCK_LIMIT && !bailed){
+            bailed = true;                        // N real bio/sitemap pages in a row unreachable -> stop grinding this host
+            console.log(`  ${domain}: ${blockStreak} pages in a row unreachable — skipping the rest (host appears to be blocking)`);
           }
         })().catch(() => {}).finally(() => { active--; tick(); });
       }
