@@ -1530,7 +1530,7 @@ async function run(csvPath, opts = {}){
 }
 
 module.exports = { run, runDomains, readDomains, selectCandidates, warcToHtml, queryIndex, queryIndexUrl, fetchWarc,
-  liveCrawl, extractSameDomainLinks, isBioOrContactUrl, COLUMNS, fetchDoc,
+  liveCrawl, liveFetchPage, extractSameDomainLinks, isBioOrContactUrl, COLUMNS, fetchDoc,
   parseRobots, robotsAllows, extractSitemapLocs, extractBioUrlsFromSitemaps, extractBioUrlGroups, discoverBioSitemaps, discoverBioUrlsFromCC,
   resolveLatestCrawl, currentCrawl };
 
