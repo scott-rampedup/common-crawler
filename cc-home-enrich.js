@@ -123,6 +123,51 @@ function buildContacts({ linkedin = [], emails = [], bio = [] }, { genderMap = {
   return { contacts, structured, count: contacts.length };
 }
 
+// buildEmployees — high-liberty association for a Google-Maps rollup. The handful of emails / LinkedIn-/in/
+// / bio URLs pulled from ONE business SHARE a source, so we link them aggressively into "Employees":
+//   1) name people from LinkedIn/in + bio URLs (first + last)
+//   2) attach each email to a person via progressively looser rules:
+//        a. dotted email first+last (jane.doe@)                          -> exact name match
+//        b. first-initial+lastname (jdoe@ / j.doe@ == j + doe)           -> match on last, first-initial
+//        c. lastname CONTAINED + first-initial (jdoe12@, mjdoe@)         -> contains match
+//        d. first-name-only email (jane@)                               -> match a person's first name alone
+//   3) also allow a dotted email to stand up its own employee. Email-keyed store -> an employee needs an
+//      email; a person named only by an email must have a gender-known first name (drops sales@/info@ junk).
+function buildEmployees({ linkedin = [], emails = [], bio = [] }, { genderMap = {}, address = '' } = {}) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+  const people = [];   // { first, last, linkedin, bio, email }
+  const findOrAdd = (n) => {
+    if (!n.first || !n.last) return null;
+    let p = people.find((x) => norm(x.first) === norm(n.first) && norm(x.last) === norm(n.last));
+    if (!p) { p = { first: n.first, last: n.last, linkedin: '', bio: '', email: '' }; people.push(p); }
+    return p;
+  };
+  for (const u of linkedin) { const p = findOrAdd(nameFromLinkedin(u)); if (p && !p.linkedin) p.linkedin = u; }
+  for (const u of bio) { const p = findOrAdd(nameFromBio(u)); if (p && !p.bio) p.bio = u; }
+
+  for (const e of emails) {
+    const localRaw = String(e).split('@')[0].toLowerCase().replace(/\d+$/, '');
+    const local = norm(localRaw);
+    const full = nameFromEmail(e);                                       // {first,last} when dotted
+    let p = null;
+    if (full.first && full.last) p = people.find((x) => norm(x.first) === norm(full.first) && norm(x.last) === norm(full.last));   // (a)
+    if (!p) p = people.find((x) => { const ln = norm(x.last), fi = norm(x.first).charAt(0); return ln.length >= 2 && local === fi + ln; });   // (b)
+    if (!p) p = people.find((x) => { const ln = norm(x.last), fi = norm(x.first).charAt(0); return ln.length >= 3 && local.includes(ln) && local.charAt(0) === fi; });   // (c)
+    if (!p) { const firstTok = norm(localRaw.split(/[._\-]+/)[0]); if (firstTok.length >= 3) p = people.find((x) => norm(x.first) === firstTok); }   // (d)
+    if (p) { if (!p.email) p.email = e; }
+    else if (full.first && full.last) people.push({ first: full.first, last: full.last, linkedin: '', bio: '', email: e });        // email names its own person
+  }
+
+  const structured = [];
+  for (const p of people) {
+    if (!p.email) continue;                                              // email-keyed store needs an email
+    const gender = genderMap[(p.first || '').toLowerCase()] || '';
+    if (!p.linkedin && !p.bio && !gender) continue;                     // email-only person must have a known first name
+    structured.push({ first: p.first, last: p.last, gender, email: p.email, address, linkedin: p.linkedin, bio: p.bio });
+  }
+  return { structured, count: structured.length };
+}
+
 // If the company's primary `website` is really a social/map/alternate URL, move it out (and blank website).
 function reclassifyWebsite(website, altList) {
   const w = clean(website); if (!w) return {};
@@ -175,4 +220,4 @@ async function enrichCompany(company, { genderMap = {}, crawls, fetchWarc, altLi
   return { found: true, updates: r.updates, people: r.people, ptr: { url: ptr.url } };
 }
 
-module.exports = { ALT_DEFAULT, resolveHome, parseHome, buildContacts, reclassifyWebsite, enrichFromHtml, enrichCompany, hasPath, isAlternate, nameFromLinkedin, nameFromEmail, nameFromBio };
+module.exports = { ALT_DEFAULT, resolveHome, parseHome, buildContacts, buildEmployees, reclassifyWebsite, enrichFromHtml, enrichCompany, hasPath, isAlternate, nameFromLinkedin, nameFromEmail, nameFromBio };

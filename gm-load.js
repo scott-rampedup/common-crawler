@@ -117,7 +117,10 @@ async function eachRecord(file, onRec) {
       const webLoc = f.website_location || f.website_url;
       const dom = co.normDomain(webLoc) || rootDomain(webLoc);
       if (!dom) { skippedNoWeb++; return; }                       // decision: skip website-less records
-      const bio = splitMulti(f.xb_team_profile_urls).filter(isBio);
+      // capture EVERY team-profile URL the source found — these ARE team-member pages, so don't drop them to
+      // the isBio heuristic (that was losing valid bios). Quality is enforced downstream at extraction
+      // (extract-from-pointers rejects non-person junk). Keep basic URL sanity + dedupe.
+      const bio = [...new Set(splitMulti(f.xb_team_profile_urls).map((u) => abs(u.trim())).filter((u) => /^https?:\/\/[^\s/]+\.[^\s]/i.test(u)))];
       for (const b of bio) bioSet.add(b);
       // pull EVERY email in xb_emails (not just the first), each run through cleanEmail — which drops the
       // ones we don't import (blocklist + junk: images/example.com/phone-misreads). email = primary; the

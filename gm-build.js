@@ -137,7 +137,7 @@ function processGroup(domain, locs, hq0) {
 
   // Phase 5 — contacts from the HQ's rolled-up signals
   let contacts = [];
-  try { const b = che.buildContacts({ linkedin: [...li], emails: [...emails], bio: [...bio] }, { genderMap, address: hqDoc.full_address || (hq0 && hq0.full_address) || '' }); contacts = b.structured || []; }
+  try { const b = che.buildEmployees({ linkedin: [...li], emails: [...emails], bio: [...bio] }, { genderMap, address: hqDoc.full_address || (hq0 && hq0.full_address) || '' }); contacts = b.structured || []; }
   catch (e) { /* best-effort */ }
 
   return { hqId: hq0 ? hq0._id : 'gm:' + domain, isNew: !hq0, hqDoc, childDocs, contacts, domain };
