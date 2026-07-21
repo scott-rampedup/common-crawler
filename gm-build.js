@@ -104,7 +104,8 @@ function processGroup(domain, locs, hq0) {
     splitL(r.bio_url).forEach((u) => bio.add(u));
     splitL(r.linkedin_contact).forEach((u) => { if (LI_IN.test(u)) li.add(u); });
     splitL(r.linkedin_url).forEach((u) => { if (LI_CO.test(u)) coLi.add(u); });   // hq0 (PDL) or GM company page
-    if (r.email) emails.add(r.email);
+    (r.emails && r.emails.length ? r.emails : (r.email ? [r.email] : [])).forEach((e) => emails.add(e));  // ALL emails
+
   };
   if (hq0) collect(hq0);
   locs.forEach(collect);

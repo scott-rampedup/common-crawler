@@ -22,6 +22,7 @@ const B = { ypid: 1, name: 2, city: 4, state: 5, country: 7, address: 8, phone: 
 const COUNTRY = { GB: 'United Kingdom', UK: 'United Kingdom' };
 
 const genderMap = ex.loadGenderMap(path.join(__dirname, 'names-genders.csv'));
+try { ex.loadEmailBlocklist(path.join(__dirname, 'email-blocklist.txt')); } catch (e) { /* no list */ }
 let dirRules = {}; try { dirRules = ex.loadDirectoryRules(path.join(__dirname, 'data', 'directory-rules.json')); } catch (e) { /* built-ins apply */ }
 const clean = (s) => String(s == null ? '' : s).trim();
 const abs = (u) => { u = clean(u); return /^https?:/i.test(u) ? u : (u ? 'https://' + u : ''); };
@@ -60,7 +61,7 @@ async function eachRecord(file, onRec) {
       if (LIMIT && kept >= LIMIT) return false;
       const dom = co.normDomain(clean(r[B.website])) || rootDomain(clean(r[B.website]));
       if (!dom) { skippedNoWeb++; return; }
-      const email = clean(r[B.email]).toLowerCase();
+      const email = ex.cleanEmail(clean(r[B.email])).toLowerCase();   // drops blocklist + junk emails
       const rec = {
         company_type: 'Location', root_domain: dom, cid: clean(r[B.ypid]),
         name: clean(r[B.name]), full_address: clean(r[B.address]),

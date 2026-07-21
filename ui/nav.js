@@ -33,7 +33,7 @@
 
   // Canonical tab set, in order. min = lowest role rank that sees the tab.
   const TABS = [
-    { href: '/search',          label: '🔍 Contact Crawler', min: 0, green: true, active: (p) => p === '/search' },
+    { href: '/search',          label: '👤 Contact Crawler', min: 0, green: true, active: (p) => p === '/search' },
     { href: '/company-crawler', label: '🏢 Company Crawler', min: 0, green: true, active: (p) => p === '/company-crawler' },
     { href: '/site-search',     label: '🌐 Site Search',    min: 1, green: true, active: (p) => p === '/site-search' },
     { href: '/serp-lookup',     label: '🔎 SERP Look Up',   min: 1, green: true, active: (p) => p === '/serp-lookup' },

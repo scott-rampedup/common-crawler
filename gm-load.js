@@ -47,6 +47,7 @@ function fields(r) {
 }
 
 const genderMap = ex.loadGenderMap(path.join(__dirname, 'names-genders.csv'));
+try { ex.loadEmailBlocklist(path.join(__dirname, 'email-blocklist.txt')); console.error('email blocklist loaded'); } catch (e) { console.error('email blocklist not loaded'); }
 const wbc = require('./wireless-block-classifier');
 let wireless = null; try { wireless = wbc.loadWirelessBlocks(wbc.PHONE_BLOCKS_CSV); console.error('phone-blocks loaded for line-type classification'); } catch (e) { console.error('phone-blocks not loaded -> phone_type blank'); }
 const phoneType = (p) => { if (!wireless || !p) return ''; try { const t = wbc.classifyLineType(p, wireless); return (t && t.type && t.type !== 'Unknown') ? t.type : ''; } catch (e) { return ''; } };
@@ -118,13 +119,17 @@ async function eachRecord(file, onRec) {
       if (!dom) { skippedNoWeb++; return; }                       // decision: skip website-less records
       const bio = splitMulti(f.xb_team_profile_urls).filter(isBio);
       for (const b of bio) bioSet.add(b);
-      const email = (splitMulti(f.xb_emails)[0] || '').toLowerCase();
+      // pull EVERY email in xb_emails (not just the first), each run through cleanEmail — which drops the
+      // ones we don't import (blocklist + junk: images/example.com/phone-misreads). email = primary; the
+      // full list feeds contact-building downstream so no address is lost.
+      const emails = [...new Set(splitMulti(f.xb_emails).map((e) => ex.cleanEmail(e).toLowerCase()).filter(Boolean))];
+      const email = emails[0] || '';
       const out = {
         company_type: 'Location', root_domain: dom, cid: f.cid,
         name: f.name, full_address: f.address,
         website: 'https://' + dom + '/', website_type: websiteType(webLoc),
         category: f.category,
-        email, email_type: email ? ex.classifyEmail(email) : '',
+        email, emails, email_type: email ? ex.classifyEmail(email) : '',
         phone: f.phone, phone_type: phoneType(f.phone),
         whatsapp: f.xb_whatsapp, facebook: f.xb_facebook, instagram: f.xb_instagram,
         linkedin_contact: liProfiles(f.xb_linkedin_profile).join('; '),   // personal profiles (linkedin.com/in)

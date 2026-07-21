@@ -80,6 +80,22 @@ async function ensureIndex(client) {
   return true;
 }
 
+// A CONTACT's linkedin_url must be a personal profile (linkedin.com/in/<slug>). Reject company pages and
+// concatenated/garbled values (e.g. ".../in/https://www.linkedin.com/company-beta/…") so a bad value never
+// sits in the field blocking a real /in URL from populating. Conservative: keeps clean /in + /pub profiles
+// and person slugs that merely contain "company" (e.g. /in/the-ev-charging-company-ltd); clears only true
+// company pages and concatenated junk.
+function cleanContactLinkedin(u) {
+  if (!u) return '';
+  const s = String(u).trim();
+  const low = s.toLowerCase();
+  if (low.indexOf('linkedin.com', low.indexOf('linkedin.com') + 1) >= 0) return '';   // two linkedin.com -> concatenated
+  if (low.indexOf('://', low.indexOf('://') + 1) >= 0) return '';                      // two schemes -> concatenated
+  if (low.includes('linkedin.com/company')) return '';                                 // company page, not a person
+  if (low.includes('linkedin.com/in/company/') || low.endsWith('linkedin.com/in/company')) return '';  // /in/company/… mis-path
+  return s;
+}
+
 // Map a Postgres contacts row (snake_case columns) to an OpenSearch document.
 function rowToDoc(r) {
   const first = r.first || '', last = r.last || '';
@@ -93,7 +109,7 @@ function rowToDoc(r) {
     email_type: r.email_type || '', gender: r.gender || '',
     phone: r.phone || '', phone_type: r.phone_type || '', phone_location: r.phone_location || '',
     phone_2: r.phone_2 || '', phone_2_type: r.phone_2_type || '', phone_2_location: r.phone_2_location || '',
-    linkedin_url: r.linkedin_url || '', facebook: r.facebook || '', twitter: r.twitter || '',
+    linkedin_url: cleanContactLinkedin(r.linkedin_url), facebook: r.facebook || '', twitter: r.twitter || '',
     whatsapp: r.whatsapp || '', google_maps: r.google_maps || '', vcard: r.vcard || '',
     web_source_url: r.web_source_url || '', image_url: r.image_url || '',
     source: r.source || '', directory: r.directory || '', bio_check: r.bio_check || '', type: r.type || '',
@@ -283,6 +299,7 @@ function recordToDoc(rec, updatedAt) {
   const first = rec['First'] || '', last = rec['Last'] || '';
   const doc = {};
   for (const f in FIELD_TO_DOC) doc[FIELD_TO_DOC[f]] = rec[f] || '';
+  doc.linkedin_url = cleanContactLinkedin(doc.linkedin_url);   // /in only — no company pages / concatenated junk
   doc.name = `${first} ${last}`.trim();
   doc.domain = rec['Domain'] || '';
   doc.company = rec['Domain'] || doc.company || '';
@@ -317,5 +334,5 @@ async function bulkDelete(client, emails) {
 module.exports = {
   makeClient, ensureIndex, rowToDoc, bulkUpsert, INDEX, MAPPING,
   search, each, facets, count, stats, docToRecord, buildQuery,
-  recordToDoc, indexDocs, bulkDelete,
+  recordToDoc, indexDocs, bulkDelete, cleanContactLinkedin,
 };
