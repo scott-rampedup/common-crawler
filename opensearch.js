@@ -101,20 +101,34 @@ function cleanContactLinkedin(u) {
 // real-person signal). Lazily loads cc-home-enrich + the gender map; both cached. Never throws.
 let _che = null, _gmap = null;
 const _cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : '';
+const _gmapLoad = () => { if (!_gmap) { try { _gmap = require('./extractor').loadGenderMap(require('path').join(__dirname, 'names-genders.csv')); } catch (e) { _gmap = {}; } } return _gmap; };
+// Split a separator-less linkedin.com/in slug (angelomarino -> Angelo Marino) using the names map as the
+// first-name lexicon. Conservative: no-separator slugs only (the separator parser owns hyphenated ones),
+// first name ≥4, org-word/length guards so org/vanity slugs (superior-negotiators, txlender) are skipped.
+const _ORG = /loan|lender|mortgage|realt|group|team|llc|inc|onlus|negotiat|insurance|agency|propert|homes|lawyer|consult|solutions|services|marketing|digital|media|studio|academy|foundation|network|global|partners|associates|capital|ventures|advisor|financial/;
+function _splitLinkedinSlug(url) {
+  const m = String(url || '').match(/linkedin\.com\/in\/([^/?#]+)/i); if (!m) return null;
+  const raw = m[1].toLowerCase(); if (/[-_.]/.test(raw)) return null;
+  const s = raw.replace(/[^a-z]/g, ''); if (s.length < 6 || s.length > 22 || _ORG.test(s)) return null;
+  const g = _gmapLoad();
+  for (let i = Math.min(s.length - 3, 12); i >= 4; i--) { const f = s.slice(0, i), l = s.slice(i); if (g[f] && l.length >= 3 && l.length <= 15) return { first: _cap(f), last: _cap(l) }; }
+  return null;
+}
 function ensureNameGender(doc) {
   try {
     if (!(doc.first && String(doc.first).trim()) && !(doc.last && String(doc.last).trim()) && (doc.email || doc.linkedin_url)) {
       if (!_che) { try { _che = require('./cc-home-enrich'); } catch (e) { _che = false; } }
+      let nm = null;
       if (_che) {
         const ne = _che.nameFromEmail(doc.email || '');
-        let nm = (ne.first && ne.last) ? ne : null;
+        nm = (ne.first && ne.last) ? ne : null;
         if (!nm && doc.linkedin_url) { const nl = _che.nameFromLinkedin(doc.linkedin_url); if (nl.first && nl.last) nm = nl; }
-        if (nm) { doc.first = _cap(nm.first); doc.last = _cap(nm.last); doc.name = `${doc.first} ${doc.last}`.trim(); }
       }
+      if (!nm && doc.linkedin_url) nm = _splitLinkedinSlug(doc.linkedin_url);   // dictionary split of a concatenated /in slug
+      if (nm) { doc.first = _cap(nm.first); doc.last = _cap(nm.last); doc.name = `${doc.first} ${doc.last}`.trim(); }
     }
     if ((!doc.gender || !String(doc.gender).trim()) && doc.first) {
-      if (!_gmap) { try { _gmap = require('./extractor').loadGenderMap(require('path').join(__dirname, 'names-genders.csv')); } catch (e) { _gmap = {}; } }
-      doc.gender = _gmap[String(doc.first).toLowerCase()] || '';
+      doc.gender = _gmapLoad()[String(doc.first).toLowerCase()] || '';
     }
   } catch (e) { /* best-effort */ }
   return doc;
