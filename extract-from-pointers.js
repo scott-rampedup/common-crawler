@@ -46,6 +46,21 @@ function looksLikePerson(first, last) {
   if (JUNK_NAME.has(f.toLowerCase()) || JUNK_NAME.has(l.toLowerCase())) return false;
   return true;
 }
+// URL-slug name fallback: many bio pages name the person only in the URL (m-spencer-cook, team/detail/fei-du,
+// staffMembers/view/ector-galindo) — content extraction returns no name. Take the LAST path segment (then the
+// second-to-last) and, to avoid false positives on product/service pages (collections/personal-massagers),
+// only accept it when the URL sits under a bio directory OR the derived first name is a known first name.
+const { nameFromPath } = require('./name-from-path');
+const BIO_SEG = /^(teams?|staff|staffmembers|people|our-?team|attorneys?|lawyers?|solicitors?|agents?|advisors?|providers?|doctors?|physicians?|profiles?|bios?|members?|employees?|associates?|partners?|meet|about-?us|our-)/i;
+function urlBioName(url, genderMap) {
+  let segs; try { segs = new URL(url).pathname.replace(/\/+$/, '').split('/').filter(Boolean); } catch (e) { return null; }
+  const bioDir = segs.some((s) => BIO_SEG.test(s));
+  for (const seg of segs.slice(-2).reverse()) {
+    const nm = nameFromPath(seg);
+    if (looksLikePerson(nm.first, nm.last) && (bioDir || genderMap[nm.first.toLowerCase()])) return nm;
+  }
+  return null;
+}
 
 (async () => {
   const ptrFile = argOf('--ptr');
@@ -114,6 +129,7 @@ function looksLikePerson(first, last) {
           const { html, url, source } = await run(jobs[k]);
           if (!html) continue; fetched++;
           const rec = extractor.extractRecord(html, url, { genderMap, directoryRules: {}, source, timestamp: jobs[k].ts || '', allowNoEmail: true });
+          if (rec && !looksLikePerson(rec['First'], rec['Last'])) { const nm = urlBioName(url, genderMap); if (nm) { rec['First'] = nm.first; rec['Last'] = nm.last; } }   // name from URL slug when the page has none
           if (rec) { extracted++; pending.push(rec); if (pending.length >= CHUNK) await flush(); }
         } catch (e) { ferr++; }
         if ((k + 1) % 500 === 0) console.error(`  [${label}] ${k + 1}/${jobs.length} | fetched ${fetched} | extracted ${extracted} | ${ferr} err | ${Math.round((k + 1) / ((Date.now() - t0) / 1000))}/s`);

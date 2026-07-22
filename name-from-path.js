@@ -29,7 +29,9 @@ function pathNameTokens(lastPath) {
 
 // Best-effort { first, last } from a URL slug.
 function nameFromPath(lastPath) {
-  const toks = pathNameTokens(lastPath);
+  let toks = pathNameTokens(lastPath);
+  // drop a leading single-letter initial when a fuller name follows: "m-spencer-cook" -> Spencer Cook
+  if (toks.length >= 3 && toks[0].length === 1) toks = toks.slice(1);
   if (!toks.length) return { first: '', last: '' };
   return {
     first: properCase(toks[0]),
