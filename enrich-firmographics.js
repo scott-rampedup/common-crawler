@@ -40,10 +40,13 @@ async function resolveDomains(coClient, domains) {
 // Enrich contacts missing company data by joining domain -> live companies index. Reusable: the app calls
 // this on a schedule (the ongoing sweep) and the CLI calls it once. Returns { scanned, matched, updated }.
 const QUERY = { bool: { must: [{ bool: { must_not: [{ term: { domain: '' } }] } }, { exists: { field: 'domain' } }], must_not: [{ exists: { field: 'industry' } }] } };
-async function enrichMissing({ client, coClient, endpoint, limit = 0, dry = false, log = () => {} } = {}) {
+async function enrichMissing({ client, coClient, endpoint, limit = 0, dry = false, newestFirst = false, log = () => {} } = {}) {
   endpoint = endpoint || process.env.OPENSEARCH_ENDPOINT;
   let cl = client || os.makeClient(endpoint);
   const coCl = coClient || co.makeClient(endpoint);
+  // backfill scans everything (_doc, cheap); the ongoing sweep goes newest-first so a capped run always
+  // reaches the freshly-ingested contacts (email = unique tiebreaker for stable search_after).
+  const SORT = newestFirst ? [{ updated_at: { order: 'desc', missing: '_last' } }, { email: 'asc' }] : [{ _doc: 'asc' }];
   let scanned = 0, matched = 0, updated = 0, after = null; let batch = []; const t0 = Date.now();
   const bulkUpd = async (actions) => { for (let a = 0; a < 6; a++) { try { await cl.bulk({ body: actions, refresh: false }); return; } catch (e) { if (a === 5) throw e; if (a === 2 && endpoint) cl = os.makeClient(endpoint); await sleep(500 * 2 ** a); } } };
   const processBatch = async () => {
@@ -54,7 +57,7 @@ async function enrichMissing({ client, coClient, endpoint, limit = 0, dry = fals
     if (actions.length) { await bulkUpd(actions); updated += actions.length / 2; }
   };
   for (;;) {
-    const bq = { size: 5000, query: QUERY, _source: ['domain'], sort: [{ _doc: 'asc' }] };
+    const bq = { size: 5000, query: QUERY, _source: ['domain'], sort: SORT };
     if (after) bq.search_after = after;
     const hits = (await cl.search({ index: os.INDEX, body: bq })).body.hits.hits;
     if (!hits.length) break;

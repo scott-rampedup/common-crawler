@@ -1808,7 +1808,7 @@ pruneOldJobs();
         let firmoRunning = false;
         const firmoSweep = async () => {
           if (firmoRunning || !reader._os || !companiesClient) return; firmoRunning = true;
-          try { const r = await firmoEnrich.enrichMissing({ client: reader.client, coClient: companiesClient, endpoint: process.env.OPENSEARCH_ENDPOINT, limit: FS_CAP });
+          try { const r = await firmoEnrich.enrichMissing({ client: reader.client, coClient: companiesClient, endpoint: process.env.OPENSEARCH_ENDPOINT, limit: FS_CAP, newestFirst: true });
             if (r.updated) console.log(`[firmo] enriched ${r.updated.toLocaleString()} contacts with company data (scanned ${r.scanned.toLocaleString()})`); }
           catch (e) { console.error('[firmo] sweep error:', e.message); } finally { firmoRunning = false; }
         };
