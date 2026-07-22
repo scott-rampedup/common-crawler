@@ -42,7 +42,7 @@ const noG = { bool: {
   for (let i = 0; i < junk.length; i += 1000) {
     const names = junk.slice(i, i + 1000);
     const q = { bool: { must: [noG], filter: [{ terms: { 'first.kw': names } }] } };
-    const r = await client.deleteByQuery({ index: os.INDEX, conflicts: 'proceed', refresh: false, requestTimeout: 300000, body: { query: q } }, { requestTimeout: 300000 });
+    const r = await client.deleteByQuery({ index: os.INDEX, conflicts: 'proceed', refresh: false, body: { query: q } }, { requestTimeout: 300000 });
     deleted += (r.body || r).deleted || 0;
     console.log(`  batch ${i / 1000 + 1}: total deleted ${deleted.toLocaleString()}`);
   }
