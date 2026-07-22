@@ -1784,9 +1784,51 @@ server.listen(PORT, async () => {
     setInterval(() => runSheetSync(), SHEET_SYNC_HOURS * 3600 * 1000);   // then on the interval
   }
   if (MONITOR_ENABLED) {
-    console.log(`Sitemap monitor: ON, every ${MONITOR_INTERVAL_HOURS}h.`);
-    setInterval(() => { runMonitorPassGuarded().catch((e) => console.error('[monitor] pass crashed:', e.message)); },
-      MONITOR_INTERVAL_HOURS * 3600 * 1000);
+    // Resilient, off-peak nightly scheduler. A bare setInterval(24h) never fires under frequent deploys —
+    // every restart resets the timer. Instead we check HOURLY against the persisted last-pass time and run
+    // only when a pass is genuinely due AND we're in the off-peak window (so the heavy 200k-sitemap pass
+    // doesn't compete with daytime traffic). After each pass we email the new-hire report so new contacts
+    // are visible daily.
+    const dueMs = MONITOR_INTERVAL_HOURS * 3600 * 1000;
+    const OP_START = Number(process.env.MONITOR_OFFPEAK_UTC_START || 6);    // UTC off-peak window (default ~1-6am US-east)
+    const OP_END = Number(process.env.MONITOR_OFFPEAK_UTC_END || 11);
+    const REPORT_TO = process.env.MONITOR_REPORT_TO || 'contact@common-crawler.com';
+    const inOffPeak = () => { const h = new Date().getUTCHours(); return OP_START <= OP_END ? (h >= OP_START && h < OP_END) : (h >= OP_START || h < OP_END); };
+    async function emailMonitorReport(pass) {
+      try {
+        if (!mailer.mailEnabled()) return;
+        const s = monitorDb.monitorStats();
+        const asOf = new Date().toISOString().slice(0, 10);
+        const rows = [
+          ['New BIO URLs this pass', (pass && pass.newBios || 0).toLocaleString()],
+          ['… queued for extraction', (pass && pass.extracted || 0).toLocaleString()],
+          ['Sitemaps monitored nightly', `${(s.activeWatches || 0).toLocaleString()} active`],
+          ['Total new BIO URLs seen', ((s.observations && s.observations.new_bio) || 0).toLocaleString()],
+          ['Total processed', (s.extracted || 0).toLocaleString()],
+          ['BIO URLs tracked', (s.present || 0).toLocaleString()],
+        ];
+        const subject = `Common Crawler — nightly new-hire report (${asOf})`;
+        const text = `Nightly Sitemap Monitor pass, ${asOf}\n\n` + rows.map(([k, v]) => `${k}: ${v}`).join('\n') + '\n\n— Common Crawler';
+        const tr = (k, v) => `<tr><td style="padding:6px 16px 6px 0;color:#6b7280">${k}</td><td style="padding:6px 0;font-weight:600;color:#111827">${v}</td></tr>`;
+        const html = `<div style="font-family:Inter,system-ui,Segoe UI,Arial,sans-serif;max-width:520px;margin:0 auto;color:#111827"><h2 style="font-size:1.2rem;margin:0 0 4px">Nightly new-hire report</h2><p style="color:#6b7280;margin:0 0 14px">${asOf}</p><table style="border-collapse:collapse;font-size:14px">${rows.map(([k, v]) => tr(k, v)).join('')}</table><p style="color:#9ca3af;font-size:12px;margin-top:24px;border-top:1px solid #eee;padding-top:12px">Common Crawler · common-crawler.com</p></div>`;
+        await mailer.sendMail({ to: REPORT_TO, subject, text, html });
+        console.log(`[monitor] new-hire report emailed -> ${REPORT_TO}`);
+      } catch (e) { console.error('[monitor] report email failed:', e.message); }
+    }
+    async function monitorTick() {
+      try {
+        if (monitorRunning) return;
+        const lp = monitorDb.monitorStats().lastPass;
+        const overdue = !lp || (Date.now() - new Date(lp).getTime()) >= dueMs;
+        if (!overdue || !inOffPeak()) return;
+        console.log('[monitor] pass due + off-peak -> running');
+        const summary = await runMonitorPassGuarded().catch((e) => { console.error('[monitor] pass crashed:', e.message); return null; });
+        if (summary && !summary.skipped) await emailMonitorReport(summary);
+      } catch (e) { console.error('[monitor] tick error:', e.message); }
+    }
+    console.log(`Sitemap monitor: ON, hourly check; runs when due (>${MONITOR_INTERVAL_HOURS}h) during off-peak UTC ${OP_START}-${OP_END}h; report -> ${REPORT_TO}.`);
+    setInterval(monitorTick, 60 * 60 * 1000);      // resilient: re-checks persisted lastPass each hour, survives restarts
+    setTimeout(monitorTick, 5 * 60 * 1000);        // and shortly after startup (fires only if due + off-peak)
   } else {
     console.log('Sitemap monitor: OFF (set MONITOR_ENABLED=1 to run the nightly new-hire pass).');
   }

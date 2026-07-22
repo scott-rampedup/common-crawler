@@ -614,10 +614,11 @@ function makeDb(dir) {
     const activeW = db.prepare(`SELECT COUNT(*) c FROM watched_sitemaps WHERE status = 'active'`).get().c;
     const present = db.prepare(`SELECT COUNT(*) c FROM bio_urls WHERE status = 'present'`).get().c;
     const departed = db.prepare(`SELECT COUNT(*) c FROM bio_urls WHERE status = 'departed'`).get().c;
+    const extracted = db.prepare(`SELECT COUNT(*) c FROM bio_urls WHERE extracted = 1`).get().c;
     const lastPass = db.prepare(`SELECT MAX(last_fetched) m FROM watched_sitemaps`).get().m || null;
     const byEvent = {};
     for (const r of db.prepare(`SELECT event, COUNT(*) c FROM observations GROUP BY event`).all()) byEvent[r.event] = r.c;
-    return { watches, activeWatches: activeW, present, departed, lastPass, observations: byEvent };
+    return { watches, activeWatches: activeW, present, departed, extracted, lastPass, observations: byEvent };
   }
 
   importLegacyJson();
