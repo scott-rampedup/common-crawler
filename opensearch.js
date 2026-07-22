@@ -96,10 +96,34 @@ function cleanContactLinkedin(u) {
   return s;
 }
 
+// Ensure every ingested contact gets a name + gender: derive First/Last from the email (firstname.lastname)
+// or a linkedin.com/in profile when the name is blank, then assign Gender from the names map (the premium
+// real-person signal). Lazily loads cc-home-enrich + the gender map; both cached. Never throws.
+let _che = null, _gmap = null;
+const _cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : '';
+function ensureNameGender(doc) {
+  try {
+    if (!(doc.first && String(doc.first).trim()) && !(doc.last && String(doc.last).trim()) && (doc.email || doc.linkedin_url)) {
+      if (!_che) { try { _che = require('./cc-home-enrich'); } catch (e) { _che = false; } }
+      if (_che) {
+        const ne = _che.nameFromEmail(doc.email || '');
+        let nm = (ne.first && ne.last) ? ne : null;
+        if (!nm && doc.linkedin_url) { const nl = _che.nameFromLinkedin(doc.linkedin_url); if (nl.first && nl.last) nm = nl; }
+        if (nm) { doc.first = _cap(nm.first); doc.last = _cap(nm.last); doc.name = `${doc.first} ${doc.last}`.trim(); }
+      }
+    }
+    if ((!doc.gender || !String(doc.gender).trim()) && doc.first) {
+      if (!_gmap) { try { _gmap = require('./extractor').loadGenderMap(require('path').join(__dirname, 'names-genders.csv')); } catch (e) { _gmap = {}; } }
+      doc.gender = _gmap[String(doc.first).toLowerCase()] || '';
+    }
+  } catch (e) { /* best-effort */ }
+  return doc;
+}
+
 // Map a Postgres contacts row (snake_case columns) to an OpenSearch document.
 function rowToDoc(r) {
   const first = r.first || '', last = r.last || '';
-  return {
+  return ensureNameGender({
     email: r.email || r.email_address || '',
     first, last, name: `${first} ${last}`.trim(),
     title: r.title || '', position: r.position || '',
@@ -115,7 +139,7 @@ function rowToDoc(r) {
     source: r.source || '', directory: r.directory || '', bio_check: r.bio_check || '', type: r.type || '',
     score: Number(r.score) || 0, time_stamp: r.time_stamp || '',
     updated_at: r.updated_at || null,
-  };
+  });
 }
 
 // A usable OpenSearch _id: non-empty and within the 512-byte hard cap. A malformed contact (e.g. an email
@@ -326,7 +350,7 @@ function recordToDoc(rec, updatedAt) {
   doc.score = recordScore(rec);
   doc.new_hire = rec['Source'] === 'Sitemap Monitor';   // drives the default "new hires first" sort
   doc.updated_at = updatedAt || null;
-  return doc;
+  return ensureNameGender(doc);   // derive name from email/linkedin if blank + assign gender from name
 }
 
 // Unconditional bulk index (_id = email). Use for UI edits so they always overwrite regardless of score.
