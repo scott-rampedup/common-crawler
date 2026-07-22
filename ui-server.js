@@ -16,6 +16,7 @@ const { siteSearch, bioRowsToRecords } = require('./serper');
 const vcard = require('./vcard');
 const mailer = require('./mailer');
 const optout = require('./optout');
+const firmoEnrich = require('./enrich-firmographics');
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
 // Email blocklist (addresses to drop). Loaded once; edit email-blocklist.txt to update.
@@ -1797,6 +1798,24 @@ pruneOldJobs();
       companiesClient = companies.makeClient(process.env.OPENSEARCH_ENDPOINT);   // Company Crawler index
       console.log('Search backend: OpenSearch (SEARCH_BACKEND=opensearch).');
       optout.ensure(reader.client).then((c) => c && console.log('Opt-out registry index created.')).catch((e) => console.error('opt-out index ensure failed:', e.message));
+      // Ongoing firmographic enrichment: append company data (industry/size/HQ/founded/LinkedIn/name) to any
+      // contact still missing it by joining its domain to the companies index. Runs a bounded sweep shortly
+      // after boot and every FIRMO_SWEEP_HOURS (default 6) — after the one-time backfill this just processes
+      // the delta of newly-ingested contacts, so enrichment becomes part of the ongoing pipeline.
+      if (process.env.FIRMO_SWEEP !== '0') {
+        const FS_HOURS = Math.max(1, Number(process.env.FIRMO_SWEEP_HOURS) || 6);
+        const FS_CAP = Number(process.env.FIRMO_SWEEP_MAX) || 300000;   // bound each run
+        let firmoRunning = false;
+        const firmoSweep = async () => {
+          if (firmoRunning || !reader._os || !companiesClient) return; firmoRunning = true;
+          try { const r = await firmoEnrich.enrichMissing({ client: reader.client, coClient: companiesClient, endpoint: process.env.OPENSEARCH_ENDPOINT, limit: FS_CAP });
+            if (r.updated) console.log(`[firmo] enriched ${r.updated.toLocaleString()} contacts with company data (scanned ${r.scanned.toLocaleString()})`); }
+          catch (e) { console.error('[firmo] sweep error:', e.message); } finally { firmoRunning = false; }
+        };
+        setTimeout(firmoSweep, 10 * 60 * 1000);                        // ~10 min after boot
+        setInterval(firmoSweep, FS_HOURS * 3600 * 1000);
+        console.log(`Firmographic enrichment sweep: ON, every ${FS_HOURS}h (cap ${FS_CAP.toLocaleString()}/run).`);
+      }
       // Keep OpenSearch current with the processing DB: stream fleet-ingested/edited contacts across.
       // Only meaningful when the source of truth is Postgres (DATABASE_URL); SQLite fallback has no fleet.
       if (process.env.DATABASE_URL && process.env.OS_SYNC !== '0') {
@@ -1851,12 +1870,15 @@ server.listen(PORT, async () => {
         if (!mailer.mailEnabled()) return;
         const s = monitorDb.monitorStats();
         const asOf = new Date().toISOString().slice(0, 10);
+        let liveNewHires = 0;   // ACTUAL landed, searchable new-hire contacts (Source=Sitemap Monitor), not the enqueue count
+        try { if (reader && reader._os) { const r = await reader.query({ newHire: 'yes' }); liveNewHires = (r && r.total) || 0; } } catch (e) { /* best-effort */ }
         const rows = [
           ['New BIO URLs this pass', (pass && pass.newBios || 0).toLocaleString()],
           ['… queued for extraction', (pass && pass.extracted || 0).toLocaleString()],
+          ['New-hire contacts (searchable, cumulative)', liveNewHires.toLocaleString()],
           ['Sitemaps monitored nightly', `${(s.activeWatches || 0).toLocaleString()} active`],
           ['Total new BIO URLs seen', ((s.observations && s.observations.new_bio) || 0).toLocaleString()],
-          ['Total processed', (s.extracted || 0).toLocaleString()],
+          ['Total BIO URLs queued (cumulative)', (s.extracted || 0).toLocaleString()],
           ['BIO URLs tracked', (s.present || 0).toLocaleString()],
         ];
         const subject = `Common Crawler — nightly new-hire report (${asOf})`;
