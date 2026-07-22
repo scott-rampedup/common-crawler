@@ -125,11 +125,31 @@ function validId(email) { const id = String(email || '').toLowerCase(); return i
 
 // Bulk index docs, _id = email. Score-gated upsert: a re-indexed email only overwrites if its score is
 // >= the stored score (mirrors the Postgres upsert), so the best record for a person wins.
+// ---- opt-out suppression: emails a person confirmed removal for live in the SEPARATE `optout` index.
+// Every ingestion path funnels through bulkUpsert, so filtering here means a re-crawled opted-out person is
+// dropped again automatically (their "removed again if processed in the future"). Cached 5 min. ----
+const OPTOUT_INDEX = process.env.OPTOUT_INDEX || 'optout';
+let _suppress = { set: new Set(), at: 0 };
+function invalidateSuppression() { _suppress.at = 0; }
+async function suppressedSet(client) {
+  if (Date.now() - _suppress.at < 300000) return _suppress.set;
+  const set = new Set();
+  try {
+    const r = await client.search({ index: OPTOUT_INDEX, body: { size: 10000, _source: ['email'], query: { term: { status: 'confirmed' } } } });
+    for (const h of ((r.body || r).hits.hits || [])) if (h._source && h._source.email) set.add(String(h._source.email).toLowerCase());
+  } catch (e) { /* optout index absent -> nothing suppressed yet */ }
+  _suppress = { set, at: Date.now() };
+  return set;
+}
+
 async function bulkUpsert(client, docs) {
+  const sup = await suppressedSet(client);
   const body = [];
   for (const d of docs) {
     const id = validId(d.email);
     if (!id) continue;
+    if (sup.has(id)) continue;                    // opted out -> never (re)add
+
     body.push({ update: { _index: INDEX, _id: id } });
     body.push({
       scripted_upsert: true, upsert: d,
@@ -334,5 +354,5 @@ async function bulkDelete(client, emails) {
 module.exports = {
   makeClient, ensureIndex, rowToDoc, bulkUpsert, INDEX, MAPPING,
   search, each, facets, count, stats, docToRecord, buildQuery,
-  recordToDoc, indexDocs, bulkDelete, cleanContactLinkedin,
+  recordToDoc, indexDocs, bulkDelete, cleanContactLinkedin, invalidateSuppression, OPTOUT_INDEX,
 };

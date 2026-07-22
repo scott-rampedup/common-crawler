@@ -83,6 +83,15 @@ const templates = {
          <p><a href="${APP_BASE_URL}/login">Sign in →</a></p>
          <p style="color:#6b7280;font-size:13px">If you didn't request this, contact an administrator — your previous password no longer works.</p>`) };
   },
+  optOutVerify(email, confirmUrl) {
+    return { subject: 'Confirm your Common Crawler data-removal request',
+      text: `We received a request to remove ${email} from the Common Crawler database.\n\nTo confirm the removal, click the link below. This permanently removes the data and suppresses it from being re-added in the future.\n\n${confirmUrl}\n\nIf you didn't make this request, ignore this email — nothing will be removed.`,
+      html: wrap('Confirm data removal',
+        `<p>We received a request to remove <strong>${esc(email)}</strong> from the Common Crawler database.</p>
+         <p>To confirm and permanently remove this data — and suppress it from being re-added in the future — click below:</p>
+         <p><a href="${esc(confirmUrl)}" style="display:inline-block;background:#111827;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Confirm removal →</a></p>
+         <p style="color:#6b7280;font-size:13px">If you didn't request this, ignore this email — nothing will be removed.</p>`) };
+  },
 };
 
 async function sendMail({ to, subject, text, html }) {

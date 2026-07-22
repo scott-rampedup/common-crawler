@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Remove my data · Common Crawler</title>
+  <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+  <link rel="stylesheet" href="/ui/styles.css" />
+</head>
+<body class="auth-page">
+  <div class="auth-card">
+    <img class="auth-logo" src="/ui/logo.png" alt="Common Crawler" onerror="this.style.display='none'" />
+    <h1>Remove my data</h1>
+    <p style="color:#6b7280;font-size:14px;line-height:1.5;margin:-4px 0 18px">
+      Enter your email to request removal from the Common Crawler database. We'll email you a confirmation
+      link — your data is removed as soon as you confirm, and added to a suppression list so it isn't re-added.
+    </p>
+    <form id="optForm" class="auth-form" autocomplete="on">
+      <label>Email address
+        <input id="email" type="email" autocomplete="email" placeholder="you@company.com" required />
+      </label>
+      <label>Name <span style="color:#9ca3af">(optional)</span>
+        <input id="name" type="text" autocomplete="name" />
+      </label>
+      <label>Reason <span style="color:#9ca3af">(optional)</span>
+        <textarea id="reason" rows="2" style="resize:vertical;font:inherit"></textarea>
+      </label>
+      <p id="msg" class="auth-msg" style="min-height:0"></p>
+      <button class="primary" type="submit" id="btn">Request removal</button>
+    </form>
+    <div id="done" style="display:none;text-align:center">
+      <div style="font-size:40px">📧</div>
+      <h2 style="font-size:1.15rem;margin:8px 0">Check your inbox</h2>
+      <p style="color:#374151;line-height:1.5">If <strong id="doneEmail"></strong> is in our database, we've sent a
+        confirmation link. Click it to complete the removal.</p>
+    </div>
+    <p class="auth-legal"><a href="/login">Back to sign in</a> · <a href="/privacy">Privacy Policy</a></p>
+  </div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    $('optForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = $('email').value.trim();
+      const msg = $('msg'); msg.textContent = ''; msg.style.color = '';
+      const btn = $('btn'); btn.disabled = true; btn.textContent = 'Sending…';
+      try {
+        const r = await fetch('/api/opt-out', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, name: $('name').value.trim(), reason: $('reason').value.trim() }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || 'Something went wrong. Please try again.');
+        $('optForm').style.display = 'none';
+        $('doneEmail').textContent = email;
+        $('done').style.display = 'block';
+      } catch (err) {
+        msg.textContent = err.message; msg.style.color = '#dc2626';
+        btn.disabled = false; btn.textContent = 'Request removal';
+      }
+    });
+  </script>
+</body>
+</html>

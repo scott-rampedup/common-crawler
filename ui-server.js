@@ -15,6 +15,7 @@ const { importSheet } = require('./sheet-import');
 const { siteSearch, bioRowsToRecords } = require('./serper');
 const vcard = require('./vcard');
 const mailer = require('./mailer');
+const optout = require('./optout');
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
 // Email blocklist (addresses to drop). Loaded once; edit email-blocklist.txt to update.
@@ -115,6 +116,7 @@ function makeOsReader(endpoint) {
   const client = openSearch.makeClient(endpoint);
   return {
     _os: true,
+    client,                                                      // raw OpenSearch client (opt-out registry ops)
     query: (o) => openSearch.search(client, o),
     each: (o, cb) => openSearch.each(client, o, cb),
     facets: () => openSearch.facets(client),
@@ -900,6 +902,7 @@ const server = http.createServer(async (req, res) => {
     p.startsWith('/ui/') || p === '/favicon.ico' ||
     p === '/home' ||
     p === '/login' || p === '/signup' || p === '/forgot' || p === '/privacy' || p === '/terms' ||
+    p === '/opt-out' || p === '/opt-out/confirm' || p === '/api/opt-out' ||
     p === '/api/auth/login' || p === '/api/auth/signup' || p === '/api/auth/logout' || p === '/api/auth/me' ||
     p === '/api/auth/forgot' ||
     (p.startsWith('/api/pages/') && req.method === 'GET')
@@ -920,6 +923,54 @@ const server = http.createServer(async (req, res) => {
   if (p === '/forgot') { serveStaticFile(res, path.join(PUBLIC_DIR, 'forgot.html')); return; }
   if (p === '/privacy' || p === '/terms') { serveStaticFile(res, path.join(PUBLIC_DIR, 'legal.html')); return; }
   if (p === '/home') { serveStaticFile(res, path.join(PUBLIC_DIR, 'home.html')); return; }  // public landing (always reachable)
+  if (p === '/opt-out') { serveStaticFile(res, path.join(PUBLIC_DIR, 'opt-out.html')); return; }
+
+  // ---- public opt-out portal: submit -> emailed confirm link; confirm -> remove from contacts + suppress ----
+  if (p === '/api/opt-out' && req.method === 'POST') {
+    let body = ''; req.on('data', (c) => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on('end', async () => {
+      try {
+        if (!reader._os) { jsonErr(res, 503, 'Data store temporarily unavailable — please try again shortly.'); return; }
+        const b = JSON.parse(body || '{}');
+        const email = optout.normEmail(b.email);
+        if (!optout.isEmail(email)) { jsonErr(res, 400, 'Please enter a valid email address.'); return; }
+        const ip = String(req.headers['x-forwarded-for'] || (req.socket && req.socket.remoteAddress) || '').split(',')[0].trim();
+        const r = await optout.requestOptOut(reader.client, { email, name: b.name, reason: b.reason, ip });
+        if (!r.already) {
+          const confirmUrl = `${mailer.baseUrl()}/opt-out/confirm?token=${encodeURIComponent(r.token)}`;
+          const tpl = mailer.templates.optOutVerify(email, confirmUrl);
+          try { await mailer.sendMail({ to: email, subject: tpl.subject, text: tpl.text, html: tpl.html }); } catch (e) { console.error('[opt-out] verify email failed:', e.message); }
+        }
+        sendJson(res, { ok: true });   // same response whether or not the email exists (don't leak DB membership)
+      } catch (e) { jsonErr(res, 400, e.message || 'Bad request'); }
+    });
+    return;
+  }
+  if (p === '/opt-out/confirm' && req.method === 'GET') {
+    (async () => {
+      const esc = (s) => String(s == null ? '' : s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      let email = null;
+      try { if (reader._os) email = await optout.confirm(reader.client, url.searchParams.get('token') || ''); } catch (e) { console.error('[opt-out] confirm error:', e.message); }
+      if (email) {
+        try { await db.deleteByEmail(email); } catch (e) {}
+        try { if (reader._os) await reader.del([email]); } catch (e) {}
+        try { openSearch.invalidateSuppression(); } catch (e) {}   // take effect immediately, not after the 5-min cache
+        console.log(`[opt-out] confirmed + removed ${email}`);
+      }
+      const ok = !!email;
+      const page = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Data removal — Common Crawler</title></head>
+        <body style="margin:0;background:#f9fafb"><div style="font-family:Inter,system-ui,Segoe UI,Arial,sans-serif;max-width:480px;margin:12vh auto;padding:32px 24px;background:#fff;border:1px solid #eef0f2;border-radius:14px;color:#111827;text-align:center">
+          <div style="font-size:44px;line-height:1">${ok ? '✅' : '⚠️'}</div>
+          <h1 style="font-size:1.35rem;margin:12px 0 8px">${ok ? 'Your data has been removed' : 'Link invalid or expired'}</h1>
+          <p style="color:#4b5563;line-height:1.5">${ok
+            ? `We've removed <strong>${esc(email)}</strong> from the Common Crawler database and added it to our suppression list, so it won't be re-added in the future.`
+            : 'This removal link is no longer valid. You can submit a new request from the opt-out page.'}</p>
+          <p style="margin-top:24px"><a href="/opt-out" style="color:#2563eb;text-decoration:none">Back to opt-out</a> &nbsp;·&nbsp; <a href="/login" style="color:#2563eb;text-decoration:none">Sign in</a></p>
+        </div></body></html>`;
+      res.writeHead(ok ? 200 : 400, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(page);
+    })();
+    return;
+  }
 
   // ---- public page content (Privacy Policy / Terms of Use text) ----
   if (p.startsWith('/api/pages/') && req.method === 'GET') {
@@ -1745,6 +1796,7 @@ pruneOldJobs();
       reader = makeOsReader(process.env.OPENSEARCH_ENDPOINT);
       companiesClient = companies.makeClient(process.env.OPENSEARCH_ENDPOINT);   // Company Crawler index
       console.log('Search backend: OpenSearch (SEARCH_BACKEND=opensearch).');
+      optout.ensure(reader.client).then((c) => c && console.log('Opt-out registry index created.')).catch((e) => console.error('opt-out index ensure failed:', e.message));
       // Keep OpenSearch current with the processing DB: stream fleet-ingested/edited contacts across.
       // Only meaningful when the source of truth is Postgres (DATABASE_URL); SQLite fallback has no fleet.
       if (process.env.DATABASE_URL && process.env.OS_SYNC !== '0') {
