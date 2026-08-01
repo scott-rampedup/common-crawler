@@ -7,6 +7,7 @@
  * it's static, re-loadable reference data, so we skip the replica to save disk).
  */
 const os = require('./opensearch');
+const naics = require('./naics');
 
 const INDEX = process.env.COMPANIES_INDEX || 'companies';
 const OUT_COLS = ['name', 'website', 'domain', 'company_type', 'website_type', 'location_count',
@@ -64,7 +65,7 @@ async function ensureIndex(client) {
 async function bulkIndex(client, docs) {
   if (!docs.length) return { errors: 0 };
   const body = [];
-  for (const d of docs) { if (!d.id) continue; body.push({ index: { _index: INDEX, _id: d.id } }, d); }
+  for (const d of docs) { if (!d.id) continue; naics.assignNaics(d); body.push({ index: { _index: INDEX, _id: d.id } }, d); }
   if (!body.length) return { errors: 0 };
   const res = await client.bulk({ body });
   const r = res.body || res;

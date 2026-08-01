@@ -145,7 +145,8 @@
             </datalist>
           </label>
           <label>NAICS (code or title)
-            <input id="fNaics" type="search" placeholder="e.g. 722511 or Restaurants" />
+            <input id="fNaics" type="search" list="naicsCodes" placeholder="Type a code or title, e.g. 722511 or Restaurants" />
+            <datalist id="naicsCodes"></datalist>
           </label>
 
           <div class="facet" data-field="industry">
@@ -303,6 +304,20 @@
       $('ccTotalIdx').textContent = (typeof d.total === 'number') ? d.total.toLocaleString() : '—';
     }).catch(() => { $('ccTotalIdx').textContent = '—'; });
 
+    // NAICS typeahead: fill the datalist with "Code — Title" options (matches on either code or title text).
+    fetch('/api/companies/naics-codes').then((r) => r.json()).then((d) => {
+      const dl = $('naicsCodes'); if (!dl || !d.codes) return;
+      dl.innerHTML = d.codes.map((c) => '<option value="' + esc(c.label) + '"></option>').join('');
+    }).catch(() => {});
+
+    // The datalist option value is "Code — Title"; searching wants the bare code (exact) when a suggestion is
+    // picked, but still allows free-text title search. Extract a leading NAICS code if present.
+    function naicsParam() {
+      const v = $('fNaics').value.trim();
+      const m = v.match(/^(\d{4,6})\b/);
+      return m ? m[1] : v;
+    }
+
     function filters() {
       return {
         name: $('fName').value.trim(), domain: $('fDomain').value.trim(),
@@ -312,7 +327,7 @@
         contactMin: $('fContactMin').value.trim(), sitemap: $('fSitemap').value.trim(),
         companyType: $('fCompanyType').value,
         websiteType: $('fWebsiteType').value.trim(),
-        naics: $('fNaics').value.trim(),
+        naics: naicsParam(),
         linkedin: $('fLinkedin').checked ? 'yes' : '',
       };
     }

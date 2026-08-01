@@ -13,6 +13,7 @@ const path = require('path');
 const readline = require('readline');
 const co = require('./companies');
 const os = require('./opensearch');
+const naics = require('./naics');
 
 const arg = (f, d) => { const i = process.argv.indexOf(f); return i > -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : d; };
 const IN = arg('--in', ''); const now = new Date().toISOString();
@@ -28,8 +29,8 @@ const CC = (g) => ({ name: g.name || '', website: g.website || '', category: g.c
   // componentized geo (Bing UK carries these) + provenance; Google leaves them blank and keeps full_address
   ...(g.locality ? { locality: g.locality } : {}), ...(g.region ? { region: g.region } : {}), ...(g.country ? { country: g.country } : {}),
   ...(g.time_stamp ? { time_stamp: g.time_stamp } : {}), ...(g.source_map ? { source_map: g.source_map } : {}) });
-const locToDoc = (g) => ({ id: g.cid || ('gm:' + g.root_domain), domain: g.root_domain, company_type: 'Location', cc_refreshed_at: now, ...CC(g) });
-const hqNewToDoc = (id, d) => ({ id, domain: d.domain, company_type: 'HQ', locality: d.locality || '', region: d.region || '', country: d.country || '',
+const locToDoc = (g) => naics.assignNaics({ id: g.cid || ('gm:' + g.root_domain), domain: g.root_domain, company_type: 'Location', cc_refreshed_at: now, ...CC(g) });
+const hqNewToDoc = (id, d) => naics.assignNaics({ id, domain: d.domain, company_type: 'HQ', locality: d.locality || '', region: d.region || '', country: d.country || '',
   location_count: d.location_count || 0, cc_refreshed_at: now, ...CC(d) });
 
 async function bulkFlush(body, tag) {

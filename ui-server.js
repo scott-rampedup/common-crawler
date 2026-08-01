@@ -128,6 +128,7 @@ function makeOsReader(endpoint) {
 }
 let osSync = null;   // background delta syncer handle (fleet-ingested contacts -> OpenSearch)
 const companies = require('./companies');
+const naics = require('./naics');
 const serperApi = require('./serper');
 const ccHome = require('./cc-home-enrich');
 let companiesClient = null;        // OpenSearch client for the `companies` index (Company Crawler), set in startup
@@ -1459,6 +1460,12 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/companies/facets' && req.method === 'GET') {
     if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
     try { sendJson(res, await companies.facets(companiesClient, companyFilters(url.searchParams))); }
+    catch (e) { jsonErr(res, 500, e.message); }
+    return;
+  }
+  // Static "Code — Title" list for the NAICS search typeahead (built from the curated category→NAICS lookup).
+  if (url.pathname === '/api/companies/naics-codes' && req.method === 'GET') {
+    try { sendJson(res, { codes: naics.codeList() }); }
     catch (e) { jsonErr(res, 500, e.message); }
     return;
   }
