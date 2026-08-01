@@ -754,22 +754,27 @@ function extractRecord(html, url, deps = {}){
   }
   if(isBio && !tels.length && sd.phone){ const k = String(sd.phone).replace(/\D/g,""); if(k){ seenT.add(k); tels.push(sd.phone); } }  // JSON-LD telephone
   let phone="", phoneType="", phoneLocation="", phone2="", phone2Type="";
-  if(isBio && tels.length && wireless){
+  // Capture the phone NUMBER whenever we have a tel:/sms: (or text/JSON-LD) number on a bio page —
+  // this NO LONGER requires the `wireless` block table, so the S3-direct Lambda (which omits the 40MB
+  // table for speed) still captures numbers. The block table only adds the NANP line-TYPE + location;
+  // when it's absent we still get the number + intl/sms-based Mobile flag, and NANP line-types can be
+  // backfilled later from the stored E.164 values.
+  if(isBio && tels.length){
     const cc = countryCodeFromDomain(getBaseDomain(url));   // country from the domain TLD (default US)
     const smsSet = new Set(smsRaw.map((s) => toE164(splitExtension(s).main, cc)).filter(Boolean));  // textable (Mobile) numbers
     const a = splitExtension(tels[0]);
     const e164a = toE164(a.main, cc);
-    phoneType = classifyLineType(a.main, wireless).type;    // classify on the main number (no ext)…
-    if(phoneType === "Unknown") phoneType = intlLineType(e164a) || phoneType;  // …non-NANP via libphonenumber
+    if(wireless) phoneType = classifyLineType(a.main, wireless).type;   // NANP line-type (needs the block table)…
+    if(!phoneType || phoneType === "Unknown") phoneType = intlLineType(e164a) || phoneType;  // …non-NANP via libphonenumber
     if(intlMobileType(e164a)) phoneType = "Mobile";         // …non-NANP mobile by country prefix
     if(smsSet.has(e164a)) phoneType = "Mobile";             // …an sms: link means it's textable => Mobile
-    phoneLocation = phoneType === "Toll Free" ? "" : geocode(a.main);   // intl location filled later by geocodeRecords
+    phoneLocation = (wireless && phoneType !== "Toll Free") ? geocode(a.main) : "";   // block-level location (needs the table)
     phone = e164a + (a.ext ? ` ext. ${a.ext}` : "");        // …E.164 + standardized extension
     if(tels[1]){
       const b = splitExtension(tels[1]);
       const e164b = toE164(b.main, cc);
-      phone2Type = classifyLineType(b.main, wireless).type;
-      if(phone2Type === "Unknown") phone2Type = intlLineType(e164b) || phone2Type;
+      if(wireless) phone2Type = classifyLineType(b.main, wireless).type;
+      if(!phone2Type || phone2Type === "Unknown") phone2Type = intlLineType(e164b) || phone2Type;
       if(intlMobileType(e164b)) phone2Type = "Mobile";
       if(smsSet.has(e164b)) phone2Type = "Mobile";
       phone2 = e164b + (b.ext ? ` ext. ${b.ext}` : "");
