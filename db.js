@@ -112,6 +112,9 @@ function makeDb(dir) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_obs_ts ON observations(ts);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_obs_event ON observations(event);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_obs_domain ON observations(domain);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_obs_url ON observations(url);`);
+  // monitor_meta: tiny key/value store for monitor cursors (e.g. the extraction high-water-mark).
+  db.exec(`CREATE TABLE IF NOT EXISTS monitor_meta (k TEXT PRIMARY KEY, v TEXT);`);
 
   const insertCols = ['email', ...COLS, 'domain', 'search', 'score', 'updated_at'];
   const placeholders = insertCols.map(() => '?').join(', ');
@@ -618,7 +621,34 @@ function makeDb(dir) {
     const lastPass = db.prepare(`SELECT MAX(last_fetched) m FROM watched_sitemaps`).get().m || null;
     const byEvent = {};
     for (const r of db.prepare(`SELECT event, COUNT(*) c FROM observations GROUP BY event`).all()) byEvent[r.event] = r.c;
-    return { watches, activeWatches: activeW, present, departed, extracted, lastPass, observations: byEvent };
+    // deltas detected but not yet handed to extraction (observations past the extraction cursor)
+    const cursor = Number((getMonitorMetaStmt.get('extract_cursor') || {}).v) || 0;
+    const pending = db.prepare(`SELECT COUNT(*) c FROM observations o JOIN bio_urls b ON b.url = o.url
+      WHERE o.id > ? AND o.event IN ('new_bio','reappeared') AND b.status = 'present'`).get(cursor).c;
+    return { watches, activeWatches: activeW, present, departed, extracted, pending, lastPass, observations: byEvent };
+  }
+
+  // --- monitor cursors + delta-extraction queue --------------------------------------------------
+  // Tiny key/value store for monitor state (the extraction high-water-mark over observations.id).
+  const getMonitorMetaStmt = db.prepare(`SELECT v FROM monitor_meta WHERE k = ?`);
+  const setMonitorMetaStmt = db.prepare(`INSERT INTO monitor_meta (k, v) VALUES (?, ?)
+    ON CONFLICT(k) DO UPDATE SET v = excluded.v`);
+  function getMonitorMeta(k, dflt = null) { const r = getMonitorMetaStmt.get(String(k)); return r ? r.v : dflt; }
+  function setMonitorMeta(k, v) { setMonitorMetaStmt.run(String(k), String(v)); }
+
+  // Deltas awaiting extraction, driven by the APPEND-ONLY observation feed rather than the bio_urls
+  // baseline. Seeding emits no observations, so the initial roster is never returned here (never
+  // re-extracted). Returns [{id, url}] with observation id > afterId in ascending id order, so the
+  // caller advances its cursor to the last id it successfully extracted. Only URLs still 'present'.
+  const pendingExtractionsStmt = db.prepare(`
+    SELECT o.id AS id, o.url AS url
+      FROM observations o
+      JOIN bio_urls b ON b.url = o.url
+     WHERE o.id > ? AND o.event IN ('new_bio', 'reappeared') AND b.status = 'present'
+     ORDER BY o.id ASC
+     LIMIT ?`);
+  function pendingExtractions({ afterId = 0, limit = 2000 } = {}) {
+    return pendingExtractionsStmt.all(Number(afterId) || 0, Math.min(20000, Math.max(1, Number(limit) || 2000)));
   }
 
   importLegacyJson();
@@ -629,7 +659,8 @@ function makeDb(dir) {
   console.log(`Central DB (SQLite): ${count().toLocaleString()} contact(s) at ${file}`);
   return { upsertMany, query, each, stats, count, facets, getByEmail, updateRecord, deleteByEmail, deleteByDomain, domainStats, existingUrls, fixRemaxLocations, backfillLocations, updatePositionByPrefix, bulkSetPosition, fixAngola,
     // sitemap monitor
-    upsertWatch, listWatches, activeWatches, setWatchState, setWatchStatus, removeWatch, syncSitemapUrls, markExtracted, recentObservations, monitorStats };
+    upsertWatch, listWatches, activeWatches, setWatchState, setWatchStatus, removeWatch, syncSitemapUrls, markExtracted, recentObservations, monitorStats,
+    getMonitorMeta, setMonitorMeta, pendingExtractions };
 }
 
 module.exports = { makeDb };

@@ -1886,6 +1886,7 @@ server.listen(PORT, async () => {
           ['Sitemaps monitored nightly', `${(s.activeWatches || 0).toLocaleString()} active`],
           ['Total new BIO URLs seen', ((s.observations && s.observations.new_bio) || 0).toLocaleString()],
           ['Total BIO URLs queued (cumulative)', (s.extracted || 0).toLocaleString()],
+          ['Deltas awaiting extraction (backlog)', (s.pending || 0).toLocaleString()],
           ['BIO URLs tracked', (s.present || 0).toLocaleString()],
         ];
         const subject = `Common Crawler — nightly new-hire report (${asOf})`;

@@ -35,6 +35,8 @@ function makeMonitor(deps = {}) {
     log = () => {},
     hash = djb2,
     now = () => new Date().toISOString(),
+    extractBatch = Number(process.env.MONITOR_EXTRACT_BATCH) || 2000,   // URLs handed to `extract` per call/cursor-advance
+    extractMaxPerPass = Number(process.env.MONITOR_EXTRACT_MAX) || 100000, // bound one pass's extraction (backlog drains over passes)
   } = deps;
 
   if (!db || !engine || typeof fetchDoc !== 'function') {
@@ -97,13 +99,42 @@ function makeMonitor(deps = {}) {
     return r.watches.length ? r.watches[0].bioUrls : [];
   }
 
-  // One monitoring pass over every active watch. Returns a summary; emits observations + extraction
-  // for the delta. `force` ignores the <lastmod>/hash skip (re-diff everything).
+  // Extract detected deltas in crash-safe batches, driven by a PERSISTED cursor over the observation
+  // feed (extract_cursor = last observation id handed off). The cursor only advances after a batch is
+  // successfully handed to `extract`, so an interrupted pass resumes exactly here next time (self-
+  // healing) and the seeded baseline — which emits no observations — is never extracted. Idempotent:
+  // `extract` upserts by email and its jobs auto-resume, so a re-run of an in-flight batch is safe.
+  async function drainExtractions() {
+    if (!extract) return 0;
+    let cursor = Number(db.getMonitorMeta('extract_cursor', 0)) || 0;
+    let done = 0;
+    while (done < extractMaxPerPass) {
+      const batch = db.pendingExtractions({ afterId: cursor, limit: extractBatch });
+      if (!batch.length) break;
+      const urls = [...new Set(batch.map((r) => r.url))];
+      try {
+        await extract(urls, `Monitor: ${urls.length} new bio URL(s)`);
+        db.markExtracted(urls);
+      } catch (e) { log(`extract batch failed (cursor held, retries next pass): ${e.message}`); break; }
+      cursor = batch[batch.length - 1].id;                 // advance ONLY past a handed-off batch
+      db.setMonitorMeta('extract_cursor', String(cursor));
+      done += urls.length;
+    }
+    if (done) log(`extracted ${done} delta bio URL(s) (cursor -> ${cursor})`);
+    return done;
+  }
+
+  // One monitoring pass over every active watch. Returns a summary; records observations for the delta
+  // and hands new/reappeared bios to extraction via the persisted cursor. `force` ignores the
+  // <lastmod>/hash skip (re-diff everything).
   async function runMonitorPass({ force = false } = {}) {
     const watches = db.activeWatches();
     const summary = { scanned: 0, skipped: 0, fetchFailed: 0, changed: 0,
       newBios: 0, reappeared: 0, departed: 0, extracted: 0, errors: 0 };
-    const toExtract = [];
+
+    // Recover first: drain any deltas detected but not yet extracted (e.g. a prior pass was killed
+    // mid-run before its extraction ran). Cheap when there's no backlog.
+    summary.extracted += await drainExtractions();
 
     // Group by parent index so each parent is fetched once; its child <lastmod>s drive the skip.
     const groups = new Map();
@@ -139,8 +170,8 @@ function makeMonitor(deps = {}) {
           summary.newBios += diff.newUrls.length;
           summary.reappeared += diff.reappearedUrls.length;
           summary.departed += diff.departedUrls.length;
-          for (const u of diff.newUrls) toExtract.push(u);
-          for (const u of diff.reappearedUrls) toExtract.push(u);
+          // NB: no in-memory extract list — syncSitemapUrls already persisted new_bio/reappeared
+          // observations, and drainExtractions() (below + start of next pass) turns them into contacts.
           db.setWatchState(w.sitemap_url, { lastLastmod: curLastmod || w.last_lastmod, lastHash: contentHash, lastFetched: now() });
           if (diff.newUrls.length || diff.departedUrls.length) {
             log(`${w.sitemap_url}: +${diff.newUrls.length} new, -${diff.departedUrls.length} departed`);
@@ -149,16 +180,10 @@ function makeMonitor(deps = {}) {
       }
     }
 
-    // Extract the delta (new + reappeared) through the normal CC-first webpage pipeline, once.
-    const uniq = [...new Set(toExtract)];
-    if (uniq.length && extract) {
-      try {
-        await extract(uniq, `Monitor: ${uniq.length} new bio URL(s)`);
-        db.markExtracted(uniq);
-        summary.extracted = uniq.length;
-      } catch (e) { log(`extract failed: ${e.message}`); }
-    }
-    log(`monitor pass: scanned ${summary.scanned}, skipped ${summary.skipped}, new ${summary.newBios}, departed ${summary.departed}`);
+    // Extract this pass's freshly-detected deltas (new + reappeared) via the same cursor drain, so a
+    // completed pass lands its new hires immediately; anything left over is picked up next pass.
+    summary.extracted += await drainExtractions();
+    log(`monitor pass: scanned ${summary.scanned}, skipped ${summary.skipped}, new ${summary.newBios}, departed ${summary.departed}, extracted ${summary.extracted}`);
     return summary;
   }
 
