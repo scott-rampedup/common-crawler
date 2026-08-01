@@ -134,6 +134,28 @@ function deobfuscateEmail(s){
     .replace(/\s*[\[(]\s*dot\s*[\])]\s*/gi, ".");   // [dot] / (dot) ->  .
 }
 
+// Cloudflare "Email Protection" hides the real address behind a hex blob (first octet = XOR key):
+//   <a data-cfemail="HEX">[email&#160;protected]</a>  and  /cdn-cgi/l/email-protection#HEX
+// Without decoding we'd see the "[email protected]" placeholder and MODEL a guessed address instead
+// of the person's real one — so this is a premium recovery for email capture.
+function decodeCfEmail(hex){
+  hex = String(hex || "").trim();
+  if(!/^[0-9a-f]{6,}$/i.test(hex) || hex.length % 2) return "";
+  try{
+    const k = parseInt(hex.substr(0, 2), 16); let out = "";
+    for(let i = 2; i < hex.length; i += 2) out += String.fromCharCode(parseInt(hex.substr(i, 2), 16) ^ k);
+    return /@/.test(out) ? out : "";
+  }catch{ return ""; }
+}
+function cfEmailsFromHtml(html){
+  const out = []; const s = String(html || ""); let m;
+  const re1 = /data-cfemail=["']([0-9a-fA-F]+)["']/g;
+  while((m = re1.exec(s))){ const e = decodeCfEmail(m[1]); if(e) out.push(e); }
+  const re2 = /\/cdn-cgi\/l\/email-protection#([0-9a-fA-F]+)/g;
+  while((m = re2.exec(s))){ const e = decodeCfEmail(m[1]); if(e) out.push(e); }
+  return out;
+}
+
 let EMAIL_BLOCKLIST = new Set();
 function setEmailBlocklist(emails){
   EMAIL_BLOCKLIST = new Set([...(emails || [])].map((e) => String(e).trim().toLowerCase()).filter(Boolean));
@@ -686,6 +708,7 @@ function extractRecord(html, url, deps = {}){
     if(e && !seenE.has(e.toLowerCase())){ seenE.add(e.toLowerCase()); emails.push(e); }
   };
   for(const h of hrefs){ if(/^mailto:/i.test(h)) addEmail(h.replace(/^mailto:/i,"").split("?")[0]); }
+  for(const e of cfEmailsFromHtml(html)) addEmail(e);      // Cloudflare-protected addresses (decoded) — precise, like mailto
   if(!emails.length){
     for(const e of extractEmailsFromText(html)) addEmail(e);
   }

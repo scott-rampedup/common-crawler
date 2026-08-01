@@ -19,7 +19,14 @@ const extractor = require('./extractor');
 const os = require('./opensearch');
 const { makeCcS3 } = require('./cc-s3');
 const { modelMissingEmails } = require('./email-model');
+const wbc = require('./wireless-block-classifier');
+const vcard = require('./vcard');
 let ccEngine = null; try { ccEngine = require('./cc-engine'); } catch (e) { /* live fallback optional */ }
+// Phone-block table: extractRecord captures NO phone unless `wireless` is passed (the line-type gate),
+// so load it up front — without it every extracted contact would have a blank phone.
+let wireless = null;
+try { wireless = wbc.loadWirelessBlocks(wbc.PHONE_BLOCKS_CSV); console.error('phone-blocks loaded (phone capture ON)'); }
+catch (e) { console.error('WARN phone-blocks NOT loaded -> phones will be blank:', e.message); }
 
 function argOf(flag) { const i = process.argv.indexOf(flag); return i > -1 ? process.argv[i + 1] : ''; }
 
@@ -96,16 +103,23 @@ function urlBioName(url, genderMap) {
 
   // ---- accumulate extracted records; flush in chunks (filter -> model emails -> upsert) ----
   let pending = [];
-  let submitted = 0, withEmail = 0, upErrs = 0, modelled = 0, dropJunk = 0, dropNoEmail = 0;
+  let submitted = 0, withEmail = 0, upErrs = 0, modelled = 0, dropJunk = 0, dropNoEmail = 0, vcardApplied = 0;
   async function flush() {
     if (!pending.length) return;
     const recs = pending; pending = [];
     // (a) keep only records that read as a real person (drops page-title "names" from contact/service pages)
     const people = recs.filter((r) => looksLikePerson(r['First'], r['Last']));
     dropJunk += recs.length - people.length;
-    // (b) a generic firm inbox on a bio page isn't the person's address — clear it so we model a personal one
+    // (b) a generic firm inbox on a bio page isn't the person's address — clear it FIRST so the vCard
+    // or the modeler can supply a real personal one into the now-empty field.
     for (const r of people) { if (isGenericEmail(r['Email Address'])) { r['Email Address'] = ''; r['Email Type'] = ''; } }
-    // (c) synthesize personal emails from the domain pattern (this batch + the central index)
+    // (c) vCard: download the .vcf linked on the bio page (through the SAME proxy) and merge the person's
+    // DIRECT email + CELL phone (TEL;TYPE=CELL -> Mobile). Premium source; augments, never clobbers.
+    if (ccEngine && typeof ccEngine.fetchDoc === 'function') {
+      try { const v = await vcard.enrichRecords(people, { genderMap, _fetch: ccEngine.fetchDoc }); vcardApplied += (v && v.applied) || 0; }
+      catch (e) { /* best-effort */ }
+    }
+    // (d) synthesize personal emails from the domain pattern for anyone STILL missing one
     try { modelled += await modelMissingEmails(people, { dbQuery }); } catch (e) { /* best-effort */ }
     let out = people; try { out = extractor.analyzePhones(people) || people; } catch (e) { /* best-effort */ }
     // (d) keep only real people with a real (personal or modelled) email
@@ -128,7 +142,7 @@ function urlBioName(url, genderMap) {
         try {
           const { html, url, source } = await run(jobs[k]);
           if (!html) continue; fetched++;
-          const rec = extractor.extractRecord(html, url, { genderMap, directoryRules: {}, source, timestamp: jobs[k].ts || '', allowNoEmail: true });
+          const rec = extractor.extractRecord(html, url, { wireless, genderMap, directoryRules: {}, source, timestamp: jobs[k].ts || '', allowNoEmail: true });
           if (rec && !looksLikePerson(rec['First'], rec['Last'])) { const nm = urlBioName(url, genderMap); if (nm) { rec['First'] = nm.first; rec['Last'] = nm.last; } }   // name from URL slug when the page has none
           if (rec) { extracted++; pending.push(rec); if (pending.length >= CHUNK) await flush(); }
         } catch (e) { ferr++; }
@@ -160,5 +174,5 @@ function urlBioName(url, genderMap) {
     }
   }
   await flush();
-  console.error(`DONE: ${submitted.toLocaleString()} real contacts upserted (${modelled.toLocaleString()} emails modelled) | dropped ${dropJunk.toLocaleString()} non-person + ${dropNoEmail.toLocaleString()} no-usable-email | ${upErrs} upsert-err | ${Math.round((Date.now() - t0) / 1000)}s`);
+  console.error(`DONE: ${submitted.toLocaleString()} real contacts upserted (${modelled.toLocaleString()} emails modelled, ${vcardApplied.toLocaleString()} vCards merged) | dropped ${dropJunk.toLocaleString()} non-person + ${dropNoEmail.toLocaleString()} no-usable-email | ${upErrs} upsert-err | ${Math.round((Date.now() - t0) / 1000)}s`);
 })().catch((e) => { console.error('ERR', e.message); process.exit(1); });
