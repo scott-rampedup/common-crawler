@@ -14,17 +14,33 @@ const https = require('https');
 const { S3Client, ListObjectsV2Command, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { NodeHttpHandler } = require('@smithy/node-http-handler');
 const os = require('./opensearch');
+const { modelMissingEmails } = require('./email-model');
 
 (async () => {
   const prefix = process.argv[2] || 'cc-extracted/';
   const bucket = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${process.env.AWS_REGION || 'us-east-1'}`;
   const region = process.env.AWS_REGION || 'us-east-1';
+  // --model: for records with a phone but NO email (dropped otherwise, since email = _id), synthesize a
+  // personal address from the domain's known email pattern (learned from the central index, cached per
+  // domain across the whole run so each domain is queried once). Tagged Email Type "Modelled".
+  const MODEL = process.argv.includes('--model');
   // Keep-alive so the many S3 GETs across a crawl reuse a small socket pool instead of churning
   // short-lived TCP connections (which exhausted Windows ephemeral ports and EACCES'd the next crawl).
   const s3 = new S3Client({ region, requestHandler: new NodeHttpHandler({ httpsAgent: new https.Agent({ keepAlive: true, maxSockets: 64 }) }) });
   const client = os.makeClient(process.env.OPENSEARCH_ENDPOINT);
   const CONC = Number(process.env.LOAD_CONC) || 8;   // OpenSearch write-throttles above ~8 concurrent bulk streams
-  console.error(`loading s3://${bucket}/${prefix} -> OpenSearch (conc ${CONC})`);
+  console.error(`loading s3://${bucket}/${prefix} -> OpenSearch (conc ${CONC})${MODEL ? ' [--model: email modelling ON]' : ''}`);
+
+  // Per-domain email-pattern lookup for --model, cached (as a promise) so each domain hits OpenSearch
+  // once across the whole run even under concurrency.
+  const domainCache = new Map();
+  function dbQuery(domain) {
+    if (!domainCache.has(domain)) domainCache.set(domain, (async () => {
+      try { const r = await os.search(client, { domain, emailType: 'Professional', pageSize: 50 }); return r.rows || []; }
+      catch (e) { return []; }
+    })());
+    return domainCache.get(domain);
+  }
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // bulkUpsert with exponential backoff: a 429 (write-queue full) throws, so retry rather than silently
   // dropping the file's records — the failure mode that lost ~97% of a 4,847-file load run at conc 32.
@@ -56,8 +72,12 @@ const os = require('./opensearch');
         const r = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
         const body = await r.Body.transformToString();
         const now = new Date().toISOString();
-        const docs = body.trim().split('\n').filter(Boolean)
-          .map((l) => { try { return os.recordToDoc(JSON.parse(l), now); } catch (e) { return null; } })
+        const recs = body.trim().split('\n').filter(Boolean)
+          .map((l) => { try { return JSON.parse(l); } catch (e) { return null; } })
+          .filter(Boolean);
+        if (MODEL) { try { await modelMissingEmails(recs, { dbQuery }); } catch (e) { /* best-effort */ } }
+        const docs = recs
+          .map((r2) => { try { return os.recordToDoc(r2, now); } catch (e) { return null; } })
           .filter((d) => d && d.email);
         for (let i = 0; i < docs.length; i += 2000) errs += await upsertRetry(docs.slice(i, i + 2000));
         total += docs.length;
