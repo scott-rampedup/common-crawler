@@ -43,6 +43,8 @@ const MAPPING = {
     title:          { type: 'text', fields: { kw: { type: 'keyword' } } },
     position:       { type: 'keyword' },
     company:        { type: 'text', fields: { kw: { type: 'keyword' } } },
+    employer:       { type: 'text', fields: { kw: { type: 'keyword' } } },   // schema.org worksFor (page-declared)
+    work_location:  { type: 'keyword' },                                     // schema.org workLocation
     domain:         { type: 'keyword' },
     description:    { type: 'text' },
     path_id:        { type: 'keyword' },
@@ -214,7 +216,8 @@ const colName = (f) => String(f).toLowerCase().replace(/[^a-z0-9]+/g, '_').repla
 const FIELD_TO_DOC = {
   'Time Stamp': 'time_stamp', 'Source': 'source', 'Web Source URL': 'web_source_url', 'Directory': 'directory',
   'Path ID': 'path_id', 'Last Path': 'last_path', 'Bio Check': 'bio_check', 'First': 'first', 'Last': 'last',
-  'Gender': 'gender', 'Title': 'title', 'Position': 'position', 'Description': 'description', 'Image URL': 'image_url',
+  'Gender': 'gender', 'Title': 'title', 'Position': 'position', 'Employer': 'employer', 'Location': 'work_location',
+  'Description': 'description', 'Image URL': 'image_url',
   'Email Address': 'email', 'Email Type': 'email_type', 'LinkedIn URL': 'linkedin_url', 'Facebook': 'facebook',
   'Twitter': 'twitter', 'WhatsApp': 'whatsapp', 'Google Maps': 'google_maps', 'vCard': 'vcard', 'Phone': 'phone',
   'Phone Type': 'phone_type', 'Phone Location': 'phone_location', 'Phone 2': 'phone_2', 'Phone 2 Type': 'phone_2_type',

@@ -616,7 +616,7 @@ function findPosition(title, description){
 }
 
 // ---------------------------------------------------------------- main
-const EMPTY_SD = { person:false, name:"", email:"", phone:"", image:"", locality:"", region:"", country:"", sameAs:[] };
+const EMPTY_SD = { person:false, name:"", first:"", last:"", jobTitle:"", gender:"", employer:"", workLocation:"", email:"", phone:"", image:"", locality:"", region:"", country:"", sameAs:[] };
 // First Facebook / Twitter-X / WhatsApp PROFILE link from a list of URLs. Skips share/intent
 // endpoints and the site's OWN brand handle (e.g. facebook.com/remax on a remax page) so we keep
 // the PERSON's profile, not the company's. Facebook/Twitter strip the query; WhatsApp keeps it
@@ -648,8 +648,38 @@ function findSocials(urls, brand){
 // email/phone from mailto:/tel: links, or use a name-polluting URL slug (e.g. remax's
 // first-last-city-state). Name is taken ONLY from a Person-type object so a company name never
 // lands in First/Last. Returns EMPTY_SD's shape.
+// --- helpers to flatten schema.org values that may be a string, array, or nested object ---
+function sdText(v){                                   // jobTitle: "CEO" | ["CEO",..] | {name:"CEO"}
+  if(!v) return "";
+  if(Array.isArray(v)) return sdText(v[0]);
+  if(typeof v === "object") return String(v.name || v["@value"] || v.title || "").trim();
+  return String(v).trim();
+}
+function sdGender(v){                                  // gender: "Male" | "https://schema.org/Female" | {name:"Male"}
+  const s = sdText(v).toLowerCase();
+  if(/(^|\/)male\b|^m$/.test(s)) return "M";
+  if(/(^|\/)female\b|^f$/.test(s)) return "F";
+  return "";
+}
+function sdOrgName(v){                                 // worksFor: {"@type":"Organization","name":"Acme"} | "Acme" | [..]
+  if(!v) return "";
+  if(Array.isArray(v)) return sdOrgName(v[0]);
+  if(typeof v === "object") return String(v.name || v.legalName || "").trim();
+  return String(v).trim();
+}
+function sdPlace(v){                                   // workLocation: Place/PostalAddress/ContactPoint | string
+  if(!v) return "";
+  if(Array.isArray(v)) return sdPlace(v[0]);
+  if(typeof v === "string") return v.trim();
+  if(typeof v !== "object") return "";
+  const a = (v.address && typeof v.address === "object") ? v.address : v;   // Place -> .address, or an address itself
+  const parts = [a.addressLocality || a.name || v.name || "", a.addressRegion || "", a.addressCountry || ""]
+    .map((x) => (typeof x === "object" ? (x.name || "") : String(x || ""))).map((x) => x.trim()).filter(Boolean);
+  return [...new Set(parts)].join(", ");
+}
 function structuredFromHtml(html){
-  const out = { person:false, name:"", email:"", phone:"", image:"", locality:"", region:"", country:"", sameAs:[] };
+  const out = { person:false, name:"", first:"", last:"", jobTitle:"", gender:"", employer:"", workLocation:"",
+    email:"", phone:"", image:"", locality:"", region:"", country:"", sameAs:[] };
   const re = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
   let m;
   while((m = re.exec(html))){
@@ -660,7 +690,17 @@ function structuredFromHtml(html){
       const t = Array.isArray(o["@type"]) ? o["@type"].join(",") : String(o["@type"] || "");
       const isPerson = /\b(Person|RealEstateAgent|Agent|Attorney|Physician)\b/i.test(t);
       if(!isPerson && !/\b(LocalBusiness|Organization|RealEstate)/i.test(t)) continue;
-      if(isPerson && !out.name && o.name){ out.name = String(o.name); out.person = true; }
+      if(isPerson){
+        out.person = true;
+        if(!out.name && o.name) out.name = String(o.name);
+        // richer Person props (only from a Person-type object, so a company never fills these)
+        if(!out.first && o.givenName)  out.first  = sdText(o.givenName);
+        if(!out.last  && o.familyName) out.last   = sdText(o.familyName);
+        if(!out.jobTitle && (o.jobTitle || o.hasOccupation)) out.jobTitle = sdText(o.jobTitle || (o.hasOccupation && (o.hasOccupation.name || o.hasOccupation.roleName)));
+        if(!out.gender && o.gender)    out.gender = sdGender(o.gender);
+        if(!out.employer && o.worksFor) out.employer = sdOrgName(o.worksFor);
+        if(!out.workLocation && (o.workLocation || o.homeLocation)) out.workLocation = sdPlace(o.workLocation || o.homeLocation);
+      }
       if(!out.email && o.email) out.email = String(o.email).replace(/^mailto:/i, "").trim();
       if(!out.phone && o.telephone) out.phone = String(o.telephone).trim();
       if(!out.image && o.image) out.image = typeof o.image === "string" ? o.image : ((o.image && (o.image.url || o.image["@id"])) || "");
@@ -682,19 +722,23 @@ function extractRecord(html, url, deps = {}){
   html = String(html || "");
   url = String(url || "").split("?")[0];        // drop the query string ("?...") from the source URL
 
+  // FREE structured-data (schema.org JSON-LD) — computed up front because a Person-type object is itself
+  // authoritative evidence the page is a person profile, so it counts as a bio page for name/phone/gender.
+  const sd = html.indexOf("ld+json") >= 0 ? structuredFromHtml(html) : EMPTY_SD;
   const directory = classifyDirectory(url, html, deps.directoryRules, deps.genderMap);
-  const isBio = directory === "BIO URL";
+  const isBio = directory === "BIO URL" || sd.person;
   const pathHit = pathIdFromUrl(url);                  // {id, role} for the directory segment, or null
-  const outDirectory = pathHit ? "Team" : directory;   // matched directory term -> Directory Type "Team"
+  const outDirectory = pathHit ? "Team" : (directory === "BIO URL" || sd.person ? "BIO URL" : directory);
   const last = lastPathSeg(url);
   const nameSlug = nameSlugFromUrl(url);               // name seg (skips a trailing record id, e.g. /First-Last/71955)
   let { first, last: lastName } = isBio ? inferNameFromSlug(nameSlug, deps.genderMap) : { first:"", last:"" };
 
   const hrefs = anchors(html);
 
-  // FREE structured-data (schema.org JSON-LD) fallback — fills any gaps the normal extraction leaves.
-  const sd = html.indexOf("ld+json") >= 0 ? structuredFromHtml(html) : EMPTY_SD;
-  if(isBio && sd.person && sd.name){            // JSON-LD name beats a slug polluted with city/state
+  // schema.org Person givenName/familyName are the most authoritative name source (beat the slug); then a
+  // Person "name" split into first/last.
+  if(sd.first && sd.last){ first = sd.first; lastName = sd.last; }
+  else if(sd.person && sd.name){
     const nm = nameFromSlug(String(sd.name).replace(/\s+/g, "-"));
     if(nm.first && nm.last && (!first || !lastName || lastName.length <= 2)){ first = nm.first; lastName = nm.last; }
   }
@@ -791,11 +835,14 @@ function extractRecord(html, url, deps = {}){
   // A matched directory Path ID with a role (e.g. /attorneys/ -> "Attorney") drives both
   // Title and Position; otherwise Title = page title and Position = page-derived role.
   const role = (pathHit && pathHit.role) ? pathHit.role : "";
-  let title = role || pageTtl;
-  let position = role || findPosition(pageTtl, description);
+  // Title = the person's specific declared job title (schema.org jobTitle) when present, else the matched
+  // path role, else the page <title>. Position stays the coarse matched category (role first).
+  let title = sd.jobTitle || role || pageTtl;
+  let position = role || findPosition(sd.jobTitle || pageTtl, description);
   let image = findImage(html, url);
   if(!image && sd.image) image = toAbs(sd.image, url);
-  const gender = first ? (genderMap[first.toLowerCase()] || "") : "";
+  let gender = first ? (genderMap[first.toLowerCase()] || "") : "";
+  if(!gender && sd.gender) gender = sd.gender;                  // schema.org gender fills what the names map missed
 
   // ---- Morgan Stanley advisor pages (advisor.morganstanley.com) ----
   // Server-rendered team-roster pages read from Common Crawl (the live site blocks datacenter IPs).
@@ -855,6 +902,8 @@ function extractRecord(html, url, deps = {}){
     "Gender": gender,
     "Title": title,
     "Position": position,
+    "Employer": sd.employer || "",                                          // schema.org worksFor
+    "Location": sd.workLocation || [sd.locality, sd.region].filter(Boolean).join(", "),  // schema.org workLocation (or address)
     "Description": description,
     "Image URL": image,
     "Email Address": email,
