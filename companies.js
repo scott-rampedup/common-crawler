@@ -244,4 +244,24 @@ function rowToCsvLine(d0) {
 }
 const csvHeader = () => OUT_COLS.join(',');
 
-module.exports = { INDEX, MAPPING, OUT_COLS, CC_FIELDS, DEFAULT_ALT, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, makeClient: os.makeClient };
+// Hosts that must NEVER be a company's primary domain: free email, social profiles, video, directories,
+// and shared site-builders / free hosts. A Google-Maps / AllThePlaces "website" pointing at one of these
+// is NOT a real web source, so the record is treated as website-less (skipped) rather than merging
+// thousands of unrelated businesses under one junk host (e.g. domain=facebook.com).
+const NON_COMPANY_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.uk', 'ymail.com', 'hotmail.com', 'hotmail.co.uk',
+  'outlook.com', 'live.com', 'msn.com', 'aol.com', 'icloud.com', 'me.com', 'mac.com', 'mail.com',
+  'gmx.com', 'gmx.de', 'gmx.net', 'proton.me', 'protonmail.com', 'yandex.com', 'zoho.com',
+  'facebook.com', 'm.facebook.com', 'fb.com', 'instagram.com', 'twitter.com', 'x.com', 'linkedin.com',
+  'youtube.com', 'youtu.be', 'pinterest.com', 'tiktok.com', 'snapchat.com', 'yelp.com', 'tripadvisor.com',
+  'foursquare.com', 't.me', 'wa.me', 'whatsapp.com', 'linktr.ee', 'about.me', 'crunchbase.com',
+  'google.com', 'mail.google.com', 'sites.google.com', 'business.site', 'wixsite.com', 'weebly.com',
+  'blogspot.com', 'wordpress.com', 'godaddysites.com', 'webnode.com', 'jimdo.com', 'strikingly.com',
+  'netlify.app', 'github.io', 'myshopify.com', 'square.site', 'squareup.com', 'bit.ly',
+]);
+function isBadCompanyDomain(dom) {
+  dom = String(dom || '').toLowerCase().replace(/^www\./, '');
+  return !dom || NON_COMPANY_DOMAINS.has(dom);
+}
+
+module.exports = { INDEX, MAPPING, OUT_COLS, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, makeClient: os.makeClient };

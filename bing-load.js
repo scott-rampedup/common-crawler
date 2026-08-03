@@ -60,7 +60,7 @@ async function eachRecord(file, onRec) {
       seen++;
       if (LIMIT && kept >= LIMIT) return false;
       const dom = co.normDomain(clean(r[B.website])) || rootDomain(clean(r[B.website]));
-      if (!dom) { skippedNoWeb++; return; }
+      if (co.isBadCompanyDomain(dom)) { skippedNoWeb++; return; }   // domain must be the real web source (never free-mail/social/shared)
       const email = ex.cleanEmail(clean(r[B.email])).toLowerCase();   // drops blocklist + junk emails
       const rec = {
         company_type: 'Location', root_domain: dom, cid: clean(r[B.ypid]),

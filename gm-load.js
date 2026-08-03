@@ -102,8 +102,11 @@ async function eachRecord(file, onRec) {
 }
 
 (async () => {
-  const files = fs.readdirSync(SRC).filter((f) => /\.csv$/i.test(f)).map((f) => path.join(SRC, f));
-  console.error(`source CSVs: ${files.length} | out: ${OUT}`);
+  // --file <path> ingests ONE CSV (e.g. a newly-arrived export); default = every CSV in --src.
+  const oneFile = arg('--file', '');
+  const files = oneFile ? [oneFile]
+    : fs.readdirSync(SRC).filter((f) => /\.csv$/i.test(f)).map((f) => path.join(SRC, f));
+  console.error(`source CSVs: ${files.length}${oneFile ? ` (${path.basename(oneFile)})` : ''} | out: ${OUT}`);
   const locOut = fs.createWriteStream(path.join(OUT, 'gm-locations.ndjson'));
   const bioSet = new Set();
   let seen = 0, kept = 0, skippedClosed = 0, skippedNoWeb = 0; const t0 = Date.now();
@@ -116,7 +119,7 @@ async function eachRecord(file, onRec) {
       if (!f || f.status !== 'Open') { skippedClosed++; return; }  // skip unparseable + non-Open
       const webLoc = f.website_location || f.website_url;
       const dom = co.normDomain(webLoc) || rootDomain(webLoc);
-      if (!dom) { skippedNoWeb++; return; }                       // decision: skip website-less records
+      if (co.isBadCompanyDomain(dom)) { skippedNoWeb++; return; }  // skip website-less + free-mail/social/shared (domain must be the real web source)
       // capture EVERY team-profile URL the source found — these ARE team-member pages, so don't drop them to
       // the isBio heuristic (that was losing valid bios). Quality is enforced downstream at extraction
       // (extract-from-pointers rejects non-person junk). Keep basic URL sanity + dedupe.

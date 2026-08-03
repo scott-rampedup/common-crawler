@@ -69,6 +69,21 @@ function urlBioName(url, genderMap) {
   return null;
 }
 
+// Resilience: the https-proxy-agent throws an UNCAUGHT AssertionError (index.js:155) when a proxy
+// CONNECT returns a malformed response (frequent on flaky/rotating gateways under load) — it escapes the
+// per-request error handlers and would kill the whole multi-million-URL run. Swallow ONLY those (proxy-
+// agent / socket asserts) and keep crawling; real bugs still crash. Paired with the hard-timeout race
+// in pump() so the request that triggered it can't leave a worker hung.
+let _swallowed = 0;
+process.on('uncaughtException', (e) => {
+  const s = (e && (e.stack || e.message)) || '';
+  if (/https?-proxy-agent|ERR_ASSERTION|ECONNRESET|socket hang up|EPIPE/i.test(s)) {
+    _swallowed++; if (_swallowed % 200 === 1) console.error(`[resilient] swallowed proxy/socket fault #${_swallowed}`); return;
+  }
+  console.error('FATAL uncaughtException:', s); process.exit(1);
+});
+process.on('unhandledRejection', () => {});   // a raced/abandoned fetch rejecting late must not crash
+
 (async () => {
   const ptrFile = argOf('--ptr');
   const liveFile = argOf('--live');
@@ -136,11 +151,15 @@ function urlBioName(url, genderMap) {
   // ---- generic worker pool over a job list; each job returns {html, url, source} ----
   async function pump(jobs, conc, run, label) {
     let i = 0, fetched = 0, extracted = 0, ferr = 0; const t0 = Date.now();
+    const HARD_MS = (Number(process.env.LIVE_FETCH_TIMEOUT) || 6000) * 2 + 4000;  // hard ceiling: a hung fetch (flaky-proxy socket whose assert we swallow) can't stall a worker
     async function worker() {
       for (;;) {
         const k = i++; if (k >= jobs.length) return;
         try {
-          const { html, url, source } = await run(jobs[k]);
+          const { html, url, source } = await Promise.race([
+            run(jobs[k]),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('hard-timeout')), HARD_MS)),
+          ]);
           if (!html) continue; fetched++;
           const rec = extractor.extractRecord(html, url, { wireless, genderMap, directoryRules: {}, source, timestamp: jobs[k].ts || '', allowNoEmail: true });
           if (rec && !looksLikePerson(rec['First'], rec['Last'])) { const nm = urlBioName(url, genderMap); if (nm) { rec['First'] = nm.first; rec['Last'] = nm.last; } }   // name from URL slug when the page has none
