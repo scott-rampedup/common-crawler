@@ -125,6 +125,8 @@
           <p id="resultsSummary">Loading…</p>
           <div class="toolbar-actions">
             <span id="slSelInfo" class="selected-info"></span>
+            <button id="slBulkEdit" class="ghost" type="button" style="display:none">✎ Bulk edit field…</button>
+            <button id="slDelete" class="danger" type="button" style="display:none">🗑 Delete</button>
             <button id="slCrawl" class="primary" type="button" style="display:none">🕷 Crawl selected (<span id="slSelCount">0</span>)</button>
           </div>
         </div>
@@ -155,6 +157,29 @@
     <option>law practice</option><option>hospital &amp; health care</option><option>medical practice</option>
     <option>health, wellness and fitness</option><option>retail</option><option>restaurants</option><option>automotive</option>
   </datalist>
+
+  <!-- Bulk-edit modal (admin): set ONE field on all selected sitemaps -->
+  <div id="slBulkModal" class="modal-overlay" style="display:none">
+    <div class="modal-dialog">
+      <div class="modal-head"><h2>Bulk edit sitemaps</h2><button class="modal-close" id="slBulkX" type="button">×</button></div>
+      <div class="modal-body">
+        <p class="bulk-warn" id="slBulkWarn"></p>
+        <label class="bulk-field"><span>Field to change</span>
+          <select id="slBulkField">
+            <option value="kind">Kind (People / Location)</option>
+            <option value="industry">Industry</option>
+            <option value="keyword">Keyword (detected name)</option>
+          </select>
+        </label>
+        <label class="bulk-field"><span>New value</span><span id="slBulkValueWrap"></span></label>
+      </div>
+      <div class="modal-msg err" id="slBulkMsg"></div>
+      <div class="modal-foot">
+        <button id="slBulkCancel" type="button">Cancel</button>
+        <button id="slBulkSave" class="primary" type="button">Apply</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/ui/nav.js"></script>
   <script>
@@ -335,6 +360,8 @@
       $('slSelInfo').textContent = n ? n.toLocaleString() + ' selected' : '';
       $('slSelCount').textContent = n;
       $('slCrawl').style.display = n ? 'inline-flex' : 'none';
+      $('slBulkEdit').style.display = n ? 'inline-flex' : 'none';   // admin-only via styles.css (!important wins)
+      $('slDelete').style.display = n ? 'inline-flex' : 'none';
     }
     function togglePage(on) {
       document.querySelectorAll('.slRow').forEach((cb) => {
@@ -369,6 +396,54 @@
     $('slCrawl').addEventListener('click', () => {
       const n = selected.size, pages = [...selected.values()].reduce((a, d) => a + (Number(d.item_count) || 0), 0);
       alert('Crawling from the Library is the next phase.\n\nThis will enqueue the ' + n.toLocaleString() + ' selected sitemap(s) (~' + pages.toLocaleString() + ' pages) into extraction:\n  • People → contacts\n  • Location → companies');
+    });
+
+    // ---- mass edit (admin): set one field on all selected sitemaps ----
+    function slRebuildValue() {
+      const f = $('slBulkField').value; const wrap = $('slBulkValueWrap'); wrap.innerHTML = '';
+      let el;
+      if (f === 'kind') { el = document.createElement('select'); ['People', 'Location'].forEach((v) => { const o = document.createElement('option'); o.value = v; o.textContent = v; el.appendChild(o); }); }
+      else { el = document.createElement('input'); el.type = 'text'; el.placeholder = f === 'industry' ? 'e.g. real estate' : 'e.g. agents, locations'; }
+      el.id = 'slBulkValue'; wrap.appendChild(el);
+    }
+    function closeBulk() { $('slBulkModal').style.display = 'none'; }
+    function openBulk() {
+      const n = selected.size; if (!n) return;
+      $('slBulkWarn').innerHTML = 'Sets one field to the same value on <strong>all ' + n.toLocaleString() + ' selected sitemap(s)</strong>. This overwrites the current value.';
+      $('slBulkMsg').textContent = ''; $('slBulkMsg').className = 'modal-msg err';
+      slRebuildValue();
+      $('slBulkSave').textContent = 'Apply to ' + n.toLocaleString();
+      $('slBulkModal').style.display = 'flex';
+    }
+    $('slBulkEdit').addEventListener('click', openBulk);
+    $('slBulkField').addEventListener('change', slRebuildValue);
+    $('slBulkX').addEventListener('click', closeBulk);
+    $('slBulkCancel').addEventListener('click', closeBulk);
+    $('slBulkModal').addEventListener('click', (e) => { if (e.target.id === 'slBulkModal') closeBulk(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeBulk(); });
+    $('slBulkSave').addEventListener('click', async () => {
+      const ids = [...selected.keys()]; if (!ids.length) return closeBulk();
+      const field = $('slBulkField').value, value = $('slBulkValue').value;
+      $('slBulkSave').disabled = true; $('slBulkMsg').className = 'modal-msg'; $('slBulkMsg').textContent = 'Applying…';
+      try {
+        const r = await fetch('/api/sitemaps/bulk-update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ field, value, ids }) });
+        const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        closeBulk(); selected.clear();
+        alert('Bulk edit complete: ' + Number(d.updated || 0).toLocaleString() + ' updated' + (d.errors ? ', ' + d.errors + ' error(s)' : '') + '.');
+        search(from);
+      } catch (e) { $('slBulkMsg').className = 'modal-msg err'; $('slBulkMsg').textContent = 'Failed: ' + e.message; }
+      $('slBulkSave').disabled = false;
+    });
+    $('slDelete').addEventListener('click', async () => {
+      const ids = [...selected.keys()]; if (!ids.length) return;
+      if (!confirm('Delete ' + ids.length.toLocaleString() + ' selected sitemap(s) from the Library?\n\nThis cannot be undone.')) return;
+      try {
+        const r = await fetch('/api/sitemaps/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+        const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        selected.clear();
+        alert('Deleted ' + Number(d.deleted || 0).toLocaleString() + ' sitemap(s)' + (d.errors ? ', ' + d.errors + ' error(s)' : '') + '.');
+        search(0);
+      } catch (e) { alert('Delete failed: ' + e.message); }
     });
 
     // ---- initial load: index-wide total for the hint, then show everything (pages desc) ----

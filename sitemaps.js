@@ -170,4 +170,41 @@ async function facets(client, f = {}) {
   };
 }
 
-module.exports = { INDEX, MAPPING, makeClient, ensureIndex, docFromWatch, bulkUpsert, existingDomains, count, stats, search, facets };
+// Fields an admin may mass-edit in the Library UI.
+const EDITABLE = new Set(['kind', 'industry', 'keyword', 'status']);
+
+// Partial bulk update by _id (sitemap_url). Validates fields against EDITABLE + kind values. Returns
+// { updated, errors, total }.
+async function bulkUpdate(client, ids, updates) {
+  const doc = {};
+  for (const k in (updates || {})) { if (EDITABLE.has(k)) doc[k] = String(updates[k] == null ? '' : updates[k]); }
+  if (doc.kind && !['People', 'Location'].includes(doc.kind)) delete doc.kind;
+  const list = [...new Set((ids || []).map((x) => String(x || '').trim()).filter(Boolean))];
+  if (!Object.keys(doc).length || !list.length) return { updated: 0, errors: 0, total: list.length };
+  let updated = 0, errors = 0;
+  for (let i = 0; i < list.length; i += 500) {
+    const body = [];
+    for (const id of list.slice(i, i + 500)) body.push({ update: { _index: INDEX, _id: id } }, { doc });
+    const r = await client.bulk({ body, refresh: false });
+    for (const it of (((r.body || r).items) || [])) { const u = it.update || {}; if (u.error || (u.status && u.status >= 400)) errors++; else updated++; }
+  }
+  try { await client.indices.refresh({ index: INDEX }); } catch (e) { /* best-effort */ }
+  return { updated, errors, total: list.length };
+}
+
+// Permanently remove Library entries by _id (sitemap_url). Returns { deleted, errors }.
+async function bulkDelete(client, ids) {
+  const list = [...new Set((ids || []).map((x) => String(x || '').trim()).filter(Boolean))];
+  if (!list.length) return { deleted: 0, errors: 0 };
+  let deleted = 0, errors = 0;
+  for (let i = 0; i < list.length; i += 500) {
+    const body = [];
+    for (const id of list.slice(i, i + 500)) body.push({ delete: { _index: INDEX, _id: id } });
+    const r = await client.bulk({ body, refresh: false });
+    for (const it of (((r.body || r).items) || [])) { const d = it.delete || {}; if (d.error) errors++; else if (d.result === 'deleted' || d.status === 200) deleted++; }
+  }
+  try { await client.indices.refresh({ index: INDEX }); } catch (e) { /* best-effort */ }
+  return { deleted, errors };
+}
+
+module.exports = { INDEX, MAPPING, makeClient, ensureIndex, docFromWatch, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, bulkDelete };

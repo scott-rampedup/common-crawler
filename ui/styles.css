@@ -1036,6 +1036,8 @@ body[data-role="user"] #deleteBtn { display: none !important; }
 body:not([data-role="admin"]) #editBtn,
 body:not([data-role="admin"]) #bulkEditBtn,
 body:not([data-role="admin"]) #ccBulkEdit,
+body:not([data-role="admin"]) #slBulkEdit,
+body:not([data-role="admin"]) #slDelete,
 body:not([data-role="admin"]) .row-edit,
 body:not([data-role="admin"]) .ccEdit { display: none !important; }
 

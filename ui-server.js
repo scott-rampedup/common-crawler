@@ -1484,6 +1484,38 @@ const server = http.createServer(async (req, res) => {
     catch (e) { jsonErr(res, 500, e.message); }
     return;
   }
+  // Mass-edit the Library (admin): set one whitelisted field on many selected sitemaps.
+  if (url.pathname === '/api/sitemaps/bulk-update' && req.method === 'POST') {
+    if (!isAdmin) { jsonErr(res, 403, 'Bulk edit is reserved for admins'); return; }
+    if (!sitemapsClient) { jsonErr(res, 503, 'Sitemap Library index not available (OpenSearch off).'); return; }
+    readJsonBody(req, async (b) => {
+      try {
+        const field = String((b && b.field) || '');
+        const value = (b && b.value == null) ? '' : String(b.value);
+        const ids = Array.isArray(b && b.ids) ? b.ids : [];
+        if (!sitemaps.EDITABLE.has(field)) return jsonErr(res, 400, 'That field cannot be bulk-edited');
+        if (field === 'kind' && !['People', 'Location'].includes(value)) return jsonErr(res, 400, 'Kind must be People or Location');
+        if (!ids.length) return jsonErr(res, 400, 'No sitemaps selected');
+        if (ids.length > 20000) return jsonErr(res, 400, 'Too many selected (max 20,000)');
+        sendJson(res, { ok: true, ...(await sitemaps.bulkUpdate(sitemapsClient, ids, { [field]: value })) });
+      } catch (e) { jsonErr(res, 500, e.message); }
+    });
+    return;
+  }
+  // Delete selected Library entries (admin) — for junk/false-positive cleanup.
+  if (url.pathname === '/api/sitemaps/delete' && req.method === 'POST') {
+    if (!isAdmin) { jsonErr(res, 403, 'Delete is reserved for admins'); return; }
+    if (!sitemapsClient) { jsonErr(res, 503, 'Sitemap Library index not available (OpenSearch off).'); return; }
+    readJsonBody(req, async (b) => {
+      try {
+        const ids = Array.isArray(b && b.ids) ? b.ids : [];
+        if (!ids.length) return jsonErr(res, 400, 'No sitemaps selected');
+        if (ids.length > 20000) return jsonErr(res, 400, 'Too many selected (max 20,000)');
+        sendJson(res, { ok: true, ...(await sitemaps.bulkDelete(sitemapsClient, ids)) });
+      } catch (e) { jsonErr(res, 500, e.message); }
+    });
+    return;
+  }
 
   if (url.pathname === '/api/companies/search' && req.method === 'GET') {
     // any signed-in user may READ the company index (view-only 'user' role included)
