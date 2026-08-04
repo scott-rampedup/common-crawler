@@ -56,6 +56,10 @@ const EDIT_FIELDS = [
   { key: 'Description',    label: 'Description' },
 ];
 
+// Bulk edit sets ONE field to ONE shared value across every selected record, so identity fields
+// (name/email/phone/LinkedIn) — which are unique per person — are excluded. Server enforces the same list.
+const BULK_FIELDS = EDIT_FIELDS.filter((f) => !['First', 'Last', 'Email Address', 'Phone', 'LinkedIn URL'].includes(f.key));
+
 const PAGE_SIZE = 50;
 
 const PIN_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">'
@@ -149,6 +153,7 @@ function initElements() {
   el.selectionBanner = $('selectionBanner');
   el.downloadBtn = $('downloadBtn');
   el.editBtn = $('editBtn');
+  el.bulkEditBtn = $('bulkEditBtn');
   el.aiBtn = $('aiBtn');
   el.deleteBtn = $('deleteBtn');
   el.modalRoot = $('modalRoot');
@@ -507,6 +512,7 @@ function updateSelectedInfo() {
   el.selectedInfo.textContent = n ? `${n.toLocaleString()} selected` : '';
   el.downloadBtn.textContent = n ? `⬇ Download ${n.toLocaleString()} selected` : '⬇ Download CSV';
   if (el.editBtn) el.editBtn.disabled = n === 0;
+  if (el.bulkEditBtn) el.bulkEditBtn.disabled = n === 0;
   if (el.aiBtn) el.aiBtn.disabled = n === 0;
   if (el.deleteBtn) el.deleteBtn.disabled = n === 0;
   renderSelectionBanner();
@@ -765,6 +771,74 @@ function openEditModal(recordsArg) {
   });
 }
 
+// ---- bulk edit: set ONE field to ONE value across every selected record ----
+function openBulkEditModal() {
+  const emails = [...state.selected.keys()].filter(Boolean);
+  if (!emails.length) return;
+  const nStr = emails.length.toLocaleString();
+
+  let fieldSel, valueInput, valueWrap;
+  const rebuildValue = () => {
+    valueWrap.innerHTML = '';
+    const isDesc = fieldSel.value === 'Description';
+    valueInput = document.createElement(isDesc ? 'textarea' : 'input');
+    if (isDesc) valueInput.rows = 3; else valueInput.type = 'text';
+    valueInput.placeholder = 'New value (leave blank to clear the field)';
+    valueWrap.appendChild(valueInput);
+  };
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button'; cancelBtn.className = 'ghost'; cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', closeModal);
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button'; saveBtn.className = 'primary'; saveBtn.textContent = `Apply to ${nStr} record(s)`;
+
+  openModal(`Bulk edit ${nStr} record(s)`, (body) => {
+    const warn = document.createElement('p');
+    warn.className = 'bulk-warn';
+    warn.innerHTML = `Sets one field to the same value on <strong>all ${nStr} selected record(s)</strong>. This overwrites any existing value and cannot be undone.`;
+    body.appendChild(warn);
+
+    const fLabel = document.createElement('label'); fLabel.className = 'bulk-field';
+    fLabel.appendChild(Object.assign(document.createElement('span'), { textContent: 'Field to change' }));
+    fieldSel = document.createElement('select');
+    BULK_FIELDS.forEach((f) => { const o = document.createElement('option'); o.value = f.key; o.textContent = f.label; fieldSel.appendChild(o); });
+    fLabel.appendChild(fieldSel);
+    body.appendChild(fLabel);
+
+    const vLabel = document.createElement('label'); vLabel.className = 'bulk-field';
+    vLabel.appendChild(Object.assign(document.createElement('span'), { textContent: 'New value' }));
+    valueWrap = document.createElement('div'); vLabel.appendChild(valueWrap);
+    body.appendChild(vLabel);
+    rebuildValue();
+    fieldSel.addEventListener('change', rebuildValue);
+  }, [cancelBtn, saveBtn]);
+
+  saveBtn.addEventListener('click', async () => {
+    const field = fieldSel.value;
+    const value = valueInput.value;
+    if (!window.confirm(`Set "${field}" to "${value || '(blank)'}" on ${nStr} record(s)?\n\nThis cannot be undone.`)) return;
+    saveBtn.disabled = true; cancelBtn.disabled = true; saveBtn.textContent = 'Applying…';
+    try {
+      const res = await fetch('/api/db/bulk-update', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field, value, emails }),
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(out.error || `HTTP ${res.status}`);
+      closeModal();
+      state.selected.clear(); state.allMatching = false;
+      updateSelectedInfo();
+      query();
+      alert(`Bulk edit complete: ${Number(out.updated || 0).toLocaleString()} updated${out.errors ? `, ${out.errors} error(s)` : ''}.`);
+    } catch (e) {
+      saveBtn.disabled = false; cancelBtn.disabled = false;
+      saveBtn.textContent = `Apply to ${nStr} record(s)`;
+      alert('Bulk edit failed: ' + e.message);
+    }
+  });
+}
+
 // ---- AI Search: Claude reviews + corrects fields, auto-applied ----
 async function runAiSearch() {
   const records = [...state.selected.values()];
@@ -900,6 +974,7 @@ function attachEvents() {
   el.clearBtn.addEventListener('click', clearFilters);
   el.downloadBtn.addEventListener('click', download);
   el.editBtn.addEventListener('click', openEditModal);
+  el.bulkEditBtn.addEventListener('click', openBulkEditModal);
   el.aiBtn.addEventListener('click', runAiSearch);
   el.deleteBtn.addEventListener('click', deleteSelected);
 

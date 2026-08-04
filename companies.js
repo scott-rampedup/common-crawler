@@ -183,6 +183,29 @@ async function update(client, id, updates) {
   return { updated: 1, doc };
 }
 
+// Bulk variant of update(): apply the SAME validated field(s) to many ids in one _bulk round-trip per
+// chunk, refreshing once at the end — far cheaper than N single refresh:true updates. Reuses the EDITABLE
+// whitelist + founded/website coercion. Returns { updated, errors, total }.
+async function bulkUpdate(client, ids, updates) {
+  const doc = {};
+  for (const k in (updates || {})) {
+    if (!EDITABLE.has(k)) continue;
+    doc[k] = k === 'founded' ? (updates[k] === '' || updates[k] == null ? null : Number(updates[k]) || null) : String(updates[k] == null ? '' : updates[k]);
+  }
+  if ('website' in doc) doc.domain = normDomain(doc.website);
+  const list = [...new Set((ids || []).map((x) => String(x == null ? '' : x).trim()).filter(Boolean))];
+  if (!Object.keys(doc).length || !list.length) return { updated: 0, errors: 0, total: list.length };
+  let updated = 0, errors = 0;
+  for (let i = 0; i < list.length; i += 500) {
+    const body = [];
+    for (const id of list.slice(i, i + 500)) body.push({ update: { _index: INDEX, _id: id } }, { doc });
+    const r = await client.bulk({ body, refresh: false });
+    for (const it of (((r.body || r).items) || [])) { const u = it.update || {}; if (u.error || (u.status && u.status >= 400)) errors++; else updated++; }
+  }
+  try { await client.indices.refresh({ index: INDEX }); } catch (e) { /* refresh is best-effort */ }
+  return { updated, errors, total: list.length };
+}
+
 // Map a SERPER Places result onto company-field updates: title->name (only if name is blank),
 // address->full_address, category, phoneNumber->phone, website->website(+domain), cid.
 function placeUpdates(p, cur) {
@@ -264,4 +287,4 @@ function isBadCompanyDomain(dom) {
   return !dom || NON_COMPANY_DOMAINS.has(dom);
 }
 
-module.exports = { INDEX, MAPPING, OUT_COLS, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, makeClient: os.makeClient };
+module.exports = { INDEX, MAPPING, OUT_COLS, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, bulkUpdate, makeClient: os.makeClient };

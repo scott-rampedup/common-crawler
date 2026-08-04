@@ -203,6 +203,7 @@
             <button id="ccDownloadSel" class="ghost" type="button" style="display:none">⬇ Selected (<span id="ccSelCount">0</span>)</button>
             <button id="ccPlaces" class="ghost" type="button" style="display:none">📍 Places</button>
             <button id="ccEnrich" class="ghost" type="button" style="display:none">🌐 Enrich (CC)</button>
+            <button id="ccBulkEdit" class="ghost" type="button" style="display:none">✎ Bulk edit field…</button>
             <a id="ccDownload" class="primary" href="#" style="display:none;text-decoration:none">⬇ Download All</a>
           </div>
         </div>
@@ -271,6 +272,23 @@
     </div>
   </div>
 
+
+  <!-- Bulk-edit modal: set ONE field to ONE value across all selected companies (admin) -->
+  <div id="ccBulkModal" class="modal-overlay" style="display:none">
+    <div class="modal-dialog">
+      <div class="modal-head"><h2>Bulk edit companies</h2><button class="modal-close" id="ccBulkX" type="button">×</button></div>
+      <div class="modal-body">
+        <p class="bulk-warn" id="ccBulkWarn"></p>
+        <label class="bulk-field"><span>Field to change</span><select id="ccBulkField"></select></label>
+        <label class="bulk-field"><span>New value</span><input id="ccBulkValue" placeholder="New value (leave blank to clear the field)" /></label>
+      </div>
+      <div class="modal-msg err" id="ccBulkMsg"></div>
+      <div class="modal-foot">
+        <button id="ccBulkCancel" type="button">Cancel</button>
+        <button id="ccBulkSave" class="primary" type="button">Apply</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/ui/nav.js"></script>
   <script>
@@ -515,6 +533,7 @@
       $('ccDownloadSel').style.display = n ? 'inline-flex' : 'none';
       $('ccPlaces').style.display = n ? 'inline-flex' : 'none';
       $('ccEnrich').style.display = n ? 'inline-flex' : 'none';
+      $('ccBulkEdit').style.display = n ? 'inline-flex' : 'none';   // admin-only via styles.css (!important beats this inline)
       $('ccSelInfo').textContent = n ? (n.toLocaleString() + ' selected') : '';
     }
 
@@ -573,6 +592,38 @@
         search(from);
       } catch (e) { $('resultsSummary').textContent = 'CC enrich failed: ' + e.message; }
       $('ccEnrich').disabled = false;
+    });
+
+    // ---- bulk edit: set ONE field to ONE value across all selected companies (admin-only) ----
+    const CC_BULK_FIELDS = [['industry', 'Industry'], ['size', 'Size'], ['country', 'Country'], ['region', 'Region'], ['locality', 'Locality'], ['founded', 'Founded'], ['category', 'Category'], ['description', 'Description']];
+    CC_BULK_FIELDS.forEach(([k, label]) => { const o = document.createElement('option'); o.value = k; o.textContent = label; $('ccBulkField').appendChild(o); });
+    function closeBulk() { $('ccBulkModal').style.display = 'none'; }
+    $('ccBulkX').addEventListener('click', closeBulk);
+    $('ccBulkCancel').addEventListener('click', closeBulk);
+    $('ccBulkModal').addEventListener('click', (e) => { if (e.target.id === 'ccBulkModal') closeBulk(); });
+    $('ccBulkEdit').addEventListener('click', () => {
+      const ids = [...selected.keys()]; if (!ids.length) return;
+      if (ids.length > 10000) { alert('Bulk edit is capped at 10,000 selected companies. Narrow your filters or select fewer.'); return; }
+      const noun = ids.length === 1 ? 'company' : 'companies';
+      $('ccBulkWarn').innerHTML = 'Sets one field to the same value on <strong>all ' + ids.length.toLocaleString() + ' selected ' + noun + '</strong>. This overwrites any existing value and cannot be undone.';
+      $('ccBulkValue').value = ''; $('ccBulkMsg').textContent = ''; $('ccBulkMsg').className = 'modal-msg err';
+      $('ccBulkSave').textContent = 'Apply to ' + ids.length.toLocaleString();
+      $('ccBulkModal').style.display = 'flex';
+    });
+    $('ccBulkSave').addEventListener('click', async () => {
+      const ids = [...selected.keys()]; if (!ids.length) return closeBulk();
+      const field = $('ccBulkField').value, value = $('ccBulkValue').value;
+      const noun = ids.length === 1 ? 'company' : 'companies';
+      if (!confirm('Set "' + field + '" to "' + (value || '(blank)') + '" on ' + ids.length.toLocaleString() + ' ' + noun + '?\n\nThis cannot be undone.')) return;
+      $('ccBulkSave').disabled = true; $('ccBulkMsg').className = 'modal-msg'; $('ccBulkMsg').textContent = 'Applying…';
+      try {
+        const r = await fetch('/api/companies/bulk-update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ field, value, ids }) });
+        const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        closeBulk(); selected.clear(); updateSel();
+        alert('Bulk edit complete: ' + Number(d.updated || 0).toLocaleString() + ' updated' + (d.errors ? ', ' + d.errors + ' error(s)' : '') + '.');
+        search(from);
+      } catch (e) { $('ccBulkMsg').className = 'modal-msg err'; $('ccBulkMsg').textContent = 'Failed: ' + e.message; }
+      $('ccBulkSave').disabled = false;
     });
 
     // ---- record drawer (row → full profile) ----
@@ -682,7 +733,7 @@
     });
 
     // Esc closes any open modal
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDrawer(); closeEdit(); } });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDrawer(); closeEdit(); closeBulk(); } });
 
     // seed the size facet (counts fill in after first search)
     renderFacet('size', $('facetSize'), [], SIZE_BANDS);

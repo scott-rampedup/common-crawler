@@ -130,6 +130,11 @@ let osSync = null;   // background delta syncer handle (fleet-ingested contacts 
 const companies = require('./companies');
 const naics = require('./naics');
 const serperApi = require('./serper');
+
+// Fields an admin may bulk-set (one shared value across many selected records). Deliberately excludes
+// identity fields (name/email/phone/LinkedIn) where a single shared value is nonsensical or destructive.
+const BULK_DB_FIELDS = new Set(['Position', 'Title', 'Email Type', 'Phone Type', 'Phone Location', 'Domain', 'Description']);
+const BULK_CO_FIELDS = new Set(['industry', 'size', 'country', 'region', 'locality', 'founded', 'category', 'description']);
 const ccHome = require('./cc-home-enrich');
 let companiesClient = null;        // OpenSearch client for the `companies` index (Company Crawler), set in startup
 const monitorDb = sqliteDb;        // sitemap-monitor tables always live in SQLite
@@ -1479,6 +1484,24 @@ const server = http.createServer(async (req, res) => {
     });
     return;
   }
+  // POST /api/companies/bulk-update  { field, value, ids:[...] }  -> set ONE whitelisted field to ONE value
+  // across many selected companies (admin-only), via one _bulk round-trip per chunk (companies.bulkUpdate).
+  if (url.pathname === '/api/companies/bulk-update' && req.method === 'POST') {
+    if (!isAdmin) { jsonErr(res, 403, 'Bulk edit is reserved for admins'); return; }
+    if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
+    readJsonBody(req, async (b) => {
+      try {
+        const field = String((b && b.field) || '');
+        const value = (b && b.value == null) ? '' : String(b.value);
+        const ids = Array.isArray(b && b.ids) ? b.ids : [];
+        if (!BULK_CO_FIELDS.has(field)) return jsonErr(res, 400, 'That field cannot be bulk-edited');
+        if (!ids.length) return jsonErr(res, 400, 'No companies selected');
+        if (ids.length > 10000) return jsonErr(res, 400, 'Too many companies (max 10,000 per bulk edit)');
+        sendJson(res, { ok: true, ...(await companies.bulkUpdate(companiesClient, ids, { [field]: value })) });
+      } catch (e) { jsonErr(res, 500, e.message); }
+    });
+    return;
+  }
   // SERPER Places bulk lookup for selected companies: name+location -> address/category/cid/phone/website/title.
   if (url.pathname === '/api/companies/places' && req.method === 'POST') {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
@@ -1636,6 +1659,40 @@ const server = http.createServer(async (req, res) => {
           } catch (e) { console.error('OpenSearch edit write-through failed:', e.message); }
         }
         sendJson(res, { results });
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: e.message || 'Bad request' }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/db/bulk-update  { field, value, emails:[...] }  -> set ONE whitelisted field to ONE value
+  // across many selected contacts (admin-only). Reuses db.updateRecord + the OpenSearch write-through the
+  // single-record edit uses, batched (chunks of 200) so a large selection can't swamp Postgres/OpenSearch.
+  if (url.pathname === '/api/db/bulk-update' && req.method === 'POST') {
+    if (!isAdmin) { jsonErr(res, 403, 'Bulk edit is reserved for admins'); return; }
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const field = String(payload.field || '');
+        const value = payload.value == null ? '' : String(payload.value);
+        const emails = [...new Set((Array.isArray(payload.emails) ? payload.emails : []).map((e) => String(e || '').trim().toLowerCase()).filter(Boolean))];
+        if (!BULK_DB_FIELDS.has(field)) { jsonErr(res, 400, 'That field cannot be bulk-edited'); return; }
+        if (!emails.length) { jsonErr(res, 400, 'No records selected'); return; }
+        if (emails.length > 10000) { jsonErr(res, 400, 'Too many records (max 10,000 per bulk edit)'); return; }
+        let updated = 0, errors = 0; const nowIso = new Date().toISOString();
+        for (let i = 0; i < emails.length; i += 200) {
+          const recs = [];
+          await Promise.all(emails.slice(i, i + 200).map(async (email) => {
+            try { const r = await db.updateRecord(email, { [field]: value }); if (r && r.ok && r.record) { updated++; recs.push(r.record); } else errors++; }
+            catch (e) { errors++; }
+          }));
+          if (reader._os && recs.length) { try { await reader.put(recs.map((rec) => openSearch.recordToDoc(rec, nowIso))); } catch (e) { console.error('bulk-update OpenSearch write-through failed:', e.message); } }
+        }
+        sendJson(res, { ok: true, updated, errors, total: emails.length });
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ error: e.message || 'Bad request' }));
