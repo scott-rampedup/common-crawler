@@ -10,8 +10,8 @@
  *   OPENSEARCH_ENDPOINT=… node discover-sitemaps.js --industries "real estate,insurance" --limit 2000
  *   node discover-sitemaps.js --limit 200 --dry-run          # print work-list + classifications, no writes
  * Flags: --industries "a,b" (default = location-rich verticals), --limit N (domains, default cap 50000),
- *   --concurrency N (12), --domain-timeout SECS (45), --min-count N (3), --min-ratio F (0.30),
- *   --offset N, --no-resume, --dry-run.
+ *   --concurrency N (12), --domain-timeout SECS (20, resolve fail-fast), --walk-timeout SECS (90, index walk),
+ *   --min-count N (3), --min-ratio F (0.30), --offset N, --no-resume, --dry-run.
  */
 const path = require('path');
 const fs = require('fs');
@@ -35,7 +35,11 @@ const INDUSTRIES = arg('industries', '') ? arg('industries', '').split(',').map(
 const LIMIT = Number(arg('limit', '0')) || 0;
 const CAP = LIMIT || 50000;                                    // safety cap on the in-memory work-list
 const CONC = Number(arg('concurrency', '12')) || 12;
-const DOMAIN_TIMEOUT = (Number(arg('domain-timeout', '45')) || 45) * 1000;
+// Two budgets: a SHORT resolve timeout (dead/hanging domains fail fast on robots/first fetch) and a LONG
+// walk timeout (a big multi-child index — the highest-value targets — needs time; discoverSitemaps sleeps
+// 120ms between child fetches, so 100+ children take tens of seconds).
+const DOMAIN_TIMEOUT = (Number(arg('domain-timeout', '20')) || 20) * 1000;
+const WALK_TIMEOUT = (Number(arg('walk-timeout', '90')) || 90) * 1000;
 const MIN_COUNT = Number(arg('min-count', '3')) || 3;
 const MIN_RATIO = Number(arg('min-ratio', '0.30')) || 0.30;
 const OFFSET = Number(arg('offset', '0')) || 0;
@@ -121,7 +125,7 @@ async function* streamDomains(client) {
         if (urls.length) {
           const { watches } = await withTimeout(
             ccEngine.discoverSitemaps({ urls, directoryRules, genderMap, bioSitemapNames, locationSitemapNames, minCount: MIN_COUNT, minRatio: MIN_RATIO }),
-            DOMAIN_TIMEOUT);
+            WALK_TIMEOUT);
           const keep = watches.filter((w) => w.byName || w.itemCount >= MIN_COUNT);
           if (keep.length) {
             domainsWith++;
