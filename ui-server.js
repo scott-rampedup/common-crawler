@@ -128,6 +128,7 @@ function makeOsReader(endpoint) {
 }
 let osSync = null;   // background delta syncer handle (fleet-ingested contacts -> OpenSearch)
 const companies = require('./companies');
+const sitemaps = require('./sitemaps');
 const naics = require('./naics');
 const serperApi = require('./serper');
 
@@ -139,6 +140,7 @@ const BULK_EMAIL_FIELDS = new Set(['Email Pattern', 'Email Domain']);
 const BULK_CO_FIELDS = new Set(['industry', 'size', 'country', 'region', 'locality', 'founded', 'category', 'description']);
 const ccHome = require('./cc-home-enrich');
 let companiesClient = null;        // OpenSearch client for the `companies` index (Company Crawler), set in startup
+let sitemapsClient = null;         // OpenSearch client for the `sitemaps` index (Sitemap Library), set in startup
 const monitorDb = sqliteDb;        // sitemap-monitor tables always live in SQLite
 const aiEnrich = require('./ai-enrich');
 
@@ -1094,6 +1096,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/sitemaps' || url.pathname === '/sitemaps.html') {
+    if (!isAnalyst) { res.writeHead(302, { Location: '/search' }); res.end(); return; }   // discovery/build tool: analyst+
+    serveStaticFile(res, path.join(PUBLIC_DIR, 'sitemaps.html'));
+    return;
+  }
+
   if (url.pathname.startsWith('/ui/')) {
     const filePath = path.join(PUBLIC_DIR, url.pathname.replace(/^\/ui\//, ''));
     serveStaticFile(res, filePath);
@@ -1455,6 +1463,28 @@ const server = http.createServer(async (req, res) => {
     websiteType: q.get('websiteType'), naics: q.get('naics'),
     ids: q.get('ids') ? q.get('ids').split(',').filter(Boolean) : undefined,
   });
+  // Sitemap Library (discovery hub): read + facets. analyst+ (it's a build/crawl-origin tool).
+  if (url.pathname === '/api/sitemaps/search' && req.method === 'GET') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!sitemapsClient) { jsonErr(res, 503, 'Sitemap Library index not available (OpenSearch off).'); return; }
+    const q = url.searchParams;
+    const from = Math.max(0, Number(q.get('from')) || 0);
+    const size = Math.min(200, Math.max(1, Number(q.get('size_n')) || 50));
+    const f = { kind: q.get('kind') || '', industry: q.get('industry') || '', domain: q.get('domain') || '', keyword: q.get('keyword') || '', byName: q.get('byName') || '', minCount: q.get('minCount') || '', q: q.get('q') || '' };
+    try { sendJson(res, await sitemaps.search(sitemapsClient, f, { from, size, sort: q.get('sort') || 'item_count', dir: q.get('dir') || 'desc' })); }
+    catch (e) { jsonErr(res, 500, e.message); }
+    return;
+  }
+  if (url.pathname === '/api/sitemaps/facets' && req.method === 'GET') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!sitemapsClient) { jsonErr(res, 503, 'Sitemap Library index not available (OpenSearch off).'); return; }
+    const q = url.searchParams;
+    const f = { kind: q.get('kind') || '', industry: q.get('industry') || '', domain: q.get('domain') || '', keyword: q.get('keyword') || '', byName: q.get('byName') || '', minCount: q.get('minCount') || '', q: q.get('q') || '' };
+    try { sendJson(res, await sitemaps.facets(sitemapsClient, f)); }
+    catch (e) { jsonErr(res, 500, e.message); }
+    return;
+  }
+
   if (url.pathname === '/api/companies/search' && req.method === 'GET') {
     // any signed-in user may READ the company index (view-only 'user' role included)
     if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
@@ -1946,6 +1976,7 @@ pruneOldJobs();
     try {
       reader = makeOsReader(process.env.OPENSEARCH_ENDPOINT);
       companiesClient = companies.makeClient(process.env.OPENSEARCH_ENDPOINT);   // Company Crawler index
+      sitemapsClient = sitemaps.makeClient(process.env.OPENSEARCH_ENDPOINT);     // Sitemap Library index
       console.log('Search backend: OpenSearch (SEARCH_BACKEND=opensearch).');
       optout.ensure(reader.client).then((c) => c && console.log('Opt-out registry index created.')).catch((e) => console.error('opt-out index ensure failed:', e.message));
       // Ongoing firmographic enrichment: append company data (industry/size/HQ/founded/LinkedIn/name) to any

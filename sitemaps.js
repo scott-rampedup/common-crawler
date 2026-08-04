@@ -117,14 +117,47 @@ async function stats(client) {
   };
 }
 
-async function search(client, { kind, industry, domain, size = 20 } = {}) {
-  const filter = [];
-  if (kind) filter.push({ term: { kind } });
-  if (industry) filter.push({ term: { industry } });
-  if (domain) filter.push({ term: { domain: String(domain).toLowerCase() } });
-  const body = { size, query: filter.length ? { bool: { filter } } : { match_all: {} }, sort: [{ item_count: 'desc' }] };
-  const r = await client.search({ index: INDEX, body });
-  return ((r.body || r).hits.hits || []).map((h) => h._source);
+const SORT_COLS = new Set(['item_count', 'url_count', 'ratio', 'domain', 'kind', 'industry', 'keyword', 'discovered_at', 'last_seen', 'lastmod']);
+
+// Build the OpenSearch query for the Library UI filters.
+function buildFilter(f = {}) {
+  const filter = [], must = [];
+  if (f.kind) filter.push({ term: { kind: f.kind } });
+  if (f.industry) filter.push({ term: { industry: f.industry } });
+  if (f.domain) filter.push({ wildcard: { domain: `*${String(f.domain).toLowerCase()}*` } });
+  if (f.keyword) filter.push({ wildcard: { keyword: `*${String(f.keyword).toLowerCase()}*` } });
+  if (f.byName === 'yes' || f.byName === true) filter.push({ term: { by_name: true } });
+  if (f.byName === 'no' || f.byName === false) filter.push({ term: { by_name: false } });
+  const mc = Number(f.minCount); if (mc > 0) filter.push({ range: { item_count: { gte: mc } } });
+  if (f.q) must.push({ query_string: { query: String(f.q), fields: ['sitemap_url', 'domain', 'keyword', 'industry'], default_operator: 'AND' } });
+  const bool = {};
+  if (filter.length) bool.filter = filter;
+  if (must.length) bool.must = must;
+  return Object.keys(bool).length ? { bool } : { match_all: {} };
 }
 
-module.exports = { INDEX, MAPPING, makeClient, ensureIndex, docFromWatch, bulkUpsert, existingDomains, count, stats, search };
+async function search(client, f = {}, { from = 0, size = 50, sort = 'item_count', dir = 'desc' } = {}) {
+  const col = SORT_COLS.has(sort) ? sort : 'item_count';
+  const body = { from, size, query: buildFilter(f), sort: [{ [col]: dir === 'asc' ? 'asc' : 'desc' }] };
+  const r = await client.search({ index: INDEX, body });
+  const b = r.body || r;
+  return { total: b.hits.total.value, rows: (b.hits.hits || []).map((h) => h._source) };
+}
+
+// Facet counts + the harvestable-page total for the current filter set (drives the sidebar + header).
+async function facets(client, f = {}) {
+  const r = await client.search({ index: INDEX, body: { size: 0, query: buildFilter(f), aggs: {
+    kind: { terms: { field: 'kind', size: 5 } },
+    industry: { terms: { field: 'industry', size: 40 } },
+    items: { sum: { field: 'item_count' } },
+  } } });
+  const b = r.body || r; const a = b.aggregations;
+  return {
+    total: b.hits.total.value,
+    harvestable: Math.round(a.items.value || 0),
+    kind: (a.kind.buckets || []).map((x) => ({ key: x.key, count: x.doc_count })),
+    industry: (a.industry.buckets || []).map((x) => ({ key: x.key, count: x.doc_count })),
+  };
+}
+
+module.exports = { INDEX, MAPPING, makeClient, ensureIndex, docFromWatch, bulkUpsert, existingDomains, count, stats, search, facets };

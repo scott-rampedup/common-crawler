@@ -35,6 +35,7 @@
   const TABS = [
     { href: '/search',          label: '👤 Contact Crawler', min: 0, green: true, active: (p) => p === '/search' },
     { href: '/company-crawler', label: '🏢 Company Crawler', min: 0, green: true, active: (p) => p === '/company-crawler' },
+    { href: '/sitemaps',        label: '🗺 Sitemap Library', min: 1, green: true, active: (p) => p === '/sitemaps' },
     { href: '/site-search',     label: '🌐 Site Search',    min: 1, green: true, active: (p) => p === '/site-search' },
     { href: '/serp-lookup',     label: '🔎 SERP Look Up',   min: 1, green: true, active: (p) => p === '/serp-lookup' },
     { href: '/?view=db',        label: '📥 Data Importer',  min: 1, active: (p, v) => p === '/' && v === 'db' },

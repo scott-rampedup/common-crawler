@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sitemap Library · Common Crawler</title>
+  <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+  <link rel="apple-touch-icon" href="/ui/logo.png" />
+  <link rel="stylesheet" href="/ui/styles.css" />
+  <style>
+    /* ---- Sitemap Library (prototype) — on top of the shared search-page shell ---- */
+    .sl-head { margin: 6px 0 14px; }
+    .sl-head h2 { margin: 0 0 4px; font-size: 1.35rem; }
+    .sl-sub { margin: 0; color: #6b7280; font-size: 0.9rem; }
+
+    .sl-stats { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 14px; }
+    .sl-stat { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; padding: 8px 14px; min-width: 110px; }
+    .sl-stat b { display: block; font-size: 1.25rem; color: #111827; line-height: 1.1; }
+    .sl-stat span { font-size: 0.75rem; color: #6b7280; }
+
+    .sl-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 12px; }
+    .sl-filters input, .sl-filters select { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 0.88rem; }
+    .sl-filters input#q { flex: 1 1 260px; min-width: 200px; }
+    .sl-filters input#minCount { width: 100px; }
+
+    .sl-selbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 8px 14px; margin: 0 0 12px; font-size: 0.9rem; }
+    .sl-summary { color: #6b7280; font-size: 0.85rem; margin: 0 0 8px; }
+
+    .sl-tablewrap { overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 10px; }
+    .sl-table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
+    .sl-table th, .sl-table td { padding: 9px 12px; text-align: left; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
+    .sl-table thead th { background: #f8fafc; color: #374151; font-weight: 650; position: sticky; top: 0; }
+    .sl-table th.num, .sl-table td.num { text-align: right; }
+    .sl-table th.chk, .sl-table td.chk { width: 34px; text-align: center; }
+    .sl-table th.sortable { cursor: pointer; user-select: none; }
+    .sl-table th.sortable:hover { color: #2563eb; }
+    .sl-table tbody tr:hover { background: #f9fafb; }
+    .sl-muted { color: #9ca3af; }
+
+    .sl-pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 650; }
+    .sl-people { background: #dbeafe; color: #1d4ed8; }
+    .sl-loc { background: #dcfce7; color: #15803d; }
+    .sl-tag { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 6px; background: #f3f4f6; color: #6b7280; font-size: 0.68rem; }
+
+    .sl-pager { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+    .sl-pager span { color: #6b7280; font-size: 0.85rem; }
+    @media (prefers-color-scheme: dark) {
+      .sl-stat { background: #1f2937; border-color: #374151; } .sl-stat b { color: #f3f4f6; }
+      .sl-tablewrap { border-color: #374151; } .sl-table thead th { background: #111827; color: #e5e7eb; }
+      .sl-table th, .sl-table td { border-color: #1f2937; } .sl-table tbody tr:hover { background: #1f2937; }
+    }
+  </style>
+</head>
+<body class="search-page">
+  <div class="search-shell">
+    <header class="search-header">
+      <div class="brand">
+        <img class="app-logo" src="/ui/logo.png" alt="Common Crawler logo" onerror="this.onerror=null;this.src='/ui/favicon.svg';" />
+        <h1>Common Crawler</h1>
+      </div>
+      <nav class="nav-actions"></nav>
+    </header>
+
+    <main class="results-panel">
+      <div class="sl-head">
+        <h2>🗺 Sitemap Library <span style="font-size:.7rem;color:#9ca3af;font-weight:600;vertical-align:middle">PROTOTYPE</span></h2>
+        <p class="sl-sub">The discovery hub — People &amp; Location directories the crawler harvests companies and contacts from.</p>
+      </div>
+
+      <div id="statsBar" class="sl-stats"></div>
+
+      <form id="filters" class="sl-filters">
+        <input id="q" placeholder="Search domain / URL / sitemap name…" />
+        <select id="kind"><option value="">All kinds</option><option value="People">People</option><option value="Location">Location</option></select>
+        <select id="industry"><option value="">All industries</option></select>
+        <input id="domain" placeholder="Domain contains…" />
+        <input id="keyword" placeholder="Sitemap name contains…" />
+        <input id="minCount" type="number" min="0" placeholder="Min pages" />
+        <select id="byName"><option value="">Name + ratio</option><option value="yes">Name-matched</option><option value="no">Ratio-only</option></select>
+        <button type="submit" class="primary">Search</button>
+        <button type="button" id="reset" class="ghost">Reset</button>
+      </form>
+
+      <div id="selBar" class="sl-selbar" hidden></div>
+      <p id="summary" class="sl-summary"></p>
+
+      <div class="sl-tablewrap">
+        <table class="sl-table">
+          <thead><tr>
+            <th class="chk"><input type="checkbox" id="allChk" title="Select all on this page" /></th>
+            <th>Domain</th>
+            <th>Kind</th>
+            <th>Sitemap name</th>
+            <th class="num sortable" data-sort="item_count">Pages ▾</th>
+            <th class="num sortable" data-sort="ratio">Ratio</th>
+            <th>Industry</th>
+            <th>Last modified</th>
+            <th>Sitemap</th>
+          </tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+
+      <div class="sl-pager">
+        <button id="prev" class="ghost" type="button">‹ Prev</button>
+        <span id="pageInfo"></span>
+        <button id="next" class="ghost" type="button">Next ›</button>
+      </div>
+    </main>
+  </div>
+
+  <script src="/ui/nav.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const abs = (u) => /^https?:/i.test(u) ? u : ('https://' + u);
+    const PAGE = 50;
+    let from = 0, total = 0, sort = 'item_count', dir = 'desc';
+    const selected = new Map();      // sitemap_url -> row (cross-page)
+    const pageRows = new Map();      // sitemap_url -> row (current page, for select-all)
+
+    function filters() {
+      return {
+        q: $('q').value.trim(), kind: $('kind').value, industry: $('industry').value,
+        domain: $('domain').value.trim(), keyword: $('keyword').value.trim(),
+        minCount: $('minCount').value.trim(), byName: $('byName').value,
+      };
+    }
+    function params(extra) {
+      const f = filters(); const p = new URLSearchParams();
+      for (const k in f) if (f[k]) p.set(k, f[k]);
+      for (const k in (extra || {})) p.set(k, extra[k]);
+      return p;
+    }
+    const statCard = (n, label) => `<div class="sl-stat"><b>${Number(n || 0).toLocaleString()}</b><span>${label}</span></div>`;
+
+    async function loadFacets() {
+      try {
+        const r = await fetch('/api/sitemaps/facets?' + params().toString());
+        if (!r.ok) return;
+        const d = await r.json();
+        const kc = Object.fromEntries((d.kind || []).map((x) => [x.key, x.count]));
+        $('statsBar').innerHTML = statCard(d.total, 'sitemaps') + statCard(kc.People || 0, 'People directories')
+          + statCard(kc.Location || 0, 'Location directories') + statCard(d.harvestable, 'harvestable pages');
+        const cur = $('industry').value;
+        $('industry').innerHTML = '<option value="">All industries</option>' +
+          (d.industry || []).map((x) => `<option value="${esc(x.key)}"${x.key === cur ? ' selected' : ''}>${esc(x.key || '(none)')} (${x.count.toLocaleString()})</option>`).join('');
+      } catch (e) { /* leave stats as-is */ }
+    }
+
+    function kindPill(k) { const c = k === 'People' ? 'sl-people' : (k === 'Location' ? 'sl-loc' : ''); return `<span class="sl-pill ${c}">${esc(k || '?')}</span>`; }
+
+    function renderRows(rows) {
+      const tb = $('rows'); tb.innerHTML = ''; pageRows.clear();
+      for (const d of rows) {
+        const id = d.sitemap_url; pageRows.set(id, d);
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          `<td class="chk"><input type="checkbox" class="rowchk" data-id="${esc(id)}"${selected.has(id) ? ' checked' : ''} /></td>` +
+          `<td>${esc(d.domain || '')}</td>` +
+          `<td>${kindPill(d.kind)}${d.by_name ? ' <span class="sl-tag">name</span>' : ''}</td>` +
+          `<td>${esc(d.keyword || '—')}</td>` +
+          `<td class="num"><b>${Number(d.item_count || 0).toLocaleString()}</b> <span class="sl-muted">/ ${Number(d.url_count || 0).toLocaleString()}</span></td>` +
+          `<td class="num">${d.ratio != null ? Math.round(d.ratio * 100) + '%' : ''}</td>` +
+          `<td>${esc(d.industry || '')}</td>` +
+          `<td class="sl-muted">${esc((d.lastmod || '').slice(0, 10))}</td>` +
+          `<td><a href="${esc(abs(id))}" target="_blank" rel="noopener">open ↗</a></td>`;
+        tb.appendChild(tr);
+        tr.querySelector('.rowchk').addEventListener('change', (e) => { if (e.target.checked) selected.set(id, d); else selected.delete(id); syncAllChk(); updateSel(); });
+      }
+      syncAllChk();
+    }
+    function syncAllChk() {
+      const ids = [...pageRows.keys()]; const sel = ids.filter((i) => selected.has(i)).length;
+      $('allChk').checked = ids.length > 0 && sel === ids.length;
+      $('allChk').indeterminate = sel > 0 && sel < ids.length;
+    }
+    function updateSel() {
+      const n = selected.size;
+      const pages = [...selected.values()].reduce((a, d) => a + (Number(d.item_count) || 0), 0);
+      const bar = $('selBar');
+      if (!n) { bar.hidden = true; return; }
+      bar.hidden = false;
+      bar.innerHTML = `<span><b>${n.toLocaleString()}</b> selected · <b>${pages.toLocaleString()}</b> harvestable pages</span>` +
+        `<span><button id="crawlBtn" class="primary" type="button">Crawl selected →</button> <button id="clearSel" class="ghost" type="button">Clear</button></span>`;
+      $('crawlBtn').addEventListener('click', () => alert(
+        `Crawling from the Library is the next phase.\n\nThis will enqueue the ${n.toLocaleString()} selected sitemap(s) (~${pages.toLocaleString()} pages) into extraction:\n  • People → contacts\n  • Location → companies`));
+      $('clearSel').addEventListener('click', () => { selected.clear(); renderRowsRefresh(); updateSel(); });
+    }
+    function renderRowsRefresh() { document.querySelectorAll('.rowchk').forEach((cb) => { cb.checked = false; }); syncAllChk(); }
+
+    async function search() {
+      let d = { total: 0, rows: [] };
+      try { const r = await fetch('/api/sitemaps/search?' + params({ from, size_n: PAGE, sort, dir }).toString()); if (r.ok) d = await r.json(); }
+      catch (e) { /* */ }
+      total = d.total || 0;
+      renderRows(d.rows || []);
+      $('summary').textContent = total ? `${total.toLocaleString()} sitemap(s)` : 'No sitemaps match these filters.';
+      $('pageInfo').textContent = total ? `${(from + 1).toLocaleString()}–${Math.min(from + PAGE, total).toLocaleString()} of ${total.toLocaleString()}` : '';
+      $('prev').disabled = from <= 0; $('next').disabled = from + PAGE >= total;
+      updateSel();
+    }
+
+    function runSearch() { from = 0; loadFacets(); search(); }
+    $('filters').addEventListener('submit', (e) => { e.preventDefault(); runSearch(); });
+    $('reset').addEventListener('click', () => { ['q', 'domain', 'keyword', 'minCount'].forEach((i) => { $(i).value = ''; }); $('kind').value = ''; $('industry').value = ''; $('byName').value = ''; selected.clear(); runSearch(); });
+    $('prev').addEventListener('click', () => { from = Math.max(0, from - PAGE); search(); });
+    $('next').addEventListener('click', () => { from = from + PAGE; search(); });
+    $('allChk').addEventListener('change', (e) => {
+      for (const [id, row] of pageRows) { if (e.target.checked) selected.set(id, row); else selected.delete(id); }
+      document.querySelectorAll('.rowchk').forEach((cb) => { cb.checked = e.target.checked; });
+      updateSel();
+    });
+    document.querySelectorAll('.sortable').forEach((th) => th.addEventListener('click', () => {
+      const s = th.getAttribute('data-sort');
+      if (sort === s) dir = dir === 'asc' ? 'desc' : 'asc'; else { sort = s; dir = 'desc'; }
+      document.querySelectorAll('.sortable').forEach((h) => { h.textContent = h.textContent.replace(/ [▾▴]$/, ''); });
+      th.textContent += dir === 'desc' ? ' ▾' : ' ▴';
+      from = 0; search();
+    }));
+
+    // initial load
+    loadFacets(); search();
+  </script>
+</body>
+</html>
