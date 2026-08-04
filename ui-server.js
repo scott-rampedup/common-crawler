@@ -1470,7 +1470,7 @@ const server = http.createServer(async (req, res) => {
     const q = url.searchParams;
     const from = Math.max(0, Number(q.get('from')) || 0);
     const size = Math.min(200, Math.max(1, Number(q.get('size_n')) || 50));
-    const f = { kind: q.get('kind') || '', industry: q.get('industry') || '', domain: q.get('domain') || '', keyword: q.get('keyword') || '', byName: q.get('byName') || '', minCount: q.get('minCount') || '', q: q.get('q') || '' };
+    const f = { kind: q.get('kind') || '', type: q.get('type') || '', industry: q.get('industry') || '', domain: q.get('domain') || '', keyword: q.get('keyword') || '', byName: q.get('byName') || '', minCount: q.get('minCount') || '', q: q.get('q') || '' };
     try { sendJson(res, await sitemaps.search(sitemapsClient, f, { from, size, sort: q.get('sort') || 'item_count', dir: q.get('dir') || 'desc' })); }
     catch (e) { jsonErr(res, 500, e.message); }
     return;
@@ -1479,7 +1479,7 @@ const server = http.createServer(async (req, res) => {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     if (!sitemapsClient) { jsonErr(res, 503, 'Sitemap Library index not available (OpenSearch off).'); return; }
     const q = url.searchParams;
-    const f = { kind: q.get('kind') || '', industry: q.get('industry') || '', domain: q.get('domain') || '', keyword: q.get('keyword') || '', byName: q.get('byName') || '', minCount: q.get('minCount') || '', q: q.get('q') || '' };
+    const f = { kind: q.get('kind') || '', type: q.get('type') || '', industry: q.get('industry') || '', domain: q.get('domain') || '', keyword: q.get('keyword') || '', byName: q.get('byName') || '', minCount: q.get('minCount') || '', q: q.get('q') || '' };
     try { sendJson(res, await sitemaps.facets(sitemapsClient, f)); }
     catch (e) { jsonErr(res, 500, e.message); }
     return;

@@ -123,6 +123,10 @@ const SORT_COLS = new Set(['item_count', 'url_count', 'ratio', 'domain', 'kind',
 function buildFilter(f = {}) {
   const filter = [], must = [];
   if (f.kind) filter.push({ term: { kind: f.kind } });
+  // Type = Parent (top-level sitemap, no parent index) vs Child (found under a sitemap index). Derived
+  // from parent_url (stored '' for top-level, a URL for children).
+  if (f.type === 'Parent') filter.push({ term: { parent_url: '' } });
+  else if (f.type === 'Child') filter.push({ bool: { must_not: [{ term: { parent_url: '' } }] } });
   if (f.industry) {
     const arr = (Array.isArray(f.industry) ? f.industry : String(f.industry).split(',')).map((s) => s.trim()).filter(Boolean);
     if (arr.length === 1) filter.push({ term: { industry: arr[0] } });
@@ -153,6 +157,7 @@ async function facets(client, f = {}) {
   const r = await client.search({ index: INDEX, body: { size: 0, query: buildFilter(f), aggs: {
     kind: { terms: { field: 'kind', size: 5 } },
     industry: { terms: { field: 'industry', size: 40 } },
+    type: { filters: { filters: { Parent: { term: { parent_url: '' } }, Child: { bool: { must_not: [{ term: { parent_url: '' } }] } } } } },
     items: { sum: { field: 'item_count' } },
   } } });
   const b = r.body || r; const a = b.aggregations;
@@ -161,6 +166,7 @@ async function facets(client, f = {}) {
     harvestable: Math.round(a.items.value || 0),
     kind: (a.kind.buckets || []).map((x) => ({ key: x.key, count: x.doc_count })),
     industry: (a.industry.buckets || []).map((x) => ({ key: x.key, count: x.doc_count })),
+    type: Object.entries((a.type && a.type.buckets) || {}).map(([k, v]) => ({ key: k, count: v.doc_count })),
   };
 }
 

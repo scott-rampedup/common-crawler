@@ -46,6 +46,13 @@
     .sl-people { background: #dbeafe; color: #1d4ed8; }
     .sl-loc { background: #dcfce7; color: #15803d; }
     .sl-tag { display: inline-block; margin-left: 5px; padding: 0 6px; border-radius: 6px; background: #f3f4f6; color: #6b7280; font-size: 0.68rem; }
+
+    /* Type pill (Parent / Child) */
+    .sl-type { display: inline-block; padding: 1px 8px; border-radius: 6px; font-size: 0.72rem; font-weight: 650; }
+    .sl-parent { background: #fef3c7; color: #92400e; }
+    .sl-child { background: #e0e7ff; color: #3730a3; }
+    /* Sitemap URL link: keep long URLs tidy (full URL on hover) */
+    a.sl-sm { display: inline-block; max-width: 440px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
   </style>
 </head>
 <body class="search-page">
@@ -73,10 +80,17 @@
               <option value="Location">Location</option>
             </select>
           </label>
+          <label>Type
+            <select id="fType">
+              <option value="">All (Parent + Child)</option>
+              <option value="Parent">Parent (top-level)</option>
+              <option value="Child">Child (under an index)</option>
+            </select>
+          </label>
           <label>Domain
             <input id="fDomain" type="search" placeholder="e.g. usbank.com" />
           </label>
-          <label>Sitemap name
+          <label>Keyword
             <input id="fKeyword" type="search" placeholder="e.g. agents, locations, team" />
           </label>
 
@@ -161,17 +175,17 @@
     const COLS = [
       { key: 'domain',     label: 'Domain' },
       { key: 'kind',       label: 'Kind' },
-      { key: 'keyword',    label: 'Sitemap name' },
+      { key: 'type',       label: 'Type' },
+      { key: 'sitemap',    label: 'Sitemap' },
       { key: 'item_count', label: 'Pages',        sort: 'item_count' },
       { key: 'ratio',      label: 'Ratio',        sort: 'ratio' },
       { key: 'industry',   label: 'Industry' },
       { key: 'lastmod',    label: 'Last modified' },
-      { key: 'sitemap',    label: 'Sitemap' },
     ];
 
     function filters() {
       return {
-        q: $('fq').value.trim(), kind: $('fKind').value,
+        q: $('fq').value.trim(), kind: $('fKind').value, type: $('fType').value,
         domain: $('fDomain').value.trim(), keyword: $('fKeyword').value.trim(),
         industry: [...sel.industry].join(','),
         minCount: $('fMinCount').value.trim(), byName: $('fByName').value,
@@ -235,16 +249,18 @@
         const checked = selected.has(id) ? ' checked' : '';
         const pages = '<b>' + Number(d.item_count || 0).toLocaleString() + '</b> <span class="cc-empty">/ ' + Number(d.url_count || 0).toLocaleString() + '</span>';
         const ratio = (d.ratio != null && d.ratio !== '') ? Math.round(d.ratio * 100) + '%' : dash;
+        const type = d.parent_url ? 'Child' : 'Parent';
+        const smText = String(id).replace(/^https?:\/\//i, '');
         return '<tr' + (selected.has(id) ? ' class="selected"' : '') + '>' +
           '<td class="check-col"><input type="checkbox" class="row-check slRow" data-id="' + esc(id) + '"' + checked + ' /></td>' +
           '<td>' + (d.domain ? esc(d.domain) : dash) + '</td>' +
           '<td>' + kindPill(d.kind, d.by_name) + '</td>' +
-          '<td>' + (d.keyword ? esc(d.keyword) : dash) + '</td>' +
+          '<td><span class="sl-type sl-' + type.toLowerCase() + '">' + type + '</span></td>' +
+          '<td><a class="domain-link sl-sm" href="' + esc(abs(id)) + '" target="_blank" rel="noopener" title="' + esc(id) + '">' + esc(smText) + '</a></td>' +
           '<td class="cc-count">' + pages + '</td>' +
           '<td>' + ratio + '</td>' +
           '<td>' + (d.industry ? esc(tc(d.industry)) : dash) + '</td>' +
           '<td>' + (d.lastmod ? esc(String(d.lastmod).slice(0, 10)) : dash) + '</td>' +
-          '<td><a class="domain-link" href="' + esc(abs(id)) + '" target="_blank" rel="noopener">open ↗</a></td>' +
         '</tr>';
       }).join('');
       document.querySelectorAll('.slRow').forEach((cb) => cb.addEventListener('change', () => {
@@ -297,6 +313,7 @@
       const add = (k, label, clear) => chips.push({ k, label, clear });
       if (filters().q) add('search', filters().q, () => { $('fq').value = ''; });
       if ($('fKind').value) add('kind', $('fKind').value, () => { $('fKind').value = ''; });
+      if ($('fType').value) add('type', $('fType').value, () => { $('fType').value = ''; });
       if ($('fDomain').value.trim()) add('domain', $('fDomain').value.trim(), () => { $('fDomain').value = ''; });
       if ($('fKeyword').value.trim()) add('name', $('fKeyword').value.trim(), () => { $('fKeyword').value = ''; });
       if ($('fMinCount').value.trim()) add('min pages', $('fMinCount').value.trim(), () => { $('fMinCount').value = ''; });
@@ -330,7 +347,7 @@
 
     function clearAll() {
       ['fq', 'fDomain', 'fKeyword', 'fMinCount'].forEach((i) => { $(i).value = ''; });
-      $('fKind').value = ''; $('fByName').value = ''; sel.industry.clear();
+      $('fKind').value = ''; $('fType').value = ''; $('fByName').value = ''; sel.industry.clear();
       search(0);
     }
 
@@ -339,6 +356,7 @@
     $('slReset').addEventListener('click', clearAll);
     ['fq', 'fDomain', 'fKeyword', 'fMinCount'].forEach((i) => $(i).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search(0); } }));
     $('fKind').addEventListener('change', () => search(0));
+    $('fType').addEventListener('change', () => search(0));
     $('fByName').addEventListener('change', () => search(0));
     $('addIndustry').addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return; e.preventDefault();
