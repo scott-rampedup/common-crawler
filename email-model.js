@@ -8,7 +8,7 @@
  * `dbQuery(domain) -> records[]`), and synthesize an address tagged Email Type 'Modelled'.
  */
 const { cleanEmail, classifyEmail } = require('./extractor');
-const { modelEmail } = require('./email-pattern');
+const { modelEmail, render } = require('./email-pattern');
 
 function rootDomain(url) {
   const t = String(url || '').trim(); if (!t) return '';
@@ -21,7 +21,7 @@ const domainOf = (r) => String((r && r['Domain']) || '').toLowerCase() || rootDo
 
 // Mutate `records` IN PLACE: model emails for the email-less bios. Returns the count modelled.
 // `dbQuery(domain)` (optional, async) returns existing records for that domain to learn the pattern.
-async function modelMissingEmails(records, { dbQuery = null } = {}) {
+async function modelMissingEmails(records, { dbQuery = null, patternQuery = null } = {}) {
   const list = records || [];
   const missing = list.filter((r) => !cleanEmail(r['Email Address']) && r['First'] && r['Last'] && r['Gender']);
   if (!missing.length) return 0;
@@ -36,6 +36,18 @@ async function modelMissingEmails(records, { dbQuery = null } = {}) {
 
   let modelled = 0;
   for (const [domain, people] of byDomain) {
+    // Prefer a company's STORED email model (admin-set/learned) over guessing from samples.
+    if (patternQuery) {
+      let stored = null;
+      try { stored = await patternQuery(domain); } catch (e) { /* best-effort */ }
+      if (stored && stored.pattern && stored.email_domain) {
+        for (const r of people) {
+          const local = render(stored.pattern, r['First'], r['Last']);
+          if (local) { r['Email Address'] = `${local}@${stored.email_domain}`; r['Email Type'] = 'Modelled'; modelled++; }
+        }
+        continue;                                                             // stored model wins; skip sample-learning
+      }
+    }
     const samples = [];
     const addSample = (r) => {
       const email = cleanEmail(r['Email Address']);
@@ -86,6 +98,12 @@ if (require.main === module && process.argv.includes('--selftest')) {
 
     // 5) domainOf falls back to the source URL host when there is no Domain field
     ok('domainOf derives the domain from Web Source URL', domainOf({ 'Web Source URL': 'https://www.acme.com/team/x' }) === 'acme.com');
+
+    // 6) prefers a STORED company pattern (patternQuery) over sample-learning
+    const recs6 = [{ First: 'Kay', Last: 'Ng', Gender: 'F', 'Email Address': '', Domain: 'stored.com', 'Web Source URL': 'https://stored.com/team/kay-ng' }];
+    const patternQuery = async (domain) => (domain === 'stored.com' ? { pattern: '{f}{last}', email_domain: 'mail.stored.com' } : null);
+    const n6 = await modelMissingEmails(recs6, { patternQuery });
+    ok('models from a stored company pattern via patternQuery', n6 === 1 && recs6[0]['Email Address'] === 'kng@mail.stored.com' && recs6[0]['Email Type'] === 'Modelled');
 
     console.log(`\nemail-model self-test: ${p} passed, ${f} failed`);
     process.exit(f ? 1 : 0);

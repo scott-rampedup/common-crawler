@@ -9,7 +9,7 @@ const PUBLIC_DIR = path.join(__dirname, 'ui');
 const RESULTS_CSV = path.join(__dirname, 'cc-results.csv');
 const { runDomains, COLUMNS, extractBioUrlsFromSitemaps, extractBioUrlGroups, isBioOrContactUrl, discoverBioUrlsFromCC, resolveLatestCrawl } = require('./cc-engine');
 const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords, geocodePhone, classifyEmail, cleanEmail, findPosition } = require('./extractor');
-const { modelEmail } = require('./email-pattern');
+const { modelEmail, render: renderEmailLocal, TEMPLATES: EMAIL_TEMPLATES } = require('./email-pattern');
 const emailModel = require('./email-model');   // shared email-modelling (also used by the worker fleet)
 const { importSheet } = require('./sheet-import');
 const { siteSearch, bioRowsToRecords } = require('./serper');
@@ -133,7 +133,9 @@ const serperApi = require('./serper');
 
 // Fields an admin may bulk-set (one shared value across many selected records). Deliberately excludes
 // identity fields (name/email/phone/LinkedIn) where a single shared value is nonsensical or destructive.
-const BULK_DB_FIELDS = new Set(['Position', 'Title', 'Email Type', 'Phone Type', 'Phone Location', 'Domain', 'Description']);
+const BULK_DB_FIELDS = new Set(['Position', 'Gender', 'Email Type', 'Phone Type', 'Phone Location', 'Domain', 'Description']);
+// Special modelled-email bulk edits (handled by a dedicated branch, not the generic setter).
+const BULK_EMAIL_FIELDS = new Set(['Email Pattern', 'Email Domain']);
 const BULK_CO_FIELDS = new Set(['industry', 'size', 'country', 'region', 'locality', 'founded', 'category', 'description']);
 const ccHome = require('./cc-home-enrich');
 let companiesClient = null;        // OpenSearch client for the `companies` index (Company Crawler), set in startup
@@ -543,6 +545,8 @@ function pruneOldJobs() {
 async function modelMissingEmailsForRecords(records) {
   return emailModel.modelMissingEmails(records, {
     dbQuery: (domain) => db.query({ domain, emailType: 'Professional', pageSize: 500 }).then((r) => r.rows || []),
+    // Prefer a company's stored email model (set via Bulk Edit) over guessing from samples.
+    patternQuery: companiesClient ? (domain) => companies.getEmailModel(companiesClient, domain) : null,
   });
 }
 
@@ -1680,10 +1684,92 @@ const server = http.createServer(async (req, res) => {
         const field = String(payload.field || '');
         const value = payload.value == null ? '' : String(payload.value);
         const emails = [...new Set((Array.isArray(payload.emails) ? payload.emails : []).map((e) => String(e || '').trim().toLowerCase()).filter(Boolean))];
-        if (!BULK_DB_FIELDS.has(field)) { jsonErr(res, 400, 'That field cannot be bulk-edited'); return; }
+        const isEmailField = BULK_EMAIL_FIELDS.has(field);
+        const isCompanyField = field === 'Company';                             // firmographic company_name (OpenSearch-only)
+        if (!isEmailField && !isCompanyField && !BULK_DB_FIELDS.has(field)) { jsonErr(res, 400, 'That field cannot be bulk-edited'); return; }
         if (!emails.length) { jsonErr(res, 400, 'No records selected'); return; }
         if (emails.length > 10000) { jsonErr(res, 400, 'Too many records (max 10,000 per bulk edit)'); return; }
-        let updated = 0, errors = 0; const nowIso = new Date().toISOString();
+        const nowIso = new Date().toISOString();
+
+        // Modelled-email fields (Email Pattern / Email Domain): re-model each contact's address from its
+        // name (only modelled/blank emails — never overwrite a verified one), then persist the pattern +
+        // domain onto the contact's company for future modelling.
+        if (isEmailField) {
+          const pattern = field === 'Email Pattern' ? value : '';
+          const newDomain = field === 'Email Domain' ? companies.normDomain(value) : '';
+          if (field === 'Email Pattern' && !EMAIL_TEMPLATES.includes(pattern)) { jsonErr(res, 400, 'Unknown email pattern'); return; }
+          if (field === 'Email Domain' && !newDomain) { jsonErr(res, 400, 'Enter a valid email domain'); return; }
+          let updated = 0, protectedCnt = 0, skipped = 0, errors = 0;
+          const companyModel = new Map();                                        // contactDomain -> { pattern?, email_domain }
+          for (let i = 0; i < emails.length; i += 150) {
+            const recs = [], dels = [];                                         // dels = old email _ids to remove (email changed)
+            await Promise.all(emails.slice(i, i + 150).map(async (email) => {
+              try {
+                const rec = await db.getByEmail(email);
+                if (!rec) { errors++; return; }
+                const cur = String(rec['Email Address'] || '').trim();
+                if (cur && String(rec['Email Type'] || '').trim().toLowerCase() !== 'modelled') { protectedCnt++; return; }
+                const first = rec['First'], last = rec['Last'];
+                if (!first || !last) { skipped++; return; }
+                const curLocal = cur.includes('@') ? cur.split('@')[0] : '';
+                const curDomain = cur.includes('@') ? cur.split('@').pop() : '';
+                const contactDomain = companies.normDomain(rec['Domain'] || '');
+                const dom = field === 'Email Domain' ? newDomain : (curDomain || contactDomain);
+                const local = field === 'Email Pattern' ? renderEmailLocal(pattern, first, last) : curLocal;
+                if (!dom || !local) { skipped++; return; }
+                const r = await db.updateRecord(email, { 'Email Address': `${local}@${dom}`, 'Email Type': 'Modelled' });
+                if (r && r.ok && r.record) {
+                  updated++; recs.push(r.record);
+                  const newKey = String(r.record['Email Address'] || '').trim().toLowerCase();
+                  if (newKey && newKey !== email) dels.push(email);             // email changed -> drop the stale _id
+                  if (contactDomain) {
+                    const m = companyModel.get(contactDomain) || {};
+                    if (pattern) m.pattern = pattern;
+                    m.email_domain = field === 'Email Domain' ? newDomain : (m.email_domain || dom);
+                    companyModel.set(contactDomain, m);
+                  }
+                } else errors++;
+              } catch (e) { errors++; }
+            }));
+            if (reader._os) {
+              try {
+                if (recs.length) await reader.put(recs.map((rec) => openSearch.recordToDoc(rec, nowIso)));
+                if (dels.length) await reader.del(dels);
+              } catch (e) { console.error('bulk-update OpenSearch write-through failed:', e.message); }
+            }
+          }
+          let companiesUpdated = 0;
+          if (companiesClient) {
+            for (const [dom, m] of companyModel) {
+              try { const r = await companies.setEmailModelByDomain(companiesClient, dom, m); companiesUpdated += (r.updated || 0); } catch (e) { /* best-effort */ }
+            }
+          }
+          sendJson(res, { ok: true, updated, protected: protectedCnt, skipped, errors, companiesUpdated, total: emails.length });
+          return;
+        }
+
+        // Company (firmographic company_name): lives only in OpenSearch (not a Postgres column, not in the
+        // write-through map), so set it with a direct partial update — same shape enrich-contacts.js uses.
+        // NOTE: the ~6h domain->company enrichment can re-fill this for contacts whose domain matches a company.
+        if (isCompanyField) {
+          if (!reader._os) { jsonErr(res, 503, 'Search index not available'); return; }
+          let updated = 0, errors = 0;
+          for (let i = 0; i < emails.length; i += 500) {
+            const chunk = emails.slice(i, i + 500);
+            const b = [];
+            for (const email of chunk) b.push({ update: { _index: openSearch.INDEX, _id: email } }, { doc: { company_name: value } });
+            try {
+              const r = await reader._os.bulk({ body: b, refresh: false });
+              for (const it of (((r.body || r).items) || [])) { const u = it.update || {}; if (u.error || (u.status && u.status >= 400)) errors++; else updated++; }
+            } catch (e) { errors += chunk.length; }
+          }
+          try { await reader._os.indices.refresh({ index: openSearch.INDEX }); } catch (e) { /* best-effort */ }
+          sendJson(res, { ok: true, updated, errors, total: emails.length });
+          return;
+        }
+
+        // Generic single-field set (Gender, Position, Email Type, Phone*, Domain, Description).
+        let updated = 0, errors = 0;
         for (let i = 0; i < emails.length; i += 200) {
           const recs = [];
           await Promise.all(emails.slice(i, i + 200).map(async (email) => {

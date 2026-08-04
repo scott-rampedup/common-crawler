@@ -37,6 +37,8 @@ const MAPPING = {
       sitemap_url:   { type: 'keyword' },    // discovered bio sitemap (else render constructs {domain}/sitemap.xml)
       naics_code:   { type: 'keyword' },                                 // NAICS 6 code from category (or industry) via naics-enrich
       naics_title:  { type: 'text', fields: { kw: { type: 'keyword' } } },
+      email_pattern: { type: 'keyword' },    // local-part template for modelled emails, e.g. {first}.{last}
+      email_domain:  { type: 'keyword' },    // domain used for modelled emails (may differ from the website domain)
     },
   },
 };
@@ -169,7 +171,7 @@ async function setAltWebsites(client, patterns) {
 const EDITABLE = new Set(['name', 'website', 'industry', 'size', 'country', 'region', 'locality', 'founded',
   'linkedin_url', 'phone', 'full_address', 'category', 'cid', 'sitemap_url',
   'description', 'email', 'email_type', 'facebook', 'instagram', 'map', 'linkedin_contact', 'bio_url', 'alternate_websites', 'contacts', 'contacts_count',
-  'cc_refreshed_at', 'cc_crawl']);
+  'cc_refreshed_at', 'cc_crawl', 'email_pattern', 'email_domain']);
 async function update(client, id, updates) {
   if (!id) throw new Error('id required');
   const doc = {};
@@ -204,6 +206,35 @@ async function bulkUpdate(client, ids, updates) {
   }
   try { await client.indices.refresh({ index: INDEX }); } catch (e) { /* refresh is best-effort */ }
   return { updated, errors, total: list.length };
+}
+
+// Read a website domain's stored email model (admin-set or learned) for future modelling, or null.
+async function getEmailModel(client, domain) {
+  const d = normDomain(domain); if (!d) return null;
+  try {
+    const r = await client.search({ index: INDEX, body: {
+      size: 1, _source: ['email_pattern', 'email_domain'],
+      query: { bool: { filter: [{ term: { domain: d } }, { exists: { field: 'email_pattern' } }] } } } });
+    const s = (((r.body || r).hits.hits || [])[0] || {})._source;
+    if (s && s.email_pattern) return { pattern: s.email_pattern, email_domain: s.email_domain || d };
+  } catch (e) { /* best-effort */ }
+  return null;
+}
+
+// Persist the email model (pattern and/or domain) onto every company sharing this website domain.
+async function setEmailModelByDomain(client, domain, updates) {
+  const d = normDomain(domain); if (!d) return { updated: 0 };
+  const doc = {};
+  if (updates && updates.pattern) doc.email_pattern = String(updates.pattern);
+  if (updates && updates.email_domain) doc.email_domain = normDomain(updates.email_domain);
+  if (!Object.keys(doc).length) return { updated: 0 };
+  let ids = [];
+  try {
+    const r = await client.search({ index: INDEX, body: { size: 1000, _source: false, query: { term: { domain: d } } } });
+    ids = ((r.body || r).hits.hits || []).map((h) => h._id);
+  } catch (e) { return { updated: 0 }; }
+  if (!ids.length) return { updated: 0 };
+  return bulkUpdate(client, ids, doc);
 }
 
 // Map a SERPER Places result onto company-field updates: title->name (only if name is blank),
@@ -287,4 +318,4 @@ function isBadCompanyDomain(dom) {
   return !dom || NON_COMPANY_DOMAINS.has(dom);
 }
 
-module.exports = { INDEX, MAPPING, OUT_COLS, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, bulkUpdate, makeClient: os.makeClient };
+module.exports = { INDEX, MAPPING, OUT_COLS, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, bulkUpdate, getEmailModel, setEmailModelByDomain, makeClient: os.makeClient };

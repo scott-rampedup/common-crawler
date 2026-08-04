@@ -57,8 +57,30 @@ const EDIT_FIELDS = [
 ];
 
 // Bulk edit sets ONE field to ONE shared value across every selected record, so identity fields
-// (name/email/phone/LinkedIn) — which are unique per person — are excluded. Server enforces the same list.
-const BULK_FIELDS = EDIT_FIELDS.filter((f) => !['First', 'Last', 'Email Address', 'Phone', 'LinkedIn URL'].includes(f.key));
+// (name/email/phone/LinkedIn) — unique per person — are excluded. The server enforces the same list.
+// Company, Gender, Email Pattern and Email Domain get special server-side handling.
+const BULK_FIELDS = [
+  { key: 'Company',        label: 'Company' },
+  { key: 'Position',       label: 'Position (title)' },
+  { key: 'Gender',         label: 'Gender' },
+  { key: 'Email Type',     label: 'Email Type' },
+  { key: 'Email Pattern',  label: 'Email Pattern (modelled email)' },
+  { key: 'Email Domain',   label: 'Email Domain (modelled email)' },
+  { key: 'Phone Type',     label: 'Phone Type' },
+  { key: 'Phone Location', label: 'Phone Location' },
+  { key: 'Domain',         label: 'Domain (website)' },
+  { key: 'Description',    label: 'Description' },
+];
+
+// Email-pattern dropdown: label shows the token form + an example; value is the email-pattern.js template.
+const EMAIL_PATTERN_OPTIONS = [
+  ['{first}.{last}', 'First . last  —  {fn}.{ln}  (e.g. john.doe)'],
+  ['{first}{last}',  'First last  —  {fn}{ln}  (e.g. johndoe)'],
+  ['{f}{last}',      'First-initial + last  —  {fi}{ln}  (e.g. jdoe)'],
+  ['{f}.{last}',     'First-initial . last  —  {fi}.{ln}  (e.g. j.doe)'],
+  ['{first}_{last}', 'First _ last  —  {fn}_{ln}  (e.g. john_doe)'],
+  ['{first}',        'First name  —  {fn}  (e.g. john)'],
+];
 
 const PAGE_SIZE = 50;
 
@@ -777,14 +799,28 @@ function openBulkEditModal() {
   if (!emails.length) return;
   const nStr = emails.length.toLocaleString();
 
-  let fieldSel, valueInput, valueWrap;
+  let fieldSel, valueInput, valueWrap, noteEl;
   const rebuildValue = () => {
     valueWrap.innerHTML = '';
-    const isDesc = fieldSel.value === 'Description';
-    valueInput = document.createElement(isDesc ? 'textarea' : 'input');
-    if (isDesc) valueInput.rows = 3; else valueInput.type = 'text';
-    valueInput.placeholder = 'New value (leave blank to clear the field)';
+    const f = fieldSel.value;
+    if (f === 'Gender') {
+      valueInput = document.createElement('select');
+      [['M', 'Male (M)'], ['F', 'Female (F)']].forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; valueInput.appendChild(o); });
+    } else if (f === 'Email Pattern') {
+      valueInput = document.createElement('select');
+      EMAIL_PATTERN_OPTIONS.forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; valueInput.appendChild(o); });
+    } else if (f === 'Description') {
+      valueInput = document.createElement('textarea'); valueInput.rows = 3;
+      valueInput.placeholder = 'New value (leave blank to clear the field)';
+    } else {
+      valueInput = document.createElement('input'); valueInput.type = 'text';
+      valueInput.placeholder = f === 'Email Domain' ? 'e.g. acme.com' : 'New value (leave blank to clear the field)';
+    }
     valueWrap.appendChild(valueInput);
+    let msg = '';
+    if (f === 'Email Pattern' || f === 'Email Domain') msg = 'Only modelled or blank emails are rewritten — verified emails are left as-is. The pattern + domain are also saved to the company for future modelling.';
+    else if (f === 'Company') msg = 'Sets the Company shown in the grid. The domain→company enrichment may re-fill it later for contacts whose website domain matches a company in the database.';
+    if (noteEl) { noteEl.textContent = msg; noteEl.style.display = msg ? 'block' : 'none'; }
   };
 
   const cancelBtn = document.createElement('button');
@@ -810,6 +846,8 @@ function openBulkEditModal() {
     vLabel.appendChild(Object.assign(document.createElement('span'), { textContent: 'New value' }));
     valueWrap = document.createElement('div'); vLabel.appendChild(valueWrap);
     body.appendChild(vLabel);
+    noteEl = document.createElement('p'); noteEl.className = 'bulk-note'; noteEl.style.display = 'none';
+    body.appendChild(noteEl);
     rebuildValue();
     fieldSel.addEventListener('change', rebuildValue);
   }, [cancelBtn, saveBtn]);
@@ -830,7 +868,12 @@ function openBulkEditModal() {
       state.selected.clear(); state.allMatching = false;
       updateSelectedInfo();
       query();
-      alert(`Bulk edit complete: ${Number(out.updated || 0).toLocaleString()} updated${out.errors ? `, ${out.errors} error(s)` : ''}.`);
+      const parts = [`${Number(out.updated || 0).toLocaleString()} updated`];
+      if (out.protected) parts.push(`${out.protected.toLocaleString()} kept (verified email)`);
+      if (out.skipped) parts.push(`${out.skipped.toLocaleString()} skipped`);
+      if (out.companiesUpdated) parts.push(`${out.companiesUpdated.toLocaleString()} company record(s) tagged`);
+      if (out.errors) parts.push(`${out.errors.toLocaleString()} error(s)`);
+      alert('Bulk edit complete: ' + parts.join(', ') + '.');
     } catch (e) {
       saveBtn.disabled = false; cancelBtn.disabled = false;
       saveBtn.textContent = `Apply to ${nStr} record(s)`;

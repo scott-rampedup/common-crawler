@@ -1037,6 +1037,7 @@ body:not([data-role="admin"]) .ccEdit { display: none !important; }
 .bulk-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .bulk-field > span { font-weight: 650; font-size: 0.85rem; color: #374151; }
 .bulk-field select, .bulk-field input, .bulk-field textarea { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 0.92rem; }
+.bulk-note { margin: -6px 0 14px; font-size: 0.82rem; line-height: 1.4; color: #2563eb; }
 /* per-row Edit pencil (Contact Crawler) */
 .row-edit-btn { border: none; background: none; cursor: pointer; font-size: 1rem; color: #6b7280; padding: 2px 6px; border-radius: 6px; line-height: 1; }
 .row-edit-btn:hover { background: #eef2ff; color: #2563eb; }
