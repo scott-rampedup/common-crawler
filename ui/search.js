@@ -15,11 +15,11 @@ const CSV_COLUMNS = [
 const COLUMNS = [
   { key: 'Image URL',      label: '',              type: 'image',       sortable: false },
   { key: 'Last',           label: 'Contact Name',  type: 'contactname', sortable: true  },
+  { key: 'Company Name',   label: 'Company',       type: 'companyname', sortable: false },   // linked to the company website (Domain); falls back to the website when no name
   { key: 'Position',       label: 'Position',      type: 'position', sortable: true  },
-  { key: 'Domain',         label: 'Domain',        type: 'domain',   sortable: true  },
   { key: 'Email Address',  label: 'Email Address', type: 'text',     sortable: true  },
   { key: 'Email Type',     label: 'Type',          type: 'text',     sortable: true  },
-  { key: 'New Hire',       label: 'New Hire',      type: 'newhire',  sortable: false },
+  { key: 'New Hire',       label: 'New',           type: 'newhire',  sortable: false },
   { key: 'LinkedIn URL',   label: 'LinkedIn',      type: 'linkedin', sortable: false },
   { key: 'Facebook',       label: 'Facebook',      type: 'social',   sortable: false },
   { key: 'Twitter',        label: 'Twitter',       type: 'social',   sortable: false },
@@ -31,12 +31,8 @@ const COLUMNS = [
   { key: 'Phone Type',     label: 'Type',          type: 'text',     sortable: true  },
   { key: 'Phone 2',        label: 'Phone 2',       type: 'text',     sortable: true  },
   { key: 'Phone 2 Type',   label: 'Type',          type: 'text',     sortable: true  },
-  { key: 'Type',           label: 'Domain Type',   type: 'text',     sortable: true  },
   { key: 'Industry',       label: 'Industry',      type: 'text',     sortable: false },
-  { key: 'Company Size',   label: 'Co. Size',      type: 'text',     sortable: false },
-  { key: 'Company HQ',     label: 'Co. HQ',        type: 'text',     sortable: false },
-  { key: 'Founded',        label: 'Founded',       type: 'text',     sortable: false },
-  { key: 'Company Name',   label: 'Company',       type: 'text',     sortable: false },
+  { key: 'Company Size',   label: 'Co. Size',      type: 'text',     sortable: false, cls: 'cosize-col' },
   { key: '_edit',          label: 'Edit',          type: 'edit',     sortable: false },
 ];
 
@@ -208,6 +204,7 @@ function createHeader() {
     else if (col.type === 'location') th.classList.add('location-col');
     else if (col.type === 'edit') th.classList.add('row-edit');   // admin-only column (hidden via CSS otherwise)
     if (col.type === 'linkedin' || col.type === 'maps' || col.type === 'vcard' || col.type === 'social') th.classList.add('icon-col');
+    if (col.cls) th.classList.add(col.cls);
 
     if (col.type === 'linkedin') {
       th.innerHTML = LINKEDIN_SVG;        // header shows the LinkedIn icon, not text
@@ -284,6 +281,7 @@ function renderRows() {
     for (const col of COLUMNS) {
       const cell = document.createElement('td');
       const value = record[col.key];
+      if (col.cls) cell.classList.add(col.cls);
 
       if (col.type === 'image') {
         // thumbnail: Image URL, else the site's favicon (by domain), hyperlinked to the Web
@@ -332,6 +330,21 @@ function renderRows() {
         } else {
           cell.textContent = name;
           if (name) cell.title = name;
+        }
+      } else if (col.type === 'companyname') {
+        // Company Name hyperlinked to the company website (the contact's Domain). If there is no
+        // company name, show the website itself as the name.
+        const dom = record['Domain'] || '';
+        const nameText = record['Company Name'] || dom;
+        if (nameText && dom) {
+          const a = document.createElement('a');
+          a.href = /^https?:\/\//i.test(dom) ? dom : `https://${dom}`;
+          a.target = '_blank'; a.rel = 'noopener noreferrer';
+          a.className = 'domain-link'; a.title = nameText; a.textContent = nameText;
+          cell.appendChild(a);
+        } else {
+          cell.textContent = nameText || '';
+          if (nameText) cell.title = nameText;
         }
       } else if (col.type === 'lastpath') {
         // Last Path text, hyperlinked to the Web Source URL
