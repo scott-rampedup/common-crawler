@@ -563,6 +563,10 @@ td.location-cell { min-width: 170px; }
 /* Co. Size: wider so bands like "1001-5000" / "10001+" aren't cramped */
 .cosize-col { min-width: 130px; white-space: nowrap; }
 
+/* Company Name: wider + bold (linked to the company website) */
+.company-col { min-width: 240px; }
+td.company-col, td.company-col a.domain-link { font-weight: 700; }
+
 /* LinkedIn -> brand-blue "in" glyph linking to the profile */
 td.linkedin-cell { text-align: center; }
 .linkedin-link {

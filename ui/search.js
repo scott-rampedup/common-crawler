@@ -15,7 +15,7 @@ const CSV_COLUMNS = [
 const COLUMNS = [
   { key: 'Image URL',      label: '',              type: 'image',       sortable: false },
   { key: 'Last',           label: 'Contact Name',  type: 'contactname', sortable: true  },
-  { key: 'Company Name',   label: 'Company',       type: 'companyname', sortable: false },   // linked to the company website (Domain); falls back to the website when no name
+  { key: 'Company Name',   label: 'Company',       type: 'companyname', sortable: false, cls: 'company-col' },   // wider + bold; linked to the company website (Domain); falls back to the website when no name
   { key: 'Position',       label: 'Position',      type: 'position', sortable: true  },
   { key: 'Email Address',  label: 'Email Address', type: 'text',     sortable: true  },
   { key: 'Email Type',     label: 'Type',          type: 'text',     sortable: true  },
@@ -31,7 +31,7 @@ const COLUMNS = [
   { key: 'Phone Type',     label: 'Type',          type: 'text',     sortable: true  },
   { key: 'Phone 2',        label: 'Phone 2',       type: 'text',     sortable: true  },
   { key: 'Phone 2 Type',   label: 'Type',          type: 'text',     sortable: true  },
-  { key: 'Industry',       label: 'Industry',      type: 'text',     sortable: false },
+  { key: 'Industry',       label: 'Industry',      type: 'text',     sortable: false, tc: true },
   { key: 'Company Size',   label: 'Co. Size',      type: 'text',     sortable: false, cls: 'cosize-col' },
   { key: '_edit',          label: 'Edit',          type: 'edit',     sortable: false },
 ];
@@ -79,6 +79,24 @@ const EMAIL_PATTERN_OPTIONS = [
 ];
 
 const PAGE_SIZE = 50;
+
+// Proper-case for DISPLAY ONLY (never mutates stored data / filters). Only reformats values that are
+// all-UPPERCASE or all-lowercase — already mixed-case text (e.g. "McDonald", "eBay") is left as-is.
+// Keeps known business acronyms upper and small joining words lower. Mirrors the Company Crawler tc().
+const TC_UP = new Set(['llc', 'inc', 'llp', 'plc', 'pllc', 'pc', 'ltd', 'usa', 'us', 'uk', 'uae', 'eu', 'ny', 'la', 'dc', 'it', 'hr', 'pr', 'ceo', 'cfo', 'coo', 'cto', 'vp', 'svp', 'evp']);
+const TC_LOW = new Set(['of', 'and', 'the', 'for', 'to', 'in', 'on', 'at', 'a', 'an', 'or', 'de', 'du', 'van', 'von']);
+function properCase(s) {
+  s = String(s == null ? '' : s);
+  if (!s) return '';
+  const letters = s.replace(/[^A-Za-z]/g, '');
+  if (!letters || (letters !== letters.toUpperCase() && letters !== letters.toLowerCase())) return s;  // already mixed-case → leave it
+  return s.toLowerCase().split(/(\s+|-|\/|,|\.)/).map((w, i) => {
+    if (/^(\s+|-|\/|,|\.)$/.test(w) || !w) return w;
+    if (TC_UP.has(w)) return w.toUpperCase();
+    if (i > 0 && TC_LOW.has(w)) return w;
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }).join('');
+}
 
 const PIN_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">'
   + '<path fill="currentColor" d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"/></svg>';
@@ -320,7 +338,7 @@ function renderRows() {
       } else if (col.type === 'contactname') {
         // Contact Name = First + Last, hyperlinked to the Web Source URL (frozen left column)
         cell.className = 'lastpath-cell';
-        const name = ((record['First'] || '') + ' ' + (record['Last'] || '')).trim();
+        const name = properCase(((record['First'] || '') + ' ' + (record['Last'] || '')).trim());
         const pageUrl = record['Web Source URL'];
         if (name && pageUrl) {
           const a = document.createElement('a');
@@ -335,7 +353,7 @@ function renderRows() {
         // Company Name hyperlinked to the company website (the contact's Domain). If there is no
         // company name, show the website itself as the name.
         const dom = record['Domain'] || '';
-        const nameText = record['Company Name'] || dom;
+        const nameText = record['Company Name'] ? properCase(record['Company Name']) : dom;
         if (nameText && dom) {
           const a = document.createElement('a');
           a.href = /^https?:\/\//i.test(dom) ? dom : `https://${dom}`;
@@ -438,12 +456,12 @@ function renderRows() {
         cell.appendChild(b);
       } else if (col.type === 'position') {
         cell.className = 'position-cell';
-        cell.textContent = value || '';
+        cell.textContent = properCase(value || '');
       } else if (col.type === 'location') {
         cell.className = 'location-cell';
-        cell.textContent = value || '';
+        cell.textContent = properCase(value || '');
       } else {
-        cell.textContent = value || '';
+        cell.textContent = col.tc ? properCase(value || '') : (value || '');
       }
       tr.appendChild(cell);
     }
