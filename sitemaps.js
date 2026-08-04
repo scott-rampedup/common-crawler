@@ -108,7 +108,7 @@ async function count(client, query) {
 
 // Total + per-kind counts — the verification snapshot.
 async function stats(client) {
-  const r = await client.search({ index: INDEX, body: { size: 0, aggs: { kind: { terms: { field: 'kind', size: 10 } }, byname: { terms: { field: 'by_name', size: 2 } } } } });
+  const r = await client.search({ index: INDEX, body: { size: 0, track_total_hits: true, aggs: { kind: { terms: { field: 'kind', size: 10 } }, byname: { terms: { field: 'by_name', size: 2 } } } } });
   const a = (r.body || r).aggregations;
   return {
     total: (r.body || r).hits.total.value,
@@ -146,7 +146,7 @@ function buildFilter(f = {}) {
 
 async function search(client, f = {}, { from = 0, size = 50, sort = 'item_count', dir = 'desc' } = {}) {
   const col = SORT_COLS.has(sort) ? sort : 'item_count';
-  const body = { from, size, query: buildFilter(f), sort: [{ [col]: dir === 'asc' ? 'asc' : 'desc' }] };
+  const body = { from, size, track_total_hits: true, query: buildFilter(f), sort: [{ [col]: dir === 'asc' ? 'asc' : 'desc' }] };
   const r = await client.search({ index: INDEX, body });
   const b = r.body || r;
   return { total: b.hits.total.value, rows: (b.hits.hits || []).map((h) => h._source) };
@@ -154,7 +154,7 @@ async function search(client, f = {}, { from = 0, size = 50, sort = 'item_count'
 
 // Facet counts + the harvestable-page total for the current filter set (drives the sidebar + header).
 async function facets(client, f = {}) {
-  const r = await client.search({ index: INDEX, body: { size: 0, query: buildFilter(f), aggs: {
+  const r = await client.search({ index: INDEX, body: { size: 0, track_total_hits: true, query: buildFilter(f), aggs: {
     kind: { terms: { field: 'kind', size: 5 } },
     industry: { terms: { field: 'industry', size: 40 } },
     type: { filters: { filters: { Parent: { term: { parent_url: '' } }, Child: { bool: { must_not: [{ term: { parent_url: '' } }] } } } } },
