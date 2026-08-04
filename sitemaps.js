@@ -123,7 +123,11 @@ const SORT_COLS = new Set(['item_count', 'url_count', 'ratio', 'domain', 'kind',
 function buildFilter(f = {}) {
   const filter = [], must = [];
   if (f.kind) filter.push({ term: { kind: f.kind } });
-  if (f.industry) filter.push({ term: { industry: f.industry } });
+  if (f.industry) {
+    const arr = (Array.isArray(f.industry) ? f.industry : String(f.industry).split(',')).map((s) => s.trim()).filter(Boolean);
+    if (arr.length === 1) filter.push({ term: { industry: arr[0] } });
+    else if (arr.length) filter.push({ terms: { industry: arr } });
+  }
   if (f.domain) filter.push({ wildcard: { domain: `*${String(f.domain).toLowerCase()}*` } });
   if (f.keyword) filter.push({ wildcard: { keyword: `*${String(f.keyword).toLowerCase()}*` } });
   if (f.byName === 'yes' || f.byName === true) filter.push({ term: { by_name: true } });

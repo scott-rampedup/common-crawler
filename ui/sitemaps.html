@@ -8,47 +8,44 @@
   <link rel="apple-touch-icon" href="/ui/logo.png" />
   <link rel="stylesheet" href="/ui/styles.css" />
   <style>
-    /* ---- Sitemap Library (prototype) — on top of the shared search-page shell ---- */
-    .sl-head { margin: 6px 0 14px; }
-    .sl-head h2 { margin: 0 0 4px; font-size: 1.35rem; }
-    .sl-sub { margin: 0; color: #6b7280; font-size: 0.9rem; }
+    /* ---- Sitemap Library — reuses the shared crawler shell; these mirror company-crawler.html ---- */
+    .cc-empty { color: #9ca3af; }
+    .cc-count b { color: #111827; }
 
-    .sl-stats { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 14px; }
-    .sl-stat { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; padding: 8px 14px; min-width: 110px; }
-    .sl-stat b { display: block; font-size: 1.25rem; color: #111827; line-height: 1.1; }
-    .sl-stat span { font-size: 0.75rem; color: #6b7280; }
+    /* faceted filter checklists (identical to Company Crawler) */
+    .facet { display: flex; flex-direction: column; gap: 6px; }
+    .facet > .facet-h { display: flex; align-items: baseline; justify-content: space-between; }
+    .facet > .facet-h b { font-size: 0.9rem; color: #374151; font-weight: 700; }
+    .facet-add { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 10px; font-size: 0.88rem; font-family: inherit; }
+    .facet-list { display: flex; flex-direction: column; gap: 2px; max-height: 240px; overflow-y: auto; padding-right: 2px; }
+    .facet-list::-webkit-scrollbar { width: 8px; }
+    .facet-list::-webkit-scrollbar-thumb { background: #dbe2ec; border-radius: 8px; }
+    .facet-opt { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 8px; font-size: 0.86rem; color: #1f2937; cursor: pointer; flex-direction: row; }
+    .facet-opt:hover { background: #f1f5f9; }
+    .facet-opt input { width: 15px; height: 15px; flex: none; accent-color: #2563eb; margin: 0; }
+    .facet-opt .lbl { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: capitalize; }
+    .facet-opt .cnt { font-variant-numeric: tabular-nums; color: #6b7280; font-size: 0.78rem; flex: none; }
+    .facet-opt.on { background: #eef4ff; }
+    .facet-opt.on .lbl { font-weight: 650; color: #1d4ed8; }
+    .facet-empty { color: #9ca3af; font-size: 0.82rem; padding: 2px 6px; }
 
-    .sl-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 12px; }
-    .sl-filters input, .sl-filters select { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 0.88rem; }
-    .sl-filters input#q { flex: 1 1 260px; min-width: 200px; }
-    .sl-filters input#minCount { width: 100px; }
+    /* active-filter chips above the results (identical to Company Crawler) */
+    .cc-chips { display: flex; flex-wrap: wrap; gap: 7px; padding: 10px 18px; border-bottom: 1px solid #eef2f7; align-items: center; }
+    .cc-chips[hidden] { display: none; }
+    .cc-chip { display: inline-flex; align-items: center; gap: 7px; padding: 4px 6px 4px 11px; background: #eef2ff; color: #3730a3; border-radius: 999px; font-size: 0.82rem; font-weight: 600; white-space: nowrap; }
+    .cc-chip .k { color: #6366f1; font-weight: 700; text-transform: uppercase; font-size: 0.66rem; letter-spacing: 0.04em; }
+    .cc-chip button { border: none; background: rgba(99,102,241,.16); color: #3730a3; width: 17px; height: 17px; border-radius: 50%; cursor: pointer; font-size: 0.8rem; line-height: 1; padding: 0; }
+    .cc-chip button:hover { background: rgba(99,102,241,.32); }
+    .cc-chips .clear-all { border: none; background: none; color: #6b7280; font-weight: 600; font-size: 0.82rem; cursor: pointer; text-decoration: underline; }
+    .cc-chips .clear-all:hover { color: #b91c1c; }
 
-    .sl-selbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 8px 14px; margin: 0 0 12px; font-size: 0.9rem; }
-    .sl-summary { color: #6b7280; font-size: 0.85rem; margin: 0 0 8px; }
+    thead th .arrow { color: #2563eb; font-size: 0.72rem; }
 
-    .sl-tablewrap { overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 10px; }
-    .sl-table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
-    .sl-table th, .sl-table td { padding: 9px 12px; text-align: left; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
-    .sl-table thead th { background: #f8fafc; color: #374151; font-weight: 650; position: sticky; top: 0; }
-    .sl-table th.num, .sl-table td.num { text-align: right; }
-    .sl-table th.chk, .sl-table td.chk { width: 34px; text-align: center; }
-    .sl-table th.sortable { cursor: pointer; user-select: none; }
-    .sl-table th.sortable:hover { color: #2563eb; }
-    .sl-table tbody tr:hover { background: #f9fafb; }
-    .sl-muted { color: #9ca3af; }
-
-    .sl-pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 650; }
+    /* Kind pill */
+    .sl-pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 650; white-space: nowrap; }
     .sl-people { background: #dbeafe; color: #1d4ed8; }
     .sl-loc { background: #dcfce7; color: #15803d; }
-    .sl-tag { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 6px; background: #f3f4f6; color: #6b7280; font-size: 0.68rem; }
-
-    .sl-pager { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
-    .sl-pager span { color: #6b7280; font-size: 0.85rem; }
-    @media (prefers-color-scheme: dark) {
-      .sl-stat { background: #1f2937; border-color: #374151; } .sl-stat b { color: #f3f4f6; }
-      .sl-tablewrap { border-color: #374151; } .sl-table thead th { background: #111827; color: #e5e7eb; }
-      .sl-table th, .sl-table td { border-color: #1f2937; } .sl-table tbody tr:hover { background: #1f2937; }
-    }
+    .sl-tag { display: inline-block; margin-left: 5px; padding: 0 6px; border-radius: 6px; background: #f3f4f6; color: #6b7280; font-size: 0.68rem; }
   </style>
 </head>
 <body class="search-page">
@@ -61,166 +58,307 @@
       <nav class="nav-actions"></nav>
     </header>
 
-    <main class="results-panel">
-      <div class="sl-head">
-        <h2>🗺 Sitemap Library <span style="font-size:.7rem;color:#9ca3af;font-weight:600;vertical-align:middle">PROTOTYPE</span></h2>
-        <p class="sl-sub">The discovery hub — People &amp; Location directories the crawler harvests companies and contacts from.</p>
-      </div>
+    <div class="search-layout">
+      <!-- LEFT: filter rail -->
+      <aside class="search-panel">
+        <h2>Sitemap Library</h2>
+        <div class="search-fields">
+          <label>Search
+            <input id="fq" type="search" placeholder="domain / sitemap name" />
+          </label>
+          <label>Kind
+            <select id="fKind">
+              <option value="">All (People + Location)</option>
+              <option value="People">People</option>
+              <option value="Location">Location</option>
+            </select>
+          </label>
+          <label>Domain
+            <input id="fDomain" type="search" placeholder="e.g. usbank.com" />
+          </label>
+          <label>Sitemap name
+            <input id="fKeyword" type="search" placeholder="e.g. agents, locations, team" />
+          </label>
 
-      <div id="statsBar" class="sl-stats"></div>
+          <div class="facet" data-field="industry">
+            <div class="facet-h"><b>Industry</b></div>
+            <input class="facet-add" id="addIndustry" list="industries" placeholder="Type an industry, press Enter…" />
+            <div class="facet-list" id="facetIndustry"><span class="facet-empty">Search to see counts</span></div>
+          </div>
 
-      <form id="filters" class="sl-filters">
-        <input id="q" placeholder="Search domain / URL / sitemap name…" />
-        <select id="kind"><option value="">All kinds</option><option value="People">People</option><option value="Location">Location</option></select>
-        <select id="industry"><option value="">All industries</option></select>
-        <input id="domain" placeholder="Domain contains…" />
-        <input id="keyword" placeholder="Sitemap name contains…" />
-        <input id="minCount" type="number" min="0" placeholder="Min pages" />
-        <select id="byName"><option value="">Name + ratio</option><option value="yes">Name-matched</option><option value="no">Ratio-only</option></select>
-        <button type="submit" class="primary">Search</button>
-        <button type="button" id="reset" class="ghost">Reset</button>
-      </form>
+          <label>Min pages
+            <input id="fMinCount" type="number" min="0" placeholder="e.g. 50" />
+          </label>
+          <label>Match
+            <select id="fByName">
+              <option value="">Name + ratio</option>
+              <option value="yes">Name-matched</option>
+              <option value="no">Ratio-only</option>
+            </select>
+          </label>
+        </div>
 
-      <div id="selBar" class="sl-selbar" hidden></div>
-      <p id="summary" class="sl-summary"></p>
+        <div class="search-actions">
+          <button id="slSearch" class="primary" type="button">Search</button>
+          <button id="slReset" class="ghost" type="button">Clear</button>
+        </div>
+        <p class="search-hint">Searching <b id="slTotalIdx">…</b> sitemaps.</p>
+      </aside>
 
-      <div class="sl-tablewrap">
-        <table class="sl-table">
-          <thead><tr>
-            <th class="chk"><input type="checkbox" id="allChk" title="Select all on this page" /></th>
-            <th>Domain</th>
-            <th>Kind</th>
-            <th>Sitemap name</th>
-            <th class="num sortable" data-sort="item_count">Pages ▾</th>
-            <th class="num sortable" data-sort="ratio">Ratio</th>
-            <th>Industry</th>
-            <th>Last modified</th>
-            <th>Sitemap</th>
-          </tr></thead>
-          <tbody id="rows"></tbody>
-        </table>
-      </div>
+      <!-- RIGHT: results -->
+      <main class="results-panel">
+        <div class="results-toolbar">
+          <p id="resultsSummary">Loading…</p>
+          <div class="toolbar-actions">
+            <span id="slSelInfo" class="selected-info"></span>
+            <button id="slCrawl" class="primary" type="button" style="display:none">🕷 Crawl selected (<span id="slSelCount">0</span>)</button>
+          </div>
+        </div>
 
-      <div class="sl-pager">
-        <button id="prev" class="ghost" type="button">‹ Prev</button>
-        <span id="pageInfo"></span>
-        <button id="next" class="ghost" type="button">Next ›</button>
-      </div>
-    </main>
+        <div id="slChips" class="cc-chips" hidden></div>
+
+        <div class="results-scroll" id="slScroll">
+          <table id="slTable">
+            <thead><tr id="slHead"></tr></thead>
+            <tbody id="slBody"></tbody>
+          </table>
+        </div>
+
+        <div class="pagination" id="slPager" style="display:none">
+          <button id="slFirst" type="button" title="First page">«</button>
+          <button id="slPrev" type="button" title="Previous page">‹ Prev</button>
+          <span id="slPageInfo" class="page-info">Page 1 of 1</span>
+          <button id="slNext" type="button" title="Next page">Next ›</button>
+          <button id="slLast" type="button" title="Last page">»</button>
+        </div>
+      </main>
+    </div>
   </div>
+
+  <datalist id="industries">
+    <option>real estate</option><option>insurance</option><option>financial services</option><option>investment banking</option>
+    <option>investment management</option><option>banking</option><option>capital markets</option><option>legal services</option>
+    <option>law practice</option><option>hospital &amp; health care</option><option>medical practice</option>
+    <option>health, wellness and fitness</option><option>retail</option><option>restaurants</option><option>automotive</option>
+  </datalist>
 
   <script src="/ui/nav.js"></script>
   <script>
     const $ = (id) => document.getElementById(id);
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const abs = (u) => /^https?:/i.test(u) ? u : ('https://' + u);
+    const TC_UP = new Set(['llc', 'inc', 'usa', 'us', 'uk']);
+    const tc = (s) => String(s == null ? '' : s).toLowerCase().split(/(\s+|-|\/|,)/).map((w) => (/^(\s+|-|\/|,)$/.test(w) || !w) ? w : (TC_UP.has(w) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1))).join('');
+
     const PAGE = 50;
-    let from = 0, total = 0, sort = 'item_count', dir = 'desc';
+    let from = 0, total = 0, hasSearched = false;
+    const sortState = { col: 'item_count', dir: 'desc' };
     const selected = new Map();      // sitemap_url -> row (cross-page)
-    const pageRows = new Map();      // sitemap_url -> row (current page, for select-all)
+    let rowsById = {};
+    const sel = { industry: new Set() };
+
+    // Columns (after the checkbox col). sort = server sort key; num = right-ish numeric cell.
+    const COLS = [
+      { key: 'domain',     label: 'Domain' },
+      { key: 'kind',       label: 'Kind' },
+      { key: 'keyword',    label: 'Sitemap name' },
+      { key: 'item_count', label: 'Pages',        sort: 'item_count' },
+      { key: 'ratio',      label: 'Ratio',        sort: 'ratio' },
+      { key: 'industry',   label: 'Industry' },
+      { key: 'lastmod',    label: 'Last modified' },
+      { key: 'sitemap',    label: 'Sitemap' },
+    ];
 
     function filters() {
       return {
-        q: $('q').value.trim(), kind: $('kind').value, industry: $('industry').value,
-        domain: $('domain').value.trim(), keyword: $('keyword').value.trim(),
-        minCount: $('minCount').value.trim(), byName: $('byName').value,
+        q: $('fq').value.trim(), kind: $('fKind').value,
+        domain: $('fDomain').value.trim(), keyword: $('fKeyword').value.trim(),
+        industry: [...sel.industry].join(','),
+        minCount: $('fMinCount').value.trim(), byName: $('fByName').value,
       };
     }
-    function params(extra) {
-      const f = filters(); const p = new URLSearchParams();
+    function qs(extra) {
+      const f = filters(), p = new URLSearchParams();
       for (const k in f) if (f[k]) p.set(k, f[k]);
+      if (sortState.col) { p.set('sort', sortState.col); p.set('dir', sortState.dir); }
       for (const k in (extra || {})) p.set(k, extra[k]);
-      return p;
+      return p.toString();
     }
-    const statCard = (n, label) => `<div class="sl-stat"><b>${Number(n || 0).toLocaleString()}</b><span>${label}</span></div>`;
 
+    function renderHead() {
+      $('slHead').innerHTML =
+        '<th class="check-col"><input type="checkbox" id="slAll" class="all-check" title="Select all on this page" /></th>' +
+        COLS.map((c) => {
+          if (!c.sort) return '<th>' + esc(c.label) + '</th>';
+          const active = sortState.col === c.sort;
+          const arrow = active ? ' <span class="arrow">' + (sortState.dir === 'asc' ? '▲' : '▼') + '</span>' : '';
+          return '<th class="sortable' + (active ? ' sorted' : '') + '" data-sort="' + c.sort + '">' + esc(c.label) + arrow + '</th>';
+        }).join('');
+      $('slAll').addEventListener('change', (e) => togglePage(e.target.checked));
+      document.querySelectorAll('#slHead th.sortable').forEach((th) => th.addEventListener('click', () => {
+        const s = th.getAttribute('data-sort');
+        if (sortState.col === s) sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+        else { sortState.col = s; sortState.dir = 'desc'; }
+        search(0);
+      }));
+    }
+
+    async function search(newFrom) {
+      hasSearched = true; from = newFrom || 0;
+      $('resultsSummary').textContent = 'Searching…'; $('slSearch').disabled = true;
+      try {
+        const r = await fetch('/api/sitemaps/search?' + qs({ from, size_n: PAGE }));
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        total = d.total || 0; renderHead(); render(d.rows || []);
+        loadFacets(); renderChips();
+      } catch (e) { $('resultsSummary').textContent = 'Search failed: ' + e.message; }
+      $('slSearch').disabled = false;
+    }
+
+    function kindPill(k, byName) {
+      const cls = k === 'People' ? 'sl-people' : (k === 'Location' ? 'sl-loc' : '');
+      return '<span class="sl-pill ' + cls + '">' + esc(k || '?') + '</span>' + (byName ? '<span class="sl-tag">name</span>' : '');
+    }
+
+    function render(rows) {
+      const dash = '<span class="cc-empty">—</span>';
+      $('slPager').style.display = total > PAGE ? 'flex' : 'none';
+      if (!rows.length) {
+        $('slBody').innerHTML = '<tr><td colspan="9" style="padding:34px 16px;text-align:center;color:#9ca3af">' +
+          (hasSearched ? 'No sitemaps match these filters. Try removing a filter.' : 'Loading…') + '</td></tr>';
+        rowsById = {}; updateSel(); return;
+      }
+      const byId = {};
+      $('slBody').innerHTML = rows.map((d) => {
+        const id = d.sitemap_url; byId[id] = d;
+        const checked = selected.has(id) ? ' checked' : '';
+        const pages = '<b>' + Number(d.item_count || 0).toLocaleString() + '</b> <span class="cc-empty">/ ' + Number(d.url_count || 0).toLocaleString() + '</span>';
+        const ratio = (d.ratio != null && d.ratio !== '') ? Math.round(d.ratio * 100) + '%' : dash;
+        return '<tr' + (selected.has(id) ? ' class="selected"' : '') + '>' +
+          '<td class="check-col"><input type="checkbox" class="row-check slRow" data-id="' + esc(id) + '"' + checked + ' /></td>' +
+          '<td>' + (d.domain ? esc(d.domain) : dash) + '</td>' +
+          '<td>' + kindPill(d.kind, d.by_name) + '</td>' +
+          '<td>' + (d.keyword ? esc(d.keyword) : dash) + '</td>' +
+          '<td class="cc-count">' + pages + '</td>' +
+          '<td>' + ratio + '</td>' +
+          '<td>' + (d.industry ? esc(tc(d.industry)) : dash) + '</td>' +
+          '<td>' + (d.lastmod ? esc(String(d.lastmod).slice(0, 10)) : dash) + '</td>' +
+          '<td><a class="domain-link" href="' + esc(abs(id)) + '" target="_blank" rel="noopener">open ↗</a></td>' +
+        '</tr>';
+      }).join('');
+      document.querySelectorAll('.slRow').forEach((cb) => cb.addEventListener('change', () => {
+        const id = cb.getAttribute('data-id');
+        if (cb.checked) selected.set(id, byId[id]); else selected.delete(id);
+        cb.closest('tr').classList.toggle('selected', cb.checked);
+        updateSel();
+      }));
+      rowsById = byId;
+      const shownTo = Math.min(from + PAGE, total);
+      const pages = Math.max(1, Math.ceil(total / PAGE)), cur = Math.floor(from / PAGE) + 1;
+      $('slPageInfo').textContent = 'Page ' + cur + ' of ' + pages.toLocaleString() + ' · ' + (from + 1).toLocaleString() + '–' + shownTo.toLocaleString() + ' of ' + total.toLocaleString();
+      $('slFirst').disabled = from <= 0; $('slPrev').disabled = from <= 0;
+      $('slNext').disabled = shownTo >= total; $('slLast').disabled = shownTo >= total;
+      updateSel();
+    }
+
+    // ---- facets + summary ----
     async function loadFacets() {
       try {
-        const r = await fetch('/api/sitemaps/facets?' + params().toString());
-        if (!r.ok) return;
-        const d = await r.json();
+        const r = await fetch('/api/sitemaps/facets?' + qs());
+        const d = await r.json(); if (!r.ok) return;
+        renderFacet('industry', $('facetIndustry'), d.industry || []);
         const kc = Object.fromEntries((d.kind || []).map((x) => [x.key, x.count]));
-        $('statsBar').innerHTML = statCard(d.total, 'sitemaps') + statCard(kc.People || 0, 'People directories')
-          + statCard(kc.Location || 0, 'Location directories') + statCard(d.harvestable, 'harvestable pages');
-        const cur = $('industry').value;
-        $('industry').innerHTML = '<option value="">All industries</option>' +
-          (d.industry || []).map((x) => `<option value="${esc(x.key)}"${x.key === cur ? ' selected' : ''}>${esc(x.key || '(none)')} (${x.count.toLocaleString()})</option>`).join('');
-      } catch (e) { /* leave stats as-is */ }
+        $('resultsSummary').textContent = (d.total || 0).toLocaleString() + ' sitemap(s) · ' +
+          (d.harvestable || 0).toLocaleString() + ' harvestable pages · ' +
+          (kc.People || 0).toLocaleString() + ' People / ' + (kc.Location || 0).toLocaleString() + ' Location';
+      } catch (e) { /* leave prior facet/summary state */ }
+    }
+    function renderFacet(field, host, buckets) {
+      const counts = new Map(buckets.map((b) => [b.key, b.count]));
+      let keys = buckets.map((b) => b.key);
+      for (const k of sel[field]) if (!keys.includes(k)) keys.unshift(k);   // always show selected
+      if (!keys.length) { host.innerHTML = '<span class="facet-empty">No values</span>'; return; }
+      host.innerHTML = keys.map((k) => {
+        const on = sel[field].has(k), c = counts.get(k);
+        return '<label class="facet-opt' + (on ? ' on' : '') + '">' +
+          '<input type="checkbox" data-field="' + field + '" value="' + esc(k) + '"' + (on ? ' checked' : '') + ' />' +
+          '<span class="lbl" title="' + esc(k || '(none)') + '">' + esc(k || '(none)') + '</span>' +
+          '<span class="cnt">' + (c != null ? c.toLocaleString() : (on ? '·' : '0')) + '</span></label>';
+      }).join('');
+      host.querySelectorAll('input[type=checkbox]').forEach((cb) => cb.addEventListener('change', () => {
+        const v = cb.value; if (cb.checked) sel[field].add(v); else sel[field].delete(v); search(0);
+      }));
     }
 
-    function kindPill(k) { const c = k === 'People' ? 'sl-people' : (k === 'Location' ? 'sl-loc' : ''); return `<span class="sl-pill ${c}">${esc(k || '?')}</span>`; }
+    // ---- active-filter chips ----
+    function renderChips() {
+      const chips = [];
+      const add = (k, label, clear) => chips.push({ k, label, clear });
+      if (filters().q) add('search', filters().q, () => { $('fq').value = ''; });
+      if ($('fKind').value) add('kind', $('fKind').value, () => { $('fKind').value = ''; });
+      if ($('fDomain').value.trim()) add('domain', $('fDomain').value.trim(), () => { $('fDomain').value = ''; });
+      if ($('fKeyword').value.trim()) add('name', $('fKeyword').value.trim(), () => { $('fKeyword').value = ''; });
+      if ($('fMinCount').value.trim()) add('min pages', $('fMinCount').value.trim(), () => { $('fMinCount').value = ''; });
+      if ($('fByName').value) add('match', $('fByName').value === 'yes' ? 'name-matched' : 'ratio-only', () => { $('fByName').value = ''; });
+      for (const ind of sel.industry) add('industry', ind, () => sel.industry.delete(ind));
+      const host = $('slChips');
+      if (!chips.length) { host.hidden = true; host.innerHTML = ''; return; }
+      host.hidden = false;
+      host.innerHTML = chips.map((c, i) =>
+        '<span class="cc-chip" data-i="' + i + '"><span class="k">' + esc(c.k) + '</span>' + esc(c.label) + ' <button type="button" aria-label="remove">×</button></span>'
+      ).join('') + '<button type="button" class="clear-all" id="slClearAll">Clear all</button>';
+      chips.forEach((c, i) => host.querySelector('.cc-chip[data-i="' + i + '"] button').addEventListener('click', () => { c.clear(); search(0); }));
+      $('slClearAll').addEventListener('click', clearAll);
+    }
 
-    function renderRows(rows) {
-      const tb = $('rows'); tb.innerHTML = ''; pageRows.clear();
-      for (const d of rows) {
-        const id = d.sitemap_url; pageRows.set(id, d);
-        const tr = document.createElement('tr');
-        tr.innerHTML =
-          `<td class="chk"><input type="checkbox" class="rowchk" data-id="${esc(id)}"${selected.has(id) ? ' checked' : ''} /></td>` +
-          `<td>${esc(d.domain || '')}</td>` +
-          `<td>${kindPill(d.kind)}${d.by_name ? ' <span class="sl-tag">name</span>' : ''}</td>` +
-          `<td>${esc(d.keyword || '—')}</td>` +
-          `<td class="num"><b>${Number(d.item_count || 0).toLocaleString()}</b> <span class="sl-muted">/ ${Number(d.url_count || 0).toLocaleString()}</span></td>` +
-          `<td class="num">${d.ratio != null ? Math.round(d.ratio * 100) + '%' : ''}</td>` +
-          `<td>${esc(d.industry || '')}</td>` +
-          `<td class="sl-muted">${esc((d.lastmod || '').slice(0, 10))}</td>` +
-          `<td><a href="${esc(abs(id))}" target="_blank" rel="noopener">open ↗</a></td>`;
-        tb.appendChild(tr);
-        tr.querySelector('.rowchk').addEventListener('change', (e) => { if (e.target.checked) selected.set(id, d); else selected.delete(id); syncAllChk(); updateSel(); });
-      }
-      syncAllChk();
-    }
-    function syncAllChk() {
-      const ids = [...pageRows.keys()]; const sel = ids.filter((i) => selected.has(i)).length;
-      $('allChk').checked = ids.length > 0 && sel === ids.length;
-      $('allChk').indeterminate = sel > 0 && sel < ids.length;
-    }
+    // ---- selection ----
     function updateSel() {
       const n = selected.size;
-      const pages = [...selected.values()].reduce((a, d) => a + (Number(d.item_count) || 0), 0);
-      const bar = $('selBar');
-      if (!n) { bar.hidden = true; return; }
-      bar.hidden = false;
-      bar.innerHTML = `<span><b>${n.toLocaleString()}</b> selected · <b>${pages.toLocaleString()}</b> harvestable pages</span>` +
-        `<span><button id="crawlBtn" class="primary" type="button">Crawl selected →</button> <button id="clearSel" class="ghost" type="button">Clear</button></span>`;
-      $('crawlBtn').addEventListener('click', () => alert(
-        `Crawling from the Library is the next phase.\n\nThis will enqueue the ${n.toLocaleString()} selected sitemap(s) (~${pages.toLocaleString()} pages) into extraction:\n  • People → contacts\n  • Location → companies`));
-      $('clearSel').addEventListener('click', () => { selected.clear(); renderRowsRefresh(); updateSel(); });
+      $('slSelInfo').textContent = n ? n.toLocaleString() + ' selected' : '';
+      $('slSelCount').textContent = n;
+      $('slCrawl').style.display = n ? 'inline-flex' : 'none';
     }
-    function renderRowsRefresh() { document.querySelectorAll('.rowchk').forEach((cb) => { cb.checked = false; }); syncAllChk(); }
-
-    async function search() {
-      let d = { total: 0, rows: [] };
-      try { const r = await fetch('/api/sitemaps/search?' + params({ from, size_n: PAGE, sort, dir }).toString()); if (r.ok) d = await r.json(); }
-      catch (e) { /* */ }
-      total = d.total || 0;
-      renderRows(d.rows || []);
-      $('summary').textContent = total ? `${total.toLocaleString()} sitemap(s)` : 'No sitemaps match these filters.';
-      $('pageInfo').textContent = total ? `${(from + 1).toLocaleString()}–${Math.min(from + PAGE, total).toLocaleString()} of ${total.toLocaleString()}` : '';
-      $('prev').disabled = from <= 0; $('next').disabled = from + PAGE >= total;
+    function togglePage(on) {
+      document.querySelectorAll('.slRow').forEach((cb) => {
+        cb.checked = on; const id = cb.getAttribute('data-id');
+        const tr = cb.closest('tr'); if (tr) tr.classList.toggle('selected', on);
+        if (on) selected.set(id, rowsById[id]); else selected.delete(id);
+      });
       updateSel();
     }
 
-    function runSearch() { from = 0; loadFacets(); search(); }
-    $('filters').addEventListener('submit', (e) => { e.preventDefault(); runSearch(); });
-    $('reset').addEventListener('click', () => { ['q', 'domain', 'keyword', 'minCount'].forEach((i) => { $(i).value = ''; }); $('kind').value = ''; $('industry').value = ''; $('byName').value = ''; selected.clear(); runSearch(); });
-    $('prev').addEventListener('click', () => { from = Math.max(0, from - PAGE); search(); });
-    $('next').addEventListener('click', () => { from = from + PAGE; search(); });
-    $('allChk').addEventListener('change', (e) => {
-      for (const [id, row] of pageRows) { if (e.target.checked) selected.set(id, row); else selected.delete(id); }
-      document.querySelectorAll('.rowchk').forEach((cb) => { cb.checked = e.target.checked; });
-      updateSel();
+    function clearAll() {
+      ['fq', 'fDomain', 'fKeyword', 'fMinCount'].forEach((i) => { $(i).value = ''; });
+      $('fKind').value = ''; $('fByName').value = ''; sel.industry.clear();
+      search(0);
+    }
+
+    // ---- wiring ----
+    $('slSearch').addEventListener('click', () => search(0));
+    $('slReset').addEventListener('click', clearAll);
+    ['fq', 'fDomain', 'fKeyword', 'fMinCount'].forEach((i) => $(i).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search(0); } }));
+    $('fKind').addEventListener('change', () => search(0));
+    $('fByName').addEventListener('change', () => search(0));
+    $('addIndustry').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return; e.preventDefault();
+      const v = e.target.value.trim().toLowerCase(); if (v) { sel.industry.add(v); e.target.value = ''; search(0); }
     });
-    document.querySelectorAll('.sortable').forEach((th) => th.addEventListener('click', () => {
-      const s = th.getAttribute('data-sort');
-      if (sort === s) dir = dir === 'asc' ? 'desc' : 'asc'; else { sort = s; dir = 'desc'; }
-      document.querySelectorAll('.sortable').forEach((h) => { h.textContent = h.textContent.replace(/ [▾▴]$/, ''); });
-      th.textContent += dir === 'desc' ? ' ▾' : ' ▴';
-      from = 0; search();
-    }));
+    $('slFirst').addEventListener('click', () => search(0));
+    $('slPrev').addEventListener('click', () => search(Math.max(0, from - PAGE)));
+    $('slNext').addEventListener('click', () => search(from + PAGE));
+    $('slLast').addEventListener('click', () => search((Math.ceil(total / PAGE) - 1) * PAGE));
+    $('slCrawl').addEventListener('click', () => {
+      const n = selected.size, pages = [...selected.values()].reduce((a, d) => a + (Number(d.item_count) || 0), 0);
+      alert('Crawling from the Library is the next phase.\n\nThis will enqueue the ' + n.toLocaleString() + ' selected sitemap(s) (~' + pages.toLocaleString() + ' pages) into extraction:\n  • People → contacts\n  • Location → companies');
+    });
 
-    // initial load
-    loadFacets(); search();
+    // ---- initial load: index-wide total for the hint, then show everything (pages desc) ----
+    (async function init() {
+      try { const r = await fetch('/api/sitemaps/facets'); if (r.ok) { const d = await r.json(); $('slTotalIdx').textContent = (d.total || 0).toLocaleString(); } }
+      catch (e) { $('slTotalIdx').textContent = '—'; }
+      search(0);
+    })();
   </script>
 </body>
 </html>
