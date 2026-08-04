@@ -876,6 +876,11 @@ async function discoverBioSitemaps(opts = {}){
   return { watches, sitemapsFetched: fetched, totalUrls };
 }
 
+// Sitemap filenames that are content-type feeds, NOT people/location directories. Excluded from
+// RATIO-based classification (a people/location name-lexicon match still wins), so e.g. attachment /
+// meeting / taxonomy / blog sitemaps whose URLs happen to trip the bio detector don't pollute the Library.
+const NEG_SITEMAP_NAME = /(?:^|[\/_-])(attachment|attachments|media|image|images|gallery|galleries|photo|photos|blog|news|article|articles|post|posts|press|press-release|event|events|meeting|meetings|calendar|taxonomy|categor(?:y|ies)|tag|tags|product|products|video|videos|download|downloads|faq|faqs|review|reviews|course|courses|webinar|webinars)(?:[-_.]|$)/i;
+
 // Like discoverBioSitemaps, but classifies each qualifying child sitemap as People OR Location and
 // returns watches carrying `kind`. People = filename in bioSitemapNames OR bio-ratio passes; Location =
 // filename in locationSitemapNames OR location-ratio passes. When both pass, the higher ratio wins.
@@ -917,6 +922,7 @@ async function discoverSitemaps(opts = {}){
     const fname = fileNameOf(item.url);
     const bioName = !!(bioSitemapNames && bioSitemapNames.has(fname));
     const locName = !!(locationSitemapNames && locationSitemapNames.has(fname));
+    if (!bioName && !locName && NEG_SITEMAP_NAME.test(fname)) continue;   // content-type feed, not a people/location directory
     let total = 0; const bio = [], loc = [], all = [];
     for(const e of entries){
       total++; totalUrls++;
@@ -2065,6 +2071,17 @@ if(require.main === module){
         _fetchDoc: async () => `<urlset><url><loc>https://loc.com/s/8842</loc></url><url><loc>https://loc.com/s/9931</loc></url></urlset>`,
       });
       ok("discoverSitemaps location filename fast-path keeps all urls", dsLocName.watches.length === 1 && dsLocName.watches[0].kind === "Location" && dsLocName.watches[0].byName === true && dsLocName.watches[0].itemCount === 2);
+
+      // 7b-9) precision: a content-type sitemap (attachment/meeting/…) with bio-looking URLs is NOT classified
+      const negHost = "town.gov";
+      const negBios = `<urlset>` +
+        `<url><loc>https://${negHost}/staff/jane-doe/</loc></url>` +
+        `<url><loc>https://${negHost}/staff/john-roe/</loc></url>` +
+        `<url><loc>https://${negHost}/staff/amy-poe/</loc></url></urlset>`;
+      const negName = await discoverSitemaps({ urls: [`https://${negHost}/attachment-sitemap.xml`], _fetchDoc: async () => negBios });
+      ok("discoverSitemaps drops a negative-name (attachment) sitemap despite bio-looking urls", negName.watches.length === 0);
+      const staffName = await discoverSitemaps({ urls: [`https://${negHost}/staff-sitemap.xml`], _fetchDoc: async () => negBios });
+      ok("discoverSitemaps still keeps a real staff sitemap (same urls)", staffName.watches.length === 1 && staffName.watches[0].kind === "People");
 
       // 7c) discoverBioUrlsFromCC: a domain's CC index -> keep only bio-looking captures
       const ccHost = "ccfirm.com";
