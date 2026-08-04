@@ -533,6 +533,25 @@ function isBioOrContactUrl(url, directoryRules = {}, genderMap = {}){
   return dir === "BIO URL" || dir === "Contact Us";
 }
 
+// Location-page detector: a LEAF url pointing to a specific place under a location container path
+// (…/locations/<slug>, …/stores/<slug>, …/dealers/<slug>) or a locations.<domain> subdomain. The
+// trailing slug distinguishes a specific store/branch/office from the container/index page. Heuristic
+// (like isBioOrContactUrl); the ratio threshold + name lexicon guard against false positives. (offline-testable)
+const LOC_SEG = /^(locations?|stores?|store-locator|storelocator|branch(?:es)?|offices?|dealers?|dealerships?|agenc(?:y|ies)|showrooms?|clinics?|centers?|centres?|restaurants?|hotels?|cities|find-a-store|find-a-location|find-us)$/i;
+function isLocationUrl(url){
+  let u; try{ u = new URL(url); }catch{ return false; }
+  if(u.protocol !== "http:" && u.protocol !== "https:") return false;
+  if(LINK_SKIP_EXT.test(u.pathname)) return false;
+  const segs = u.pathname.split("/").filter(Boolean);
+  const leafOk = (s) => /^[a-z0-9][a-z0-9\-]*$/i.test(s || "") && String(s).length >= 2;
+  // locations.<domain>/<place> style subdomain
+  const sub = u.hostname.replace(/^www\./, "").toLowerCase().split(".")[0];
+  if((sub === "locations" || sub === "location" || sub === "stores" || sub === "store") && segs.length >= 1) return leafOk(segs[segs.length - 1]);
+  // …/<container>/<place>[/…] — a location container segment followed by at least one more segment
+  for(let i = 0; i < segs.length - 1; i++){ if(LOC_SEG.test(segs[i]) && leafOk(segs[segs.length - 1])) return true; }
+  return false;
+}
+
 // ---- robots.txt + sitemaps: how we discover EVERY matching page ----
 
 // Parse robots.txt into { sitemaps:[urls], rules:[{allow,path}] } for our user-agent. (offline-testable)
@@ -851,6 +870,84 @@ async function discoverBioSitemaps(opts = {}){
         byName: nameHit,
         domain: bio.length ? hostOf(bio[0].url) : (item.url ? hostOf(item.url) : ""),
         bioUrls: bio,
+      });
+    }
+  }
+  return { watches, sitemapsFetched: fetched, totalUrls };
+}
+
+// Like discoverBioSitemaps, but classifies each qualifying child sitemap as People OR Location and
+// returns watches carrying `kind`. People = filename in bioSitemapNames OR bio-ratio passes; Location =
+// filename in locationSitemapNames OR location-ratio passes. When both pass, the higher ratio wins.
+// Powers the Sitemap Library build-out (discover-sitemaps.js). (offline-testable via _fetchDoc)
+async function discoverSitemaps(opts = {}){
+  const { content = "", urls = [], directoryRules = {}, genderMap = {}, _fetchDoc = fetchDoc,
+          minRatio = 0.30, minCount = 3, maxSitemaps = 200, maxUrls = 500000,
+          bioSitemapNames = null, locationSitemapNames = null, sourceUrl = "" } = opts;
+  const fileNameOf = (u) => String(u || "").split("?")[0].split("#")[0].split("/").pop().toLowerCase();
+  const seenSm = new Set();
+  const queue = [];
+  if(String(content || "").trim()) queue.push({ inline: content, url: sourceUrl || "(pasted sitemap)", parent: null, lastmod: null });
+  for(const u of urls){ if(u) queue.push({ url: String(u).trim(), parent: null, lastmod: null }); }
+  const watches = [];
+  let fetched = 0, totalUrls = 0;
+
+  while(queue.length && fetched < maxSitemaps && totalUrls < maxUrls){
+    const item = queue.shift();
+    let xml = "";
+    if(item.inline != null){ xml = item.inline; }
+    else {
+      if(seenSm.has(item.url)) continue;
+      seenSm.add(item.url);
+      xml = await _fetchDoc(item.url);
+      fetched++;
+      await sleep(120);
+    }
+    if(!xml) continue;
+
+    const { isIndex, entries } = extractSitemapLocs(xml);
+    if(isIndex){                                        // index -> queue each child, carrying its <lastmod>
+      for(const e of entries){
+        if(seenSm.has(e.loc)) continue;
+        if(seenSm.size + queue.length >= maxSitemaps * 4) break;
+        queue.push({ url: e.loc, parent: item.url || null, lastmod: e.lastmod });
+      }
+      continue;
+    }
+    const fname = fileNameOf(item.url);
+    const bioName = !!(bioSitemapNames && bioSitemapNames.has(fname));
+    const locName = !!(locationSitemapNames && locationSitemapNames.has(fname));
+    let total = 0; const bio = [], loc = [], all = [];
+    for(const e of entries){
+      total++; totalUrls++;
+      let abs; try{ abs = new URL(e.loc); }catch{ continue; }
+      if(abs.protocol !== "http:" && abs.protocol !== "https:") continue;
+      if(LINK_SKIP_EXT.test(abs.pathname)) continue;
+      abs.hash = "";
+      const rec = { url: abs.toString(), lastmod: e.lastmod };
+      all.push(rec);
+      if(isBioOrContactUrl(rec.url, directoryRules, genderMap) || findSiteApi(rec.url)) bio.push(rec);
+      if(isLocationUrl(rec.url)) loc.push(rec);
+    }
+    if(!total) continue;
+    const bioRatio = bio.length / total, locRatio = loc.length / total;
+    // name match keeps EVERY page URL (the sitemap IS the directory); else keep the matching subset.
+    let kind = null, items = null, ratio = 0, byName = false, keyword = "";
+    if(bioName){ kind = "People"; items = all; byName = true; ratio = bioRatio; keyword = fname; }
+    else if(locName){ kind = "Location"; items = all; byName = true; ratio = locRatio; keyword = fname; }
+    else {
+      const bioQ = bio.length >= minCount && bioRatio >= minRatio;
+      const locQ = loc.length >= minCount && locRatio >= minRatio;
+      if(bioQ && bioRatio >= locRatio){ kind = "People"; items = bio; ratio = bioRatio; }
+      else if(locQ){ kind = "Location"; items = loc; ratio = locRatio; }
+      else if(bioQ){ kind = "People"; items = bio; ratio = bioRatio; }
+    }
+    if(kind){
+      watches.push({
+        sitemapUrl: item.url, parentUrl: item.parent || null, lastmod: item.lastmod || null,
+        kind, keyword, urlCount: total, itemCount: items.length, ratio, byName,
+        domain: items.length ? hostOf(items[0].url) : (item.url ? hostOf(item.url) : ""),
+        urls: items,
       });
     }
   }
@@ -1542,6 +1639,7 @@ async function run(csvPath, opts = {}){
 module.exports = { run, runDomains, readDomains, selectCandidates, warcToHtml, queryIndex, queryIndexUrl, fetchWarc,
   liveCrawl, liveFetchPage, extractSameDomainLinks, isBioOrContactUrl, COLUMNS, fetchDoc,
   parseRobots, robotsAllows, extractSitemapLocs, extractBioUrlsFromSitemaps, extractBioUrlGroups, discoverBioSitemaps, discoverBioUrlsFromCC,
+  isLocationUrl, discoverSitemaps,
   resolveLatestCrawl, currentCrawl };
 
 // ---------------------------------------------------------------- offline self-tests
@@ -1925,6 +2023,48 @@ if(require.main === module){
         bioSitemapNames: new Set(["loan-officer-sitemap.xml"]),
       });
       ok("sourceUrl makes inline content name-matchable", inlineByName.watches.length === 1 && inlineByName.watches[0].bioUrls.length === 2);
+
+      // 7b-7) isLocationUrl: a place under a location container qualifies; the container/index page does not
+      ok("isLocationUrl accepts a leaf store page", isLocationUrl("https://x.com/locations/austin-tx") === true);
+      ok("isLocationUrl accepts a dealer leaf", isLocationUrl("https://x.com/dealers/ca/los-angeles") === true);
+      ok("isLocationUrl accepts a locations.<domain> leaf", isLocationUrl("https://locations.x.com/austin-tx") === true);
+      ok("isLocationUrl rejects the container/index page", isLocationUrl("https://x.com/locations/") === false);
+      ok("isLocationUrl rejects an unrelated page", isLocationUrl("https://x.com/blog/hello") === false);
+
+      // 7b-8) discoverSitemaps: classify People vs Location children from one index
+      const dsHost = "brand.com";
+      const dsDocs = {
+        [`https://${dsHost}/sitemap_index.xml`]:
+          `<sitemapindex>` +
+          `<sitemap><loc>https://${dsHost}/agents.xml</loc><lastmod>2026-06-24</lastmod></sitemap>` +
+          `<sitemap><loc>https://${dsHost}/stores.xml</loc></sitemap>` +
+          `<sitemap><loc>https://${dsHost}/blog.xml</loc></sitemap>` +
+          `</sitemapindex>`,
+        [`https://${dsHost}/agents.xml`]:
+          `<urlset><url><loc>https://${dsHost}/agents/jane-doe/</loc></url>` +
+          `<url><loc>https://${dsHost}/agents/john-roe/</loc></url>` +
+          `<url><loc>https://${dsHost}/agents/amy-poe/</loc></url></urlset>`,
+        [`https://${dsHost}/stores.xml`]:
+          `<urlset><url><loc>https://${dsHost}/locations/austin-tx</loc></url>` +
+          `<url><loc>https://${dsHost}/locations/dallas-tx</loc></url>` +
+          `<url><loc>https://${dsHost}/locations/houston-tx</loc></url></urlset>`,
+        [`https://${dsHost}/blog.xml`]:
+          `<urlset><url><loc>https://${dsHost}/blog/a</loc></url><url><loc>https://${dsHost}/blog/b</loc></url><url><loc>https://${dsHost}/blog/c</loc></url></urlset>`,
+      };
+      const dsOut = await discoverSitemaps({ urls: [`https://${dsHost}/sitemap_index.xml`], _fetchDoc: async (u) => dsDocs[u] || "" });
+      const dsPeople = dsOut.watches.find((w) => w.sitemapUrl.endsWith("/agents.xml"));
+      const dsLoc = dsOut.watches.find((w) => w.sitemapUrl.endsWith("/stores.xml"));
+      const dsBlog = dsOut.watches.find((w) => w.sitemapUrl.endsWith("/blog.xml"));
+      ok("discoverSitemaps classifies the agents child as People", !!dsPeople && dsPeople.kind === "People" && dsPeople.itemCount === 3);
+      ok("discoverSitemaps classifies the stores child as Location", !!dsLoc && dsLoc.kind === "Location" && dsLoc.itemCount === 3);
+      ok("discoverSitemaps drops the blog child", !dsBlog);
+      // location filename fast-path keeps all urls even with opaque slugs
+      const dsLocName = await discoverSitemaps({
+        urls: [`https://loc.com/stores-sitemap.xml`],
+        locationSitemapNames: new Set(["stores-sitemap.xml"]),
+        _fetchDoc: async () => `<urlset><url><loc>https://loc.com/s/8842</loc></url><url><loc>https://loc.com/s/9931</loc></url></urlset>`,
+      });
+      ok("discoverSitemaps location filename fast-path keeps all urls", dsLocName.watches.length === 1 && dsLocName.watches[0].kind === "Location" && dsLocName.watches[0].byName === true && dsLocName.watches[0].itemCount === 2);
 
       // 7c) discoverBioUrlsFromCC: a domain's CC index -> keep only bio-looking captures
       const ccHost = "ccfirm.com";
