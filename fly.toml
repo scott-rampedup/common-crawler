@@ -41,6 +41,15 @@ primary_region = 'ewr'   # must match the existing 'data' volume's region
   min_machines_running = 1
   processes = ['app']
 
+  # Auto-restart the machine if the HTTP server hangs (event-loop block): a healthy app returns 200 on
+  # the public /login page in well under the timeout; a hung one fails the check and Fly recycles it.
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "8s"
+    grace_period = "90s"
+    method = "get"
+    path = "/login"
+
 # web: dedicated 4-vCPU / 8GB for sustained crawl + the wireless-block table.
 [[vm]]
   processes = ['app']
