@@ -135,8 +135,8 @@ const SORT_COLS = new Set(['item_count', 'url_count', 'ratio', 'domain', 'kind',
 function buildFilter(f = {}) {
   const filter = [], must = [];
   if (f.kind) filter.push({ term: { kind: f.kind } });
-  // Type = Parent (top-level sitemap) vs Child (found under a sitemap index) — stored field, editable.
-  if (f.type === 'Parent' || f.type === 'Child') filter.push({ term: { type: f.type } });
+  // Type (stored, editable): Parent (top-level) / Child (under an index) / Sub-Domain.
+  if (['Parent', 'Child', 'Sub-Domain'].includes(f.type)) filter.push({ term: { type: f.type } });
   if (f.industry) {
     const arr = (Array.isArray(f.industry) ? f.industry : String(f.industry).split(',')).map((s) => s.trim()).filter(Boolean);
     if (arr.length === 1) filter.push({ term: { industry: arr[0] } });
