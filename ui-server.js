@@ -1595,8 +1595,16 @@ const server = http.createServer(async (req, res) => {
         if (!id) return jsonErr(res, 400, 'No sitemap id');
         if (updates.kind && !['People', 'Location'].includes(String(updates.kind))) return jsonErr(res, 400, 'Kind must be People or Location');
         if (updates.type && !['Parent', 'Child', 'Sub-Domain'].includes(String(updates.type))) return jsonErr(res, 400, 'Type must be Parent, Child, or Sub-Domain');
-        const r = await sitemaps.updateOne(sitemapsClient, id, updates);
-        if (r.errors) return jsonErr(res, 500, r.error || 'Update failed');
+        const newUrl = updates.sitemap_url != null ? String(updates.sitemap_url).trim() : '';
+        let r;
+        if (newUrl && newUrl !== id) {
+          // URL changed → rename (re-key the doc), carrying the other edits with it.
+          r = await sitemaps.renameSitemap(sitemapsClient, id, newUrl, updates);
+        } else {
+          // In-place edit (sitemap_url isn't EDITABLE, so it's ignored by updateOne).
+          r = await sitemaps.updateOne(sitemapsClient, id, updates);
+        }
+        if (r.errors) return jsonErr(res, r.error && /already exists|Invalid URL|not found|http/.test(r.error) ? 400 : 500, r.error || 'Update failed');
         sendJson(res, { ok: true, ...r });
       } catch (e) { jsonErr(res, 500, e.message); }
     });

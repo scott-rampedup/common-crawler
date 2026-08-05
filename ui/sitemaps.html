@@ -531,15 +531,28 @@
       } catch (e) { $('slBulkMsg').className = 'modal-msg err'; $('slBulkMsg').textContent = 'Failed: ' + e.message; }
       $('slBulkSave').disabled = false;
     });
-    // ---- single-row edit (admin): edit one sitemap's fields ----
+    // ---- single-row edit (admin): edit one sitemap's fields (incl. the URL, which re-keys the doc) ----
     const SL_EDIT_FIELDS = [
+      ['sitemap_url', 'Sitemap URL', 'url'],
       ['kind', 'Kind', 'select', ['People', 'Location']],
       ['type', 'Type', 'select', ['Parent', 'Child', 'Sub-Domain']],
+      ['domain', 'Domain', 'text'],
       ['monitored', 'Monitor for new hires', 'select', [['yes', 'On'], ['no', 'Off']]],
       ['industry', 'Industry', 'text'],
       ['keyword', 'Keyword (detected name)', 'text'],
       ['status', 'Status', 'select', ['active', 'inactive']],
     ];
+    // Mirror the server's URL-structure classification so editing the URL previews domain + type live.
+    const SL_ROOT_PATHS = new Set(['', '/', '/sitemap.xml', '/sitemap_index.xml', '/sitemap-index.xml', '/sitemapindex.xml']);
+    function hostDomainClient(url) { try { let h = new URL(url).hostname.toLowerCase(); return h.startsWith('www.') ? h.slice(4) : h; } catch (e) { return ''; } }
+    function deriveTypeClient(url, domain) {
+      let dom = String(domain || '').toLowerCase(); if (dom.startsWith('www.')) dom = dom.slice(4);
+      let u; try { u = new URL(url); } catch (e) { return 'Parent'; }
+      let host = u.hostname.toLowerCase(); if (host.startsWith('www.')) host = host.slice(4);
+      if (dom && host && host !== dom && host.endsWith('.' + dom)) return 'Sub-Domain';
+      let path = u.pathname.toLowerCase(); if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+      return SL_ROOT_PATHS.has(path) ? 'Parent' : 'Child';
+    }
     let slEditId = null;
     function slFieldValue(k, row) {
       if (k === 'monitored') return row.monitored ? 'yes' : 'no';
@@ -552,15 +565,25 @@
       $('slEditSub').textContent = String(row.sitemap_url).replace(/^https?:\/\//i, '');
       $('slEditBody').innerHTML = SL_EDIT_FIELDS.map(([k, label, kind, opts]) => {
         const cur = slFieldValue(k, row);
+        const wide = kind === 'url';
         let ctl;
         if (kind === 'select') {
           ctl = '<select data-k="' + k + '">' + (opts || []).map((o) => {
             const val = Array.isArray(o) ? o[0] : o, lab = Array.isArray(o) ? o[1] : o;
             return '<option value="' + esc(val) + '"' + (String(val) === String(cur) ? ' selected' : '') + '>' + esc(lab) + '</option>';
           }).join('') + '</select>';
-        } else { ctl = '<input data-k="' + k + '" value="' + esc(cur) + '" />'; }
-        return '<label class="edit-field">' + esc(label) + ctl + '</label>';
+        } else { ctl = '<input data-k="' + k + '"' + (kind === 'url' ? ' type="url"' : '') + ' value="' + esc(cur) + '" />'; }
+        return '<label class="edit-field' + (wide ? ' wide' : '') + '">' + esc(label) + ctl + '</label>';
       }).join('');
+      // Editing the URL re-previews Domain + Type (admin can still override either before saving).
+      const urlEl = $('slEditBody').querySelector('[data-k="sitemap_url"]');
+      if (urlEl) urlEl.addEventListener('change', () => {
+        const domEl = $('slEditBody').querySelector('[data-k="domain"]');
+        const typeEl = $('slEditBody').querySelector('[data-k="type"]');
+        const dom = hostDomainClient(urlEl.value.trim());
+        if (domEl && dom) domEl.value = dom;
+        if (typeEl) typeEl.value = deriveTypeClient(urlEl.value.trim(), domEl ? domEl.value : dom);
+      });
       $('slEditMsg').textContent = ''; $('slEditMsg').className = 'modal-msg err';
       $('slEditModal').style.display = 'flex';
     }

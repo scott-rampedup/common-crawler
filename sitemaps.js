@@ -219,7 +219,12 @@ async function facets(client, f = {}) {
 }
 
 // Fields an admin may mass-edit in the Library UI.
-const EDITABLE = new Set(['kind', 'type', 'industry', 'keyword', 'status', 'monitored']);
+const EDITABLE = new Set(['kind', 'type', 'domain', 'industry', 'keyword', 'status', 'monitored']);
+
+// Registrable-ish domain from a URL (host, minus a leading www.) — the default when a URL is (re)assigned.
+function hostDomain(url) {
+  try { let h = new URL(url).hostname.toLowerCase(); return h.startsWith('www.') ? h.slice(4) : h; } catch (e) { return ''; }
+}
 
 // Build the validated partial doc from a {field: value} map — shared by bulk edit + single-row edit.
 // Only EDITABLE fields survive; kind/type are constrained to their allowed values; monitored → boolean.
@@ -259,6 +264,33 @@ async function updateOne(client, id, updates) {
     await client.update({ index: INDEX, id: _id, body: { doc } });
     try { await client.indices.refresh({ index: INDEX }); } catch (e) { /* best-effort */ }
     return { updated: 1, errors: 0 };
+  } catch (e) { return { updated: 0, errors: 1, error: e.message }; }
+}
+
+// Change a Library entry's URL (its _id). Since _id is immutable, this copies the doc to the new URL
+// (re-deriving domain + type from it unless the caller overrides them), applies any other edits, then
+// deletes the old doc. Refuses to clobber a different existing entry. Returns { updated, renamed, id }.
+async function renameSitemap(client, oldId, newUrl, updates = {}) {
+  const from = String(oldId || '').trim();
+  const to = String(newUrl || '').trim();
+  if (!from || !to) return { updated: 0, errors: 1, error: 'Missing URL' };
+  let u; try { u = new URL(to); } catch (e) { return { updated: 0, errors: 1, error: 'Invalid URL' }; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return { updated: 0, errors: 1, error: 'URL must be http(s)' };
+  if (Buffer.byteLength(to) > 512) return { updated: 0, errors: 1, error: 'URL too long (max 512 bytes)' };
+  let src; try { const g = await client.get({ index: INDEX, id: from }); src = (g.body || g)._source; } catch (e) { return { updated: 0, errors: 1, error: 'Original sitemap not found' }; }
+  if (!src) return { updated: 0, errors: 1, error: 'Original sitemap not found' };
+  if (to !== from) {
+    try { const ex = await client.exists({ index: INDEX, id: to }); if (ex.body === true || ex === true) return { updated: 0, errors: 1, error: 'A sitemap with that URL already exists' }; } catch (e) { /* proceed */ }
+  }
+  const edits = sanitizeUpdates(updates);
+  const domain = ('domain' in edits && edits.domain) ? edits.domain : hostDomain(to);
+  const type = ('type' in edits && edits.type) ? edits.type : deriveType(to, domain);
+  const doc = { ...src, ...edits, sitemap_url: to, domain, type };
+  try {
+    await client.index({ index: INDEX, id: to, body: doc });
+    if (to !== from) { try { await client.delete({ index: INDEX, id: from }); } catch (e) { /* new doc already written */ } }
+    try { await client.indices.refresh({ index: INDEX }); } catch (e) { /* best-effort */ }
+    return { updated: 1, renamed: to !== from, id: to };
   } catch (e) { return { updated: 0, errors: 1, error: e.message }; }
 }
 
@@ -303,4 +335,4 @@ async function each(client, f, onRow, cap = 200000) {
   return n;
 }
 
-module.exports = { INDEX, MAPPING, makeClient, ensureIndex, deriveType, docFromWatch, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, updateOne, bulkDelete, csvHeader, rowToCsvLine, each, monitoredBatch, setMonitorState };
+module.exports = { INDEX, MAPPING, makeClient, ensureIndex, deriveType, docFromWatch, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, updateOne, renameSitemap, bulkDelete, csvHeader, rowToCsvLine, each, monitoredBatch, setMonitorState };
