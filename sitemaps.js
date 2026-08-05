@@ -218,4 +218,30 @@ async function bulkDelete(client, ids) {
   return { deleted, errors };
 }
 
-module.exports = { INDEX, MAPPING, makeClient, ensureIndex, deriveType, docFromWatch, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, bulkDelete };
+// ---- CSV export (respects the same filters as the UI) ----
+const EXPORT_COLS = [
+  ['sitemap_url', 'Sitemap URL'], ['domain', 'Domain'], ['kind', 'Kind'], ['type', 'Type'],
+  ['keyword', 'Keyword'], ['item_count', 'Pages'], ['url_count', 'Total URLs'], ['ratio', 'Ratio'],
+  ['by_name', 'By Name'], ['industry', 'Industry'], ['company_id', 'Company Id'], ['lastmod', 'Last Modified'],
+  ['source', 'Source'], ['discovered_at', 'Discovered At'], ['last_seen', 'Last Seen'],
+];
+const csvCell = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+const csvHeader = () => EXPORT_COLS.map((c) => c[1]).join(',');
+const rowToCsvLine = (d) => EXPORT_COLS.map(([k]) => csvCell(d[k])).join(',');
+
+// Stream every matching Library doc to onRow via search_after (for CSV export beyond the 50k window).
+async function each(client, f, onRow, cap = 200000) {
+  let after = null, n = 0;
+  for (;;) {
+    const body = { size: 2000, query: buildFilter(f), sort: [{ item_count: 'desc' }, { sitemap_url: 'asc' }] };
+    if (after) body.search_after = after;
+    const r = await client.search({ index: INDEX, body });
+    const hits = (r.body || r).hits.hits;
+    if (!hits.length) break;
+    for (const h of hits) { await onRow(h._source); if (++n >= cap) return n; }
+    after = hits[hits.length - 1].sort;
+  }
+  return n;
+}
+
+module.exports = { INDEX, MAPPING, makeClient, ensureIndex, deriveType, docFromWatch, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, bulkDelete, csvHeader, rowToCsvLine, each };

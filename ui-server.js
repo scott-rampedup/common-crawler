@@ -1484,6 +1484,19 @@ const server = http.createServer(async (req, res) => {
     catch (e) { jsonErr(res, 500, e.message); }
     return;
   }
+  // Download the Library (or the current filtered subset) as CSV (analyst+).
+  if (url.pathname === '/api/sitemaps/export.csv' && req.method === 'GET') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!sitemapsClient) { jsonErr(res, 503, 'Sitemap Library index not available (OpenSearch off).'); return; }
+    const q = url.searchParams;
+    const f = { kind: q.get('kind') || '', type: q.get('type') || '', industry: q.get('industry') || '', domain: q.get('domain') || '', keyword: q.get('keyword') || '', byName: q.get('byName') || '', minCount: q.get('minCount') || '', q: q.get('q') || '' };
+    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="sitemap-library.csv"' });
+    res.write(sitemaps.csvHeader() + '\n');
+    try { await sitemaps.each(sitemapsClient, f, async (d) => { if (!res.write(sitemaps.rowToCsvLine(d) + '\n')) await new Promise((r) => res.once('drain', r)); }, 200000); }
+    catch (e) { /* client disconnected or query failed mid-stream */ }
+    res.end();
+    return;
+  }
   // Mass-edit the Library (admin): set one whitelisted field on many selected sitemaps.
   if (url.pathname === '/api/sitemaps/bulk-update' && req.method === 'POST') {
     if (!isAdmin) { jsonErr(res, 403, 'Bulk edit is reserved for admins'); return; }

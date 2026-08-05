@@ -130,6 +130,7 @@
             <button id="slBulkEdit" class="ghost" type="button" style="display:none">✎ Bulk edit field…</button>
             <button id="slDelete" class="danger" type="button" style="display:none">🗑 Delete</button>
             <button id="slCrawl" class="primary" type="button" style="display:none">🕷 Crawl selected (<span id="slSelCount">0</span>)</button>
+            <a id="slDownload" class="primary" href="#" style="display:none;text-decoration:none">⬇ Download CSV</a>
           </div>
         </div>
 
@@ -253,6 +254,9 @@
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
         total = d.total || 0; renderHead(); render(d.rows || []);
+        $('slDownload').href = '/api/sitemaps/export.csv?' + qs();
+        $('slDownload').style.display = total ? 'inline-flex' : 'none';
+        const dl = $('slDownload'); dl.textContent = '⬇ Download CSV' + (total ? ' (' + total.toLocaleString() + ')' : '');
         loadFacets(); renderChips();
       } catch (e) { $('resultsSummary').textContent = 'Search failed: ' + e.message; }
       $('slSearch').disabled = false;
