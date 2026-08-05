@@ -888,7 +888,7 @@ const NEG_SITEMAP_NAME = /(?:^|[\/_-])(attachment|attachments|media|image|images
 async function discoverSitemaps(opts = {}){
   const { content = "", urls = [], directoryRules = {}, genderMap = {}, _fetchDoc = fetchDoc,
           minRatio = 0.30, minCount = 3, maxSitemaps = 200, maxUrls = 500000,
-          bioSitemapNames = null, locationSitemapNames = null, sourceUrl = "" } = opts;
+          bioSitemapNames = null, locationSitemapNames = null, keywordHints = null, sourceUrl = "" } = opts;
   const fileNameOf = (u) => String(u || "").split("?")[0].split("#")[0].split("/").pop().toLowerCase();
   const seenSm = new Set();
   const queue = [];
@@ -920,8 +920,14 @@ async function discoverSitemaps(opts = {}){
       continue;
     }
     const fname = fileNameOf(item.url);
-    const bioName = !!(bioSitemapNames && bioSitemapNames.has(fname));
+    let bioName = !!(bioSitemapNames && bioSitemapNames.has(fname));
     const locName = !!(locationSitemapNames && locationSitemapNames.has(fname));
+    // keyword second-pass: a child/leaf whose filename CONTAINS a trusted keyword token is treated as a
+    // People directory (keep all its URLs), as long as it isn't a known non-directory feed. Lets the
+    // monitor rescue People sitemaps the strict filename/ratio pass missed (e.g. numeric-id agent URLs).
+    if (!bioName && !locName && keywordHints && keywordHints.size && !NEG_SITEMAP_NAME.test(fname)) {
+      for (const k of keywordHints) { if (k && k.length >= 3 && fname.includes(k)) { bioName = true; break; } }
+    }
     if (!bioName && !locName && NEG_SITEMAP_NAME.test(fname)) continue;   // content-type feed, not a people/location directory
     let total = 0; const bio = [], loc = [], all = [];
     for(const e of entries){
@@ -2082,6 +2088,18 @@ if(require.main === module){
       ok("discoverSitemaps drops a negative-name (attachment) sitemap despite bio-looking urls", negName.watches.length === 0);
       const staffName = await discoverSitemaps({ urls: [`https://${negHost}/staff-sitemap.xml`], _fetchDoc: async () => negBios });
       ok("discoverSitemaps still keeps a real staff sitemap (same urls)", staffName.watches.length === 1 && staffName.watches[0].kind === "People");
+
+      // 7b-10) keyword second-pass: a People sitemap the strict pass can't detect (opaque numeric-id URLs)
+      // is rescued when a trusted keyword token matches its filename — but never overrides a negative feed.
+      const kwHost = "kw.com";
+      const kwOpaque = `<urlset><url><loc>https://${kwHost}/x/48213</loc></url>` +
+        `<url><loc>https://${kwHost}/x/48214</loc></url><url><loc>https://${kwHost}/x/48215</loc></url></urlset>`;
+      const kwStrict = await discoverSitemaps({ urls: [`https://${kwHost}/roster-2026.xml`], _fetchDoc: async () => kwOpaque });
+      ok("discoverSitemaps strict pass drops an opaque numeric-id sitemap", kwStrict.watches.length === 0);
+      const kwHint = await discoverSitemaps({ urls: [`https://${kwHost}/roster-2026.xml`], keywordHints: new Set(["roster"]), _fetchDoc: async () => kwOpaque });
+      ok("discoverSitemaps keyword pass rescues it as People (keeps all urls)", kwHint.watches.length === 1 && kwHint.watches[0].kind === "People" && kwHint.watches[0].byName === true && kwHint.watches[0].itemCount === 3);
+      const kwNeg = await discoverSitemaps({ urls: [`https://${kwHost}/attachment-sitemap.xml`], keywordHints: new Set(["attachment"]), _fetchDoc: async () => kwOpaque });
+      ok("discoverSitemaps keyword pass does not override a negative-name feed", kwNeg.watches.length === 0);
 
       // 7c) discoverBioUrlsFromCC: a domain's CC index -> keep only bio-looking captures
       const ccHost = "ccfirm.com";
