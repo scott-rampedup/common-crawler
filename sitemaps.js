@@ -94,6 +94,19 @@ function docFromWatch(w, extra = {}) {
   };
 }
 
+// Minimal Library doc for a submitted sitemap that our ingest logic couldn't classify (kind unknown).
+// Keeps "any sitemap from the Data Ingest" in the Library; an admin can set its kind later via the editor.
+function docFromUrl(sitemapUrl, extra = {}) {
+  const id = String(sitemapUrl || '').trim();
+  const domain = extra.domain || hostDomain(id);
+  return {
+    sitemap_url: id, domain, parent_url: '', kind: '', type: deriveType(id, domain), keyword: '',
+    url_count: 0, item_count: 0, ratio: 0, by_name: false,
+    industry: extra.industry || '', company_id: extra.company_id || '', lastmod: '',
+    source: extra.source || 'imported', status: 'active',
+  };
+}
+
 // Upsert by sitemap_url. First sight writes the full doc (incl. discovered_at); re-sights refresh the
 // mutable fields + last_seen and leave discovered_at intact. refresh:false — callers batch.
 async function bulkUpsert(client, docs, nowIso) {
@@ -335,4 +348,4 @@ async function each(client, f, onRow, cap = 200000) {
   return n;
 }
 
-module.exports = { INDEX, MAPPING, makeClient, ensureIndex, deriveType, docFromWatch, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, updateOne, renameSitemap, bulkDelete, csvHeader, rowToCsvLine, each, monitoredBatch, setMonitorState };
+module.exports = { INDEX, MAPPING, makeClient, ensureIndex, deriveType, docFromWatch, docFromUrl, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, updateOne, renameSitemap, bulkDelete, csvHeader, rowToCsvLine, each, monitoredBatch, setMonitorState };

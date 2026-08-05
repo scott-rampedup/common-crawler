@@ -178,6 +178,16 @@ try {
   LOCATION_SITEMAP_NAMES = new Set(lcsv.split(/\r?\n/).map((s) => s.trim().toLowerCase()).filter((l, i) => l && !(i === 0 && l === 'name')));
 } catch (e) { /* optional */ }
 const { makeLibMonitor } = require('./sitemap-lib-monitor');
+const { ingestSitemapsToLibrary } = require('./sitemap-lib-ingest');
+// Fire-and-forget: classify sitemaps submitted to the Data Ingest UI with our ingest logic and upsert them
+// into the Sitemap Library (source='imported'). Non-blocking so it never delays the crawl or the response.
+function libraryIngest(urls, content) {
+  if (!sitemapsClient || !Array.isArray(urls) || !urls.length) return;   // need real URLs to key the Library
+  ingestSitemapsToLibrary({ sitemaps, sitemapsClient, ccEngine, urls, content: content || '',
+    genderMap: GENDER_MAP, bioSitemapNames: BIO_SITEMAP_NAMES, locationSitemapNames: LOCATION_SITEMAP_NAMES, source: 'imported' })
+    .then((r) => console.log(`[lib-ingest] Library += ${r.upserted} sitemap(s) from ingest (${r.classified} classified, ${r.unknown} unknown, ${r.errors} err)`))
+    .catch((e) => console.error('[lib-ingest] failed:', e.message));
+}
 let libMonitor = null;
 function getLibMonitor() {   // lazy: sitemapsClient + reader are set in startup()
   if (!libMonitor && sitemapsClient && reader && reader.client) {
@@ -1326,6 +1336,7 @@ const server = http.createServer(async (req, res) => {
         // directoryRules stays {} on the server by design (see project notes); genderMap aids bio detection
         const out = await extractBioUrlsFromSitemaps({ content: inp.content, urls: inp.urls, genderMap: GENDER_MAP });
         console.log(`Sitemap extract: ${out.bioUrls.length} bio URL(s) from ${out.totalUrls} URL(s) across ${out.sitemapsFetched} fetched sitemap(s)`);
+        libraryIngest(inp.urls, inp.content);                 // also record the sitemaps in the Library
         sendJson(res, { ok: true, ...out });
       } catch (e) {
         jsonErr(res, 500, e.message || 'Failed to parse sitemap.');
@@ -1365,6 +1376,7 @@ const server = http.createServer(async (req, res) => {
             .then((r) => console.log(`Sitemap run: kept ${r.added} bio-dedicated child sitemap(s) for monitoring`))
             .catch((e) => console.error('Sitemap run: monitor registration failed:', e.message));
         }
+        libraryIngest(inp.urls, inp.content);                 // classify + add the submitted sitemaps to the Library
         sendJson(res, {
           ok: true, jobs: startedJobs, sitemaps: out.totalGroups, totalBioUrls: out.totalBioUrls,
           totalUrls: out.totalUrls, sitemapsFetched: out.sitemapsFetched, sitemapsOk: out.sitemapsOk,
