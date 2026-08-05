@@ -1584,6 +1584,24 @@ const server = http.createServer(async (req, res) => {
     });
     return;
   }
+  // Edit a single Library entry (admin) — the per-row ✎ editor. Body: { id, updates:{field:value,…} }.
+  if (url.pathname === '/api/sitemaps/update' && req.method === 'POST') {
+    if (!isAdmin) { jsonErr(res, 403, 'Editing is reserved for admins'); return; }
+    if (!sitemapsClient) { jsonErr(res, 503, 'Sitemap Library index not available (OpenSearch off).'); return; }
+    readJsonBody(req, async (b) => {
+      try {
+        const id = String((b && b.id) || '');
+        const updates = (b && b.updates && typeof b.updates === 'object') ? b.updates : {};
+        if (!id) return jsonErr(res, 400, 'No sitemap id');
+        if (updates.kind && !['People', 'Location'].includes(String(updates.kind))) return jsonErr(res, 400, 'Kind must be People or Location');
+        if (updates.type && !['Parent', 'Child', 'Sub-Domain'].includes(String(updates.type))) return jsonErr(res, 400, 'Type must be Parent, Child, or Sub-Domain');
+        const r = await sitemaps.updateOne(sitemapsClient, id, updates);
+        if (r.errors) return jsonErr(res, 500, r.error || 'Update failed');
+        sendJson(res, { ok: true, ...r });
+      } catch (e) { jsonErr(res, 500, e.message); }
+    });
+    return;
+  }
   // Delete selected Library entries (admin) — for junk/false-positive cleanup.
   if (url.pathname === '/api/sitemaps/delete' && req.method === 'POST') {
     if (!isAdmin) { jsonErr(res, 403, 'Delete is reserved for admins'); return; }

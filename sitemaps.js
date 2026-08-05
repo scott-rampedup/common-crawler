@@ -221,14 +221,21 @@ async function facets(client, f = {}) {
 // Fields an admin may mass-edit in the Library UI.
 const EDITABLE = new Set(['kind', 'type', 'industry', 'keyword', 'status', 'monitored']);
 
-// Partial bulk update by _id (sitemap_url). Validates fields against EDITABLE + kind values. Returns
-// { updated, errors, total }.
-async function bulkUpdate(client, ids, updates) {
+// Build the validated partial doc from a {field: value} map — shared by bulk edit + single-row edit.
+// Only EDITABLE fields survive; kind/type are constrained to their allowed values; monitored → boolean.
+function sanitizeUpdates(updates) {
   const doc = {};
   for (const k in (updates || {})) { if (EDITABLE.has(k)) doc[k] = String(updates[k] == null ? '' : updates[k]); }
   if (doc.kind && !['People', 'Location'].includes(doc.kind)) delete doc.kind;
   if (doc.type && !['Parent', 'Child', 'Sub-Domain'].includes(doc.type)) delete doc.type;
   if ('monitored' in doc) doc.monitored = /^(1|true|on|yes)$/i.test(doc.monitored);   // boolean field
+  return doc;
+}
+
+// Partial bulk update by _id (sitemap_url). Validates fields against EDITABLE + kind values. Returns
+// { updated, errors, total }.
+async function bulkUpdate(client, ids, updates) {
+  const doc = sanitizeUpdates(updates);
   const list = [...new Set((ids || []).map((x) => String(x || '').trim()).filter(Boolean))];
   if (!Object.keys(doc).length || !list.length) return { updated: 0, errors: 0, total: list.length };
   let updated = 0, errors = 0;
@@ -240,6 +247,19 @@ async function bulkUpdate(client, ids, updates) {
   }
   try { await client.indices.refresh({ index: INDEX }); } catch (e) { /* best-effort */ }
   return { updated, errors, total: list.length };
+}
+
+// Single-row multi-field edit by _id (sitemap_url) — the admin inline/row editor. Same field validation
+// as bulkUpdate. Returns { updated: 0|1, errors, error? }.
+async function updateOne(client, id, updates) {
+  const _id = String(id || '').trim();
+  const doc = sanitizeUpdates(updates);
+  if (!_id || !Object.keys(doc).length) return { updated: 0, errors: 0 };
+  try {
+    await client.update({ index: INDEX, id: _id, body: { doc } });
+    try { await client.indices.refresh({ index: INDEX }); } catch (e) { /* best-effort */ }
+    return { updated: 1, errors: 0 };
+  } catch (e) { return { updated: 0, errors: 1, error: e.message }; }
 }
 
 // Permanently remove Library entries by _id (sitemap_url). Returns { deleted, errors }.
@@ -283,4 +303,4 @@ async function each(client, f, onRow, cap = 200000) {
   return n;
 }
 
-module.exports = { INDEX, MAPPING, makeClient, ensureIndex, deriveType, docFromWatch, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, bulkDelete, csvHeader, rowToCsvLine, each, monitoredBatch, setMonitorState };
+module.exports = { INDEX, MAPPING, makeClient, ensureIndex, deriveType, docFromWatch, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, updateOne, bulkDelete, csvHeader, rowToCsvLine, each, monitoredBatch, setMonitorState };

@@ -64,6 +64,9 @@
     .sl-mon-n { color: #15803d; font-weight: 650; font-size: 0.78rem; font-variant-numeric: tabular-nums; }
     .sl-checkline { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; color: #374151; cursor: pointer; }
     .sl-checkline input { width: 15px; height: 15px; accent-color: #2563eb; }
+    /* row-edit modal selects match its inputs */
+    .edit-field select { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; font-family: inherit; font-size: 0.88rem; background: #fff; }
+    .slEdit:hover { color: #2563eb; }
   </style>
 </head>
 <body class="search-page">
@@ -199,6 +202,22 @@
     </div>
   </div>
 
+  <!-- Row-edit modal (admin): edit ONE sitemap's fields -->
+  <div id="slEditModal" class="modal-overlay" style="display:none">
+    <div class="modal-dialog">
+      <div class="modal-head"><h2>Edit sitemap</h2><button class="modal-close" id="slEditX" type="button">×</button></div>
+      <div class="modal-body">
+        <p class="bulk-warn">Editing <strong id="slEditSub"></strong></p>
+        <div class="edit-grid" id="slEditBody"></div>
+      </div>
+      <div class="modal-msg err" id="slEditMsg"></div>
+      <div class="modal-foot">
+        <button id="slEditCancel" type="button">Cancel</button>
+        <button id="slEditSave" class="primary" type="button">Save changes</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/ui/nav.js"></script>
   <script>
     const $ = (id) => document.getElementById(id);
@@ -226,6 +245,7 @@
       { key: 'industry',   label: 'Industry' },
       { key: 'lastmod',    label: 'Last modified' },
       { key: 'monitor',    label: 'Monitor' },
+      { key: 'edit',       label: '' },
     ];
 
     function filters() {
@@ -353,6 +373,7 @@
           '<td>' + (d.industry ? esc(tc(d.industry)) : dash) + '</td>' +
           '<td>' + (d.lastmod ? esc(String(d.lastmod).slice(0, 10)) : dash) + '</td>' +
           '<td>' + monCell + '</td>' +
+          '<td><button type="button" class="slEdit" data-id="' + esc(id) + '" title="Edit this sitemap" style="border:none;background:none;cursor:pointer;font-size:1rem;color:#6b7280">✎</button></td>' +
         '</tr>';
       }).join('');
       document.querySelectorAll('.slRow').forEach((cb) => cb.addEventListener('change', () => {
@@ -361,6 +382,7 @@
         cb.closest('tr').classList.toggle('selected', cb.checked);
         updateSel();
       }));
+      document.querySelectorAll('.slEdit').forEach((b) => b.addEventListener('click', () => openEditRow(byId[b.getAttribute('data-id')])));
       rowsById = byId;
       fetchHaveCounts(rows);
       const shownTo = Math.min(from + PAGE, total);
@@ -509,6 +531,57 @@
       } catch (e) { $('slBulkMsg').className = 'modal-msg err'; $('slBulkMsg').textContent = 'Failed: ' + e.message; }
       $('slBulkSave').disabled = false;
     });
+    // ---- single-row edit (admin): edit one sitemap's fields ----
+    const SL_EDIT_FIELDS = [
+      ['kind', 'Kind', 'select', ['People', 'Location']],
+      ['type', 'Type', 'select', ['Parent', 'Child', 'Sub-Domain']],
+      ['monitored', 'Monitor for new hires', 'select', [['yes', 'On'], ['no', 'Off']]],
+      ['industry', 'Industry', 'text'],
+      ['keyword', 'Keyword (detected name)', 'text'],
+      ['status', 'Status', 'select', ['active', 'inactive']],
+    ];
+    let slEditId = null;
+    function slFieldValue(k, row) {
+      if (k === 'monitored') return row.monitored ? 'yes' : 'no';
+      if (k === 'type') return row.type || (row.parent_url ? 'Child' : 'Parent');
+      if (k === 'status') return row.status || 'active';
+      return row[k] != null ? String(row[k]) : '';
+    }
+    function openEditRow(row) {
+      if (!row) return; slEditId = row.sitemap_url;
+      $('slEditSub').textContent = String(row.sitemap_url).replace(/^https?:\/\//i, '');
+      $('slEditBody').innerHTML = SL_EDIT_FIELDS.map(([k, label, kind, opts]) => {
+        const cur = slFieldValue(k, row);
+        let ctl;
+        if (kind === 'select') {
+          ctl = '<select data-k="' + k + '">' + (opts || []).map((o) => {
+            const val = Array.isArray(o) ? o[0] : o, lab = Array.isArray(o) ? o[1] : o;
+            return '<option value="' + esc(val) + '"' + (String(val) === String(cur) ? ' selected' : '') + '>' + esc(lab) + '</option>';
+          }).join('') + '</select>';
+        } else { ctl = '<input data-k="' + k + '" value="' + esc(cur) + '" />'; }
+        return '<label class="edit-field">' + esc(label) + ctl + '</label>';
+      }).join('');
+      $('slEditMsg').textContent = ''; $('slEditMsg').className = 'modal-msg err';
+      $('slEditModal').style.display = 'flex';
+    }
+    function closeEditRow() { $('slEditModal').style.display = 'none'; }
+    $('slEditX').addEventListener('click', closeEditRow);
+    $('slEditCancel').addEventListener('click', closeEditRow);
+    $('slEditModal').addEventListener('click', (e) => { if (e.target.id === 'slEditModal') closeEditRow(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeEditRow(); });
+    $('slEditSave').addEventListener('click', async () => {
+      if (!slEditId) return closeEditRow();
+      const updates = {};
+      $('slEditBody').querySelectorAll('[data-k]').forEach((i) => { updates[i.getAttribute('data-k')] = i.value; });
+      $('slEditSave').disabled = true; $('slEditMsg').className = 'modal-msg'; $('slEditMsg').textContent = 'Saving…';
+      try {
+        const r = await fetch('/api/sitemaps/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: slEditId, updates }) });
+        const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        closeEditRow(); loadMonitorStatus(); search(from);
+      } catch (e) { $('slEditMsg').className = 'modal-msg err'; $('slEditMsg').textContent = 'Failed: ' + e.message; }
+      $('slEditSave').disabled = false;
+    });
+
     $('slDelete').addEventListener('click', async () => {
       const ids = [...selected.keys()]; if (!ids.length) return;
       if (!confirm('Delete ' + ids.length.toLocaleString() + ' selected sitemap(s) from the Library?\n\nThis cannot be undone.')) return;
