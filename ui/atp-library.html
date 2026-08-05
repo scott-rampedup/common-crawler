@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>All The Places Library · Common Crawler</title>
+  <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+  <link rel="apple-touch-icon" href="/ui/logo.png" />
+  <link rel="stylesheet" href="/ui/styles.css" />
+  <style>
+    .cc-empty { color: #9ca3af; }
+    .cc-count b { color: #111827; }
+    .facet { display: flex; flex-direction: column; gap: 6px; }
+    .facet > .facet-h { display: flex; align-items: baseline; justify-content: space-between; }
+    .facet > .facet-h b { font-size: 0.9rem; color: #374151; font-weight: 700; }
+    .facet-list { display: flex; flex-direction: column; gap: 2px; max-height: 240px; overflow-y: auto; padding-right: 2px; }
+    .facet-list::-webkit-scrollbar { width: 8px; }
+    .facet-list::-webkit-scrollbar-thumb { background: #dbe2ec; border-radius: 8px; }
+    .facet-opt { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 8px; font-size: 0.86rem; color: #1f2937; cursor: pointer; }
+    .facet-opt:hover { background: #f1f5f9; }
+    .facet-opt input { width: 15px; height: 15px; flex: none; accent-color: #2563eb; margin: 0; }
+    .facet-opt .lbl { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .facet-opt .cnt { font-variant-numeric: tabular-nums; color: #6b7280; font-size: 0.78rem; flex: none; }
+    .facet-opt.on { background: #eef4ff; }
+    .facet-opt.on .lbl { font-weight: 650; color: #1d4ed8; }
+    .facet-empty { color: #9ca3af; font-size: 0.82rem; padding: 2px 6px; }
+    .cc-chips { display: flex; flex-wrap: wrap; gap: 7px; padding: 10px 18px; border-bottom: 1px solid #eef2f7; align-items: center; }
+    .cc-chips[hidden] { display: none; }
+    .cc-chip { display: inline-flex; align-items: center; gap: 7px; padding: 4px 6px 4px 11px; background: #eef2ff; color: #3730a3; border-radius: 999px; font-size: 0.82rem; font-weight: 600; white-space: nowrap; }
+    .cc-chip .k { color: #6366f1; font-weight: 700; text-transform: uppercase; font-size: 0.66rem; letter-spacing: 0.04em; }
+    .cc-chip button { border: none; background: rgba(99,102,241,.16); color: #3730a3; width: 17px; height: 17px; border-radius: 50%; cursor: pointer; font-size: 0.8rem; line-height: 1; padding: 0; }
+    .cc-chips .clear-all { border: none; background: none; color: #6b7280; font-weight: 600; font-size: 0.82rem; cursor: pointer; text-decoration: underline; }
+    thead th .arrow { color: #2563eb; font-size: 0.72rem; }
+    .atp-brand { font-weight: 650; color: #111827; }
+    a.atp-link { display: inline-block; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+    .atp-cc { text-transform: uppercase; font-variant-numeric: tabular-nums; color: #6b7280; }
+  </style>
+</head>
+<body class="search-page">
+  <div class="search-shell">
+    <header class="search-header">
+      <div class="brand">
+        <img class="app-logo" src="/ui/logo.png" alt="Common Crawler logo" onerror="this.onerror=null;this.src='/ui/favicon.svg';" />
+        <h1>Common Crawler</h1>
+      </div>
+      <nav class="nav-actions"></nav>
+    </header>
+
+    <div class="search-layout">
+      <aside class="search-panel">
+        <h2>All The Places Library</h2>
+        <div class="search-fields">
+          <label>Search
+            <input id="fq" type="search" placeholder="brand / website / spider" />
+          </label>
+          <label>Website
+            <input id="fWebsite" type="search" placeholder="e.g. lowes.com" />
+          </label>
+          <div class="facet" data-field="country">
+            <div class="facet-h"><b>Country</b></div>
+            <div class="facet-list" id="facetCountry"><span class="facet-empty">Search to see counts</span></div>
+          </div>
+          <div class="facet" data-field="type">
+            <div class="facet-h"><b>Type</b></div>
+            <div class="facet-list" id="facetType"><span class="facet-empty">Search to see counts</span></div>
+          </div>
+          <label>Min places
+            <input id="fMinCount" type="number" min="0" placeholder="e.g. 50" />
+          </label>
+          <label>Has GeoJSON link
+            <select id="fHasLink">
+              <option value="">Any</option>
+              <option value="yes">With link</option>
+              <option value="no">Missing link</option>
+            </select>
+          </label>
+        </div>
+        <div class="search-actions">
+          <button id="slSearch" class="primary" type="button">Search</button>
+          <button id="slReset" class="ghost" type="button">Clear</button>
+        </div>
+        <p class="search-hint">Searching <b id="slTotalIdx">…</b> brands.</p>
+      </aside>
+
+      <main class="results-panel">
+        <div class="results-toolbar">
+          <p id="resultsSummary">Loading…</p>
+          <div class="toolbar-actions">
+            <span id="slSelInfo" class="selected-info"></span>
+            <button id="slBulkEdit" class="ghost" type="button" style="display:none">✎ Bulk edit field…</button>
+            <button id="slDelete" class="danger" type="button" style="display:none">🗑 Delete</button>
+            <a id="slDownload" class="primary" href="#" style="display:none;text-decoration:none">⬇ Download CSV</a>
+          </div>
+        </div>
+        <div id="slChips" class="cc-chips" hidden></div>
+        <div class="results-scroll" id="slScroll">
+          <table id="slTable"><thead><tr id="slHead"></tr></thead><tbody id="slBody"></tbody></table>
+        </div>
+        <div class="pagination" id="slPager" style="display:none">
+          <button id="slFirst" type="button" title="First page">«</button>
+          <button id="slPrev" type="button" title="Previous page">‹ Prev</button>
+          <span id="slPageInfo" class="page-info">Page 1 of 1</span>
+          <button id="slNext" type="button" title="Next page">Next ›</button>
+          <button id="slLast" type="button" title="Last page">»</button>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div id="slBulkModal" class="modal-overlay" style="display:none">
+    <div class="modal-dialog">
+      <div class="modal-head"><h2>Bulk edit brands</h2><button class="modal-close" id="slBulkX" type="button">×</button></div>
+      <div class="modal-body">
+        <p class="bulk-warn" id="slBulkWarn"></p>
+        <label class="bulk-field"><span>Field to change</span>
+          <select id="slBulkField">
+            <option value="type">Type</option>
+            <option value="country">Country</option>
+            <option value="website">Website</option>
+            <option value="name">Name (brand)</option>
+            <option value="link">GeoJSON link</option>
+          </select>
+        </label>
+        <label class="bulk-field"><span>New value</span><span id="slBulkValueWrap"></span></label>
+      </div>
+      <div class="modal-msg err" id="slBulkMsg"></div>
+      <div class="modal-foot">
+        <button id="slBulkCancel" type="button">Cancel</button>
+        <button id="slBulkSave" class="primary" type="button">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="slEditModal" class="modal-overlay" style="display:none">
+    <div class="modal-dialog">
+      <div class="modal-head"><h2>Edit brand</h2><button class="modal-close" id="slEditX" type="button">×</button></div>
+      <div class="modal-body">
+        <p class="bulk-warn">Editing <strong id="slEditSub"></strong></p>
+        <div class="edit-grid" id="slEditBody"></div>
+      </div>
+      <div class="modal-msg err" id="slEditMsg"></div>
+      <div class="modal-foot">
+        <button id="slEditCancel" type="button">Cancel</button>
+        <button id="slEditSave" class="primary" type="button">Save changes</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/ui/nav.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const abs = (u) => /^https?:/i.test(u) ? u : ('https://' + u);
+
+    const PAGE = 50;
+    let from = 0, total = 0, hasSearched = false;
+    const sortState = { col: 'count', dir: 'desc' };
+    const selected = new Map();
+    let rowsById = {};
+    const sel = { country: new Set(), type: new Set() };
+
+    const COLS = [
+      { key: 'name',    label: 'Brand',   sort: 'name.kw' },
+      { key: 'website', label: 'Website' },
+      { key: 'country', label: 'Country', sort: 'country' },
+      { key: 'spider',  label: 'Spider',  sort: 'spider' },
+      { key: 'type',    label: 'Type',    sort: 'type' },
+      { key: 'count',   label: 'Places',  sort: 'count' },
+      { key: 'loaded',  label: 'Loaded',  sort: 'loaded' },
+      { key: 'link',    label: 'GeoJSON' },
+      { key: 'edit',    label: '' },
+    ];
+
+    function filters() {
+      return {
+        q: $('fq').value.trim(), website: $('fWebsite').value.trim(),
+        country: [...sel.country].join(','), type: [...sel.type].join(','),
+        minCount: $('fMinCount').value.trim(), hasLink: $('fHasLink').value,
+      };
+    }
+    function qs(extra) {
+      const f = filters(), p = new URLSearchParams();
+      for (const k in f) if (f[k]) p.set(k, f[k]);
+      if (sortState.col) { p.set('sort', sortState.col); p.set('dir', sortState.dir); }
+      for (const k in (extra || {})) p.set(k, extra[k]);
+      return p.toString();
+    }
+
+    function renderHead() {
+      $('slHead').innerHTML =
+        '<th class="check-col"><input type="checkbox" id="slAll" class="all-check" title="Select all on this page" /></th>' +
+        COLS.map((c) => {
+          if (!c.sort) return '<th>' + esc(c.label) + '</th>';
+          const active = sortState.col === c.sort;
+          const arrow = active ? ' <span class="arrow">' + (sortState.dir === 'asc' ? '▲' : '▼') + '</span>' : '';
+          return '<th class="sortable' + (active ? ' sorted' : '') + '" data-sort="' + c.sort + '">' + esc(c.label) + arrow + '</th>';
+        }).join('');
+      $('slAll').addEventListener('change', (e) => togglePage(e.target.checked));
+      document.querySelectorAll('#slHead th.sortable').forEach((th) => th.addEventListener('click', () => {
+        const s = th.getAttribute('data-sort');
+        if (sortState.col === s) sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+        else { sortState.col = s; sortState.dir = 'desc'; }
+        search(0);
+      }));
+    }
+
+    async function search(newFrom) {
+      hasSearched = true; from = newFrom || 0;
+      $('resultsSummary').textContent = 'Searching…'; $('slSearch').disabled = true;
+      try {
+        const r = await fetch('/api/atp/search?' + qs({ from, size_n: PAGE }));
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        total = d.total || 0; renderHead(); render(d.rows || []);
+        $('slDownload').href = '/api/atp/export.csv?' + qs();
+        $('slDownload').style.display = total ? 'inline-flex' : 'none';
+        $('slDownload').textContent = '⬇ Download CSV' + (total ? ' (' + total.toLocaleString() + ')' : '');
+        loadFacets(); renderChips();
+      } catch (e) { $('resultsSummary').textContent = 'Search failed: ' + e.message; }
+      $('slSearch').disabled = false;
+    }
+
+    function render(rows) {
+      const dash = '<span class="cc-empty">—</span>';
+      $('slPager').style.display = total > PAGE ? 'flex' : 'none';
+      if (!rows.length) {
+        $('slBody').innerHTML = '<tr><td colspan="' + (COLS.length + 1) + '" style="padding:34px 16px;text-align:center;color:#9ca3af">' +
+          (hasSearched ? 'No brands match these filters.' : 'Loading…') + '</td></tr>';
+        rowsById = {}; updateSel(); return;
+      }
+      const byId = {};
+      $('slBody').innerHTML = rows.map((d) => {
+        const id = d.spider || d.website || d.name; byId[id] = d;
+        const checked = selected.has(id) ? ' checked' : '';
+        const website = d.website ? '<a class="domain-link" href="' + esc(abs(d.website)) + '" target="_blank" rel="noopener">' + esc(d.website) + '</a>' : dash;
+        const link = /^https?:/i.test(d.link || '') ? '<a class="domain-link atp-link" href="' + esc(d.link) + '" target="_blank" rel="noopener" title="' + esc(d.link) + '">geojson ↗</a>' : dash;
+        const placesLink = '<a class="domain-link" href="/corporate-places?brand=' + encodeURIComponent(d.name || '') + '" title="View this brand\'s places">' + Number(d.count || 0).toLocaleString() + '</a>';
+        return '<tr' + (selected.has(id) ? ' class="selected"' : '') + '>' +
+          '<td class="check-col"><input type="checkbox" class="row-check slRow" data-id="' + esc(id) + '"' + checked + ' /></td>' +
+          '<td class="atp-brand">' + (d.name ? esc(d.name) : dash) + '</td>' +
+          '<td>' + website + '</td>' +
+          '<td class="atp-cc">' + (d.country ? esc(d.country) : dash) + '</td>' +
+          '<td><code style="font-size:0.82rem">' + (d.spider ? esc(d.spider) : '') + '</code></td>' +
+          '<td>' + (d.type ? esc(d.type) : dash) + '</td>' +
+          '<td class="cc-count">' + placesLink + '</td>' +
+          '<td>' + (Number(d.loaded) ? '<b>' + Number(d.loaded).toLocaleString() + '</b>' : dash) + '</td>' +
+          '<td>' + link + '</td>' +
+          '<td><button type="button" class="slEdit" data-id="' + esc(id) + '" title="Edit" style="border:none;background:none;cursor:pointer;font-size:1rem;color:#6b7280">✎</button></td>' +
+        '</tr>';
+      }).join('');
+      document.querySelectorAll('.slRow').forEach((cb) => cb.addEventListener('change', () => {
+        const id = cb.getAttribute('data-id');
+        if (cb.checked) selected.set(id, byId[id]); else selected.delete(id);
+        cb.closest('tr').classList.toggle('selected', cb.checked);
+        updateSel();
+      }));
+      document.querySelectorAll('.slEdit').forEach((b) => b.addEventListener('click', () => openEditRow(byId[b.getAttribute('data-id')])));
+      rowsById = byId;
+      const shownTo = Math.min(from + PAGE, total);
+      const pages = Math.max(1, Math.ceil(total / PAGE)), cur = Math.floor(from / PAGE) + 1;
+      $('slPageInfo').textContent = 'Page ' + cur + ' of ' + pages.toLocaleString() + ' · ' + (from + 1).toLocaleString() + '–' + shownTo.toLocaleString() + ' of ' + total.toLocaleString();
+      $('slFirst').disabled = from <= 0; $('slPrev').disabled = from <= 0;
+      $('slNext').disabled = shownTo >= total; $('slLast').disabled = shownTo >= total;
+      updateSel();
+    }
+
+    async function loadFacets() {
+      try {
+        const r = await fetch('/api/atp/facets?' + qs());
+        const d = await r.json(); if (!r.ok) return;
+        renderFacet('country', $('facetCountry'), d.country || []);
+        renderFacet('type', $('facetType'), d.type || []);
+        $('resultsSummary').textContent = (d.total || 0).toLocaleString() + ' brand(s) · ' + (d.places || 0).toLocaleString() + ' places total';
+      } catch (e) { /* keep prior */ }
+    }
+    function renderFacet(field, host, buckets) {
+      const counts = new Map(buckets.map((b) => [b.key, b.count]));
+      let keys = buckets.map((b) => b.key);
+      for (const k of sel[field]) if (!keys.includes(k)) keys.unshift(k);
+      if (!keys.length) { host.innerHTML = '<span class="facet-empty">No values</span>'; return; }
+      host.innerHTML = keys.map((k) => {
+        const on = sel[field].has(k), c = counts.get(k);
+        return '<label class="facet-opt' + (on ? ' on' : '') + '">' +
+          '<input type="checkbox" data-field="' + field + '" value="' + esc(k) + '"' + (on ? ' checked' : '') + ' />' +
+          '<span class="lbl" title="' + esc(k || '(none)') + '">' + esc(k || '(none)') + '</span>' +
+          '<span class="cnt">' + (c != null ? c.toLocaleString() : (on ? '·' : '0')) + '</span></label>';
+      }).join('');
+      host.querySelectorAll('input[type=checkbox]').forEach((cb) => cb.addEventListener('change', () => {
+        const v = cb.value; if (cb.checked) sel[field].add(v); else sel[field].delete(v); search(0);
+      }));
+    }
+
+    function renderChips() {
+      const chips = [];
+      const add = (k, label, clear) => chips.push({ k, label, clear });
+      if (filters().q) add('search', filters().q, () => { $('fq').value = ''; });
+      if ($('fWebsite').value.trim()) add('website', $('fWebsite').value.trim(), () => { $('fWebsite').value = ''; });
+      for (const c of sel.country) add('country', c, () => sel.country.delete(c));
+      for (const t of sel.type) add('type', t, () => sel.type.delete(t));
+      if ($('fMinCount').value.trim()) add('min places', $('fMinCount').value.trim(), () => { $('fMinCount').value = ''; });
+      if ($('fHasLink').value) add('link', $('fHasLink').value === 'yes' ? 'with link' : 'missing link', () => { $('fHasLink').value = ''; });
+      const host = $('slChips');
+      if (!chips.length) { host.hidden = true; host.innerHTML = ''; return; }
+      host.hidden = false;
+      host.innerHTML = chips.map((c, i) => '<span class="cc-chip" data-i="' + i + '"><span class="k">' + esc(c.k) + '</span>' + esc(c.label) + ' <button type="button">×</button></span>').join('') + '<button type="button" class="clear-all" id="slClearAll">Clear all</button>';
+      chips.forEach((c, i) => host.querySelector('.cc-chip[data-i="' + i + '"] button').addEventListener('click', () => { c.clear(); search(0); }));
+      $('slClearAll').addEventListener('click', clearAll);
+    }
+
+    function updateSel() {
+      const n = selected.size;
+      $('slSelInfo').textContent = n ? n.toLocaleString() + ' selected' : '';
+      $('slBulkEdit').style.display = n ? 'inline-flex' : 'none';
+      $('slDelete').style.display = n ? 'inline-flex' : 'none';
+    }
+    function togglePage(on) {
+      document.querySelectorAll('.slRow').forEach((cb) => {
+        cb.checked = on; const id = cb.getAttribute('data-id');
+        const tr = cb.closest('tr'); if (tr) tr.classList.toggle('selected', on);
+        if (on) selected.set(id, rowsById[id]); else selected.delete(id);
+      });
+      updateSel();
+    }
+    function clearAll() {
+      ['fq', 'fWebsite', 'fMinCount'].forEach((i) => { $(i).value = ''; });
+      $('fHasLink').value = ''; sel.country.clear(); sel.type.clear();
+      search(0);
+    }
+
+    $('slSearch').addEventListener('click', () => search(0));
+    $('slReset').addEventListener('click', clearAll);
+    ['fq', 'fWebsite', 'fMinCount'].forEach((i) => $(i).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search(0); } }));
+    $('fHasLink').addEventListener('change', () => search(0));
+    $('slFirst').addEventListener('click', () => search(0));
+    $('slPrev').addEventListener('click', () => search(Math.max(0, from - PAGE)));
+    $('slNext').addEventListener('click', () => search(from + PAGE));
+    $('slLast').addEventListener('click', () => search((Math.ceil(total / PAGE) - 1) * PAGE));
+
+    // ---- bulk edit ----
+    function slRebuildValue() {
+      const f = $('slBulkField').value; const wrap = $('slBulkValueWrap'); wrap.innerHTML = '';
+      const el = document.createElement('input'); el.type = 'text'; el.id = 'slBulkValue';
+      el.placeholder = f === 'type' ? 'e.g. Home Improvement' : (f === 'country' ? 'e.g. us' : '');
+      wrap.appendChild(el);
+    }
+    function closeBulk() { $('slBulkModal').style.display = 'none'; }
+    function openBulk() {
+      const n = selected.size; if (!n) return;
+      $('slBulkWarn').innerHTML = 'Sets one field to the same value on <strong>all ' + n.toLocaleString() + ' selected brand(s)</strong>.';
+      $('slBulkMsg').textContent = ''; slRebuildValue();
+      $('slBulkSave').textContent = 'Apply to ' + n.toLocaleString(); $('slBulkModal').style.display = 'flex';
+    }
+    $('slBulkEdit').addEventListener('click', openBulk);
+    $('slBulkField').addEventListener('change', slRebuildValue);
+    $('slBulkX').addEventListener('click', closeBulk);
+    $('slBulkCancel').addEventListener('click', closeBulk);
+    $('slBulkModal').addEventListener('click', (e) => { if (e.target.id === 'slBulkModal') closeBulk(); });
+    $('slBulkSave').addEventListener('click', async () => {
+      const ids = [...selected.keys()]; if (!ids.length) return closeBulk();
+      const field = $('slBulkField').value, value = $('slBulkValue').value;
+      $('slBulkSave').disabled = true; $('slBulkMsg').className = 'modal-msg'; $('slBulkMsg').textContent = 'Applying…';
+      try {
+        const r = await fetch('/api/atp/bulk-update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ field, value, ids }) });
+        const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        closeBulk(); selected.clear();
+        alert('Bulk edit complete: ' + Number(d.updated || 0).toLocaleString() + ' updated.');
+        search(from);
+      } catch (e) { $('slBulkMsg').className = 'modal-msg err'; $('slBulkMsg').textContent = 'Failed: ' + e.message; }
+      $('slBulkSave').disabled = false;
+    });
+
+    // ---- single-row edit ----
+    const SL_EDIT_FIELDS = [['name', 'Name (brand)'], ['website', 'Website'], ['country', 'Country'], ['type', 'Type'], ['link', 'GeoJSON link', 1]];
+    let slEditId = null;
+    function openEditRow(row) {
+      if (!row) return; slEditId = row.spider || row.website || row.name;
+      $('slEditSub').textContent = row.name || slEditId;
+      $('slEditBody').innerHTML = SL_EDIT_FIELDS.map(([k, label, wide]) =>
+        '<label class="edit-field' + (wide ? ' wide' : '') + '">' + esc(label) + '<input data-k="' + k + '" value="' + esc(row[k] != null ? row[k] : '') + '" /></label>').join('');
+      $('slEditMsg').textContent = ''; $('slEditModal').style.display = 'flex';
+    }
+    function closeEditRow() { $('slEditModal').style.display = 'none'; }
+    $('slEditX').addEventListener('click', closeEditRow);
+    $('slEditCancel').addEventListener('click', closeEditRow);
+    $('slEditModal').addEventListener('click', (e) => { if (e.target.id === 'slEditModal') closeEditRow(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeEditRow(); closeBulk(); } });
+    $('slEditSave').addEventListener('click', async () => {
+      if (!slEditId) return closeEditRow();
+      const updates = {};
+      $('slEditBody').querySelectorAll('[data-k]').forEach((i) => { updates[i.getAttribute('data-k')] = i.value; });
+      $('slEditSave').disabled = true; $('slEditMsg').className = 'modal-msg'; $('slEditMsg').textContent = 'Saving…';
+      try {
+        const r = await fetch('/api/atp/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: slEditId, updates }) });
+        const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        closeEditRow(); search(from);
+      } catch (e) { $('slEditMsg').className = 'modal-msg err'; $('slEditMsg').textContent = 'Failed: ' + e.message; }
+      $('slEditSave').disabled = false;
+    });
+    $('slDelete').addEventListener('click', async () => {
+      const ids = [...selected.keys()]; if (!ids.length) return;
+      if (!confirm('Delete ' + ids.length.toLocaleString() + ' selected brand(s) from the Library?')) return;
+      try {
+        const r = await fetch('/api/atp/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+        const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        selected.clear(); alert('Deleted ' + Number(d.deleted || 0).toLocaleString() + '.'); search(0);
+      } catch (e) { alert('Delete failed: ' + e.message); }
+    });
+
+    (async function init() {
+      try { const r = await fetch('/api/atp/facets'); if (r.ok) { const d = await r.json(); $('slTotalIdx').textContent = (d.total || 0).toLocaleString(); } }
+      catch (e) { $('slTotalIdx').textContent = '—'; }
+      search(0);
+    })();
+  </script>
+</body>
+</html>

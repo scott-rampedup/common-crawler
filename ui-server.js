@@ -129,6 +129,8 @@ function makeOsReader(endpoint) {
 let osSync = null;   // background delta syncer handle (fleet-ingested contacts -> OpenSearch)
 const companies = require('./companies');
 const sitemaps = require('./sitemaps');
+const atp = require('./atp');
+const corporatePlaces = require('./corporate-places');
 const naics = require('./naics');
 const serperApi = require('./serper');
 
@@ -141,6 +143,8 @@ const BULK_CO_FIELDS = new Set(['industry', 'size', 'country', 'region', 'locali
 const ccHome = require('./cc-home-enrich');
 let companiesClient = null;        // OpenSearch client for the `companies` index (Company Crawler), set in startup
 let sitemapsClient = null;         // OpenSearch client for the `sitemaps` index (Sitemap Library), set in startup
+let atpClient = null;              // OpenSearch client for the `atp_library` index (All The Places), set in startup
+let placesClient = null;           // OpenSearch client for the `corporate_places` index, set in startup
 const monitorDb = sqliteDb;        // sitemap-monitor tables always live in SQLite
 const aiEnrich = require('./ai-enrich');
 
@@ -1132,6 +1136,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/corporate-places' || url.pathname === '/corporate-places.html') {
+    // view-only for everyone signed in (users + analysts + admins); no write actions on this page
+    serveStaticFile(res, path.join(PUBLIC_DIR, 'corporate-places.html'));
+    return;
+  }
+
+  if (url.pathname === '/atp-library' || url.pathname === '/atp-library.html') {
+    if (!isAdmin) { res.writeHead(302, { Location: '/search' }); res.end(); return; }     // admin-only brand catalog
+    serveStaticFile(res, path.join(PUBLIC_DIR, 'atp-library.html'));
+    return;
+  }
+
   if (url.pathname.startsWith('/ui/')) {
     const filePath = path.join(PUBLIC_DIR, url.pathname.replace(/^\/ui\//, ''));
     serveStaticFile(res, filePath);
@@ -1637,6 +1653,107 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ---------- All The Places Library (atp_library) — admin only ----------
+  const atpFilters = (q) => ({ q: q.get('q') || '', website: q.get('website') || '', country: q.get('country') || '',
+    type: q.get('type') || '', minCount: q.get('minCount') || '', hasLink: q.get('hasLink') || '' });
+  if (url.pathname === '/api/atp/search' && req.method === 'GET') {
+    if (!isAdmin) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!atpClient) { jsonErr(res, 503, 'ATP Library index not available (OpenSearch off).'); return; }
+    const q = url.searchParams;
+    const from = Math.max(0, Number(q.get('from')) || 0);
+    const size = Math.min(200, Math.max(1, Number(q.get('size_n')) || 50));
+    try { sendJson(res, await atp.search(atpClient, atpFilters(q), { from, size, sort: q.get('sort') || 'count', dir: q.get('dir') || 'desc' })); }
+    catch (e) { jsonErr(res, 500, e.message); }
+    return;
+  }
+  if (url.pathname === '/api/atp/facets' && req.method === 'GET') {
+    if (!isAdmin) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!atpClient) { jsonErr(res, 503, 'ATP Library index not available (OpenSearch off).'); return; }
+    try { sendJson(res, await atp.facets(atpClient, atpFilters(url.searchParams))); }
+    catch (e) { jsonErr(res, 500, e.message); }
+    return;
+  }
+  if (url.pathname === '/api/atp/export.csv' && req.method === 'GET') {
+    if (!isAdmin) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!atpClient) { jsonErr(res, 503, 'ATP Library index not available (OpenSearch off).'); return; }
+    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="all-the-places-library.csv"' });
+    res.write(atp.csvHeader() + '\n');
+    try { await atp.each(atpClient, atpFilters(url.searchParams), async (d) => { if (!res.write(atp.rowToCsvLine(d) + '\n')) await new Promise((r) => res.once('drain', r)); }, 200000); }
+    catch (e) { /* stream already open */ }
+    res.end();
+    return;
+  }
+  if (url.pathname === '/api/atp/bulk-update' && req.method === 'POST') {
+    if (!isAdmin) { jsonErr(res, 403, 'Bulk edit is reserved for admins'); return; }
+    if (!atpClient) { jsonErr(res, 503, 'ATP Library index not available.'); return; }
+    readJsonBody(req, async (b) => {
+      try {
+        const field = String((b && b.field) || ''); const value = (b && b.value == null) ? '' : String(b.value);
+        const ids = Array.isArray(b && b.ids) ? b.ids : [];
+        if (!atp.EDITABLE.has(field)) return jsonErr(res, 400, 'That field cannot be bulk-edited');
+        if (!ids.length) return jsonErr(res, 400, 'No brands selected');
+        if (ids.length > 20000) return jsonErr(res, 400, 'Too many selected (max 20,000)');
+        sendJson(res, { ok: true, ...(await atp.bulkUpdate(atpClient, ids, { [field]: value })) });
+      } catch (e) { jsonErr(res, 500, e.message); }
+    });
+    return;
+  }
+  if (url.pathname === '/api/atp/update' && req.method === 'POST') {
+    if (!isAdmin) { jsonErr(res, 403, 'Editing is reserved for admins'); return; }
+    if (!atpClient) { jsonErr(res, 503, 'ATP Library index not available.'); return; }
+    readJsonBody(req, async (b) => {
+      try {
+        const id = String((b && b.id) || ''); const updates = (b && b.updates && typeof b.updates === 'object') ? b.updates : {};
+        if (!id) return jsonErr(res, 400, 'No brand id');
+        const r = await atp.updateOne(atpClient, id, updates);
+        if (r.errors) return jsonErr(res, 500, r.error || 'Update failed');
+        sendJson(res, { ok: true, ...r });
+      } catch (e) { jsonErr(res, 500, e.message); }
+    });
+    return;
+  }
+  if (url.pathname === '/api/atp/delete' && req.method === 'POST') {
+    if (!isAdmin) { jsonErr(res, 403, 'Delete is reserved for admins'); return; }
+    if (!atpClient) { jsonErr(res, 503, 'ATP Library index not available.'); return; }
+    readJsonBody(req, async (b) => {
+      try {
+        const ids = Array.isArray(b && b.ids) ? b.ids : [];
+        if (!ids.length) return jsonErr(res, 400, 'No brands selected');
+        sendJson(res, { ok: true, ...(await atp.bulkDelete(atpClient, ids)) });
+      } catch (e) { jsonErr(res, 500, e.message); }
+    });
+    return;
+  }
+
+  // ---------- Corporate Places (corporate_places) — any signed-in user (read-only) ----------
+  const placeFilters = (q) => ({ q: q.get('q') || '', brand: q.get('brand') || '', type: q.get('type') || '',
+    category: q.get('category') || '', country: q.get('country') || '', state: q.get('state') || '',
+    city: q.get('city') || '', hasPhone: q.get('hasPhone') || '', hasWebsite: q.get('hasWebsite') || '' });
+  if (url.pathname === '/api/corporate-places/search' && req.method === 'GET') {
+    if (!placesClient) { jsonErr(res, 503, 'Corporate Places index not available (OpenSearch off).'); return; }
+    const q = url.searchParams;
+    const from = Math.max(0, Number(q.get('from')) || 0);
+    const size = Math.min(200, Math.max(1, Number(q.get('size_n')) || 50));
+    try { sendJson(res, await corporatePlaces.search(placesClient, placeFilters(q), { from, size, sort: q.get('sort') || 'brand.kw', dir: q.get('dir') || 'asc' })); }
+    catch (e) { jsonErr(res, 500, e.message); }
+    return;
+  }
+  if (url.pathname === '/api/corporate-places/facets' && req.method === 'GET') {
+    if (!placesClient) { jsonErr(res, 503, 'Corporate Places index not available (OpenSearch off).'); return; }
+    try { sendJson(res, await corporatePlaces.facets(placesClient, placeFilters(url.searchParams))); }
+    catch (e) { jsonErr(res, 500, e.message); }
+    return;
+  }
+  if (url.pathname === '/api/corporate-places/export.csv' && req.method === 'GET') {
+    if (!placesClient) { jsonErr(res, 503, 'Corporate Places index not available (OpenSearch off).'); return; }
+    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="corporate-places.csv"' });
+    res.write(corporatePlaces.csvHeader() + '\n');
+    try { await corporatePlaces.each(placesClient, placeFilters(url.searchParams), async (d) => { if (!res.write(corporatePlaces.rowToCsvLine(d) + '\n')) await new Promise((r) => res.once('drain', r)); }, 500000); }
+    catch (e) { /* stream already open */ }
+    res.end();
+    return;
+  }
+
   if (url.pathname === '/api/companies/search' && req.method === 'GET') {
     // any signed-in user may READ the company index (view-only 'user' role included)
     if (!companiesClient) { jsonErr(res, 503, 'Companies index not available (OpenSearch off).'); return; }
@@ -2129,9 +2246,13 @@ pruneOldJobs();
       reader = makeOsReader(process.env.OPENSEARCH_ENDPOINT);
       companiesClient = companies.makeClient(process.env.OPENSEARCH_ENDPOINT);   // Company Crawler index
       sitemapsClient = sitemaps.makeClient(process.env.OPENSEARCH_ENDPOINT);     // Sitemap Library index
+      atpClient = atp.makeClient(process.env.OPENSEARCH_ENDPOINT);               // All The Places Library index
+      placesClient = corporatePlaces.makeClient(process.env.OPENSEARCH_ENDPOINT); // Corporate Places index
       console.log('Search backend: OpenSearch (SEARCH_BACKEND=opensearch).');
       optout.ensure(reader.client).then((c) => c && console.log('Opt-out registry index created.')).catch((e) => console.error('opt-out index ensure failed:', e.message));
       sitemaps.ensureIndex(sitemapsClient).then(() => console.log('Sitemap Library index ready (monitor fields ensured).')).catch((e) => console.error('sitemaps index ensure failed:', e.message));
+      atp.ensureIndex(atpClient).then(() => console.log('ATP Library index ready.')).catch((e) => console.error('atp index ensure failed:', e.message));
+      corporatePlaces.ensureIndex(placesClient).then(() => console.log('Corporate Places index ready.')).catch((e) => console.error('corporate_places index ensure failed:', e.message));
       // Ongoing firmographic enrichment: append company data (industry/size/HQ/founded/LinkedIn/name) to any
       // contact still missing it by joining its domain to the companies index. Runs a bounded sweep shortly
       // after boot and every FIRMO_SWEEP_HOURS (default 6) — after the one-time backfill this just processes
