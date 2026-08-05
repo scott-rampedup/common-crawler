@@ -43,14 +43,18 @@ async function ensureIndex(client) {
   if (!(ex.body === true || ex === true)) await client.indices.create({ index: INDEX, body: MAPPING });
 }
 
-// Classify a sitemap's Type: Sub-Domain (on a non-www subdomain of the company domain) > Child (found
-// under a sitemap index, i.e. has a parent) > Parent (top-level). Stored + admin-editable.
-function deriveType(sitemapUrl, domain, parentUrl) {
-  const dom = String(domain || '').toLowerCase();
-  let host = ''; try { host = new URL(sitemapUrl).hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { /* */ }
+// Classify a sitemap's Type from its URL structure (stored + admin-editable):
+//   Sub-Domain — on a non-www subdomain of the company domain (agents.acme.com/…)
+//   Parent     — the domain's ROOT sitemap (acme.com/sitemap.xml, /sitemap_index.xml, or /)
+//   Child      — any other (nested/specific) sitemap on the domain (/agent-sitemap.xml, /sm/agents.xml)
+const ROOT_SITEMAP_PATHS = new Set(['', '/', '/sitemap.xml', '/sitemap_index.xml', '/sitemap-index.xml', '/sitemapindex.xml']);
+function deriveType(sitemapUrl, domain) {
+  let dom = String(domain || '').toLowerCase(); if (dom.startsWith('www.')) dom = dom.slice(4);
+  let u; try { u = new URL(sitemapUrl); } catch (e) { return 'Parent'; }
+  let host = u.hostname.toLowerCase(); if (host.startsWith('www.')) host = host.slice(4);
   if (dom && host && host !== dom && host.endsWith('.' + dom)) return 'Sub-Domain';
-  if (parentUrl && String(parentUrl).trim()) return 'Child';
-  return 'Parent';
+  let path = u.pathname.toLowerCase(); if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+  return ROOT_SITEMAP_PATHS.has(path) ? 'Parent' : 'Child';
 }
 
 // Build a Library doc from a cc-engine.discoverSitemaps watch, tagged with the source company's metadata.
