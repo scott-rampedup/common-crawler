@@ -51,6 +51,7 @@
     .sl-type { display: inline-block; padding: 1px 8px; border-radius: 6px; font-size: 0.72rem; font-weight: 650; }
     .sl-parent { background: #fef3c7; color: #92400e; }
     .sl-child { background: #e0e7ff; color: #3730a3; }
+    .sl-sub-domain { background: #cffafe; color: #155e75; }
     /* Sitemap URL link: keep long URLs tidy (full URL on hover) */
     a.sl-sm { display: inline-block; max-width: 440px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
   </style>
@@ -82,9 +83,10 @@
           </label>
           <label>Type
             <select id="fType">
-              <option value="">All (Parent + Child)</option>
+              <option value="">All types</option>
               <option value="Parent">Parent (top-level)</option>
               <option value="Child">Child (under an index)</option>
+              <option value="Sub-Domain">Sub-Domain</option>
             </select>
           </label>
           <label>Domain
@@ -167,6 +169,7 @@
         <label class="bulk-field"><span>Field to change</span>
           <select id="slBulkField">
             <option value="kind">Kind (People / Location)</option>
+            <option value="type">Type (Parent / Child / Sub-Domain)</option>
             <option value="industry">Industry</option>
             <option value="keyword">Keyword (detected name)</option>
           </select>
@@ -274,7 +277,7 @@
         const checked = selected.has(id) ? ' checked' : '';
         const pages = '<b>' + Number(d.item_count || 0).toLocaleString() + '</b> <span class="cc-empty">/ ' + Number(d.url_count || 0).toLocaleString() + '</span>';
         const ratio = (d.ratio != null && d.ratio !== '') ? Math.round(d.ratio * 100) + '%' : dash;
-        const type = d.parent_url ? 'Child' : 'Parent';
+        const type = d.type || (d.parent_url ? 'Child' : 'Parent');
         const smText = String(id).replace(/^https?:\/\//i, '');
         return '<tr' + (selected.has(id) ? ' class="selected"' : '') + '>' +
           '<td class="check-col"><input type="checkbox" class="row-check slRow" data-id="' + esc(id) + '"' + checked + ' /></td>' +
@@ -402,7 +405,7 @@
     function slRebuildValue() {
       const f = $('slBulkField').value; const wrap = $('slBulkValueWrap'); wrap.innerHTML = '';
       let el;
-      if (f === 'kind') { el = document.createElement('select'); ['People', 'Location'].forEach((v) => { const o = document.createElement('option'); o.value = v; o.textContent = v; el.appendChild(o); }); }
+      if (f === 'kind' || f === 'type') { el = document.createElement('select'); (f === 'kind' ? ['People', 'Location'] : ['Parent', 'Child', 'Sub-Domain']).forEach((v) => { const o = document.createElement('option'); o.value = v; o.textContent = v; el.appendChild(o); }); }
       else { el = document.createElement('input'); el.type = 'text'; el.placeholder = f === 'industry' ? 'e.g. real estate' : 'e.g. agents, locations'; }
       el.id = 'slBulkValue'; wrap.appendChild(el);
     }

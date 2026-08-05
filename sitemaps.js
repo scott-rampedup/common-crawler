@@ -19,6 +19,7 @@ const MAPPING = {
       domain:       { type: 'keyword' },
       parent_url:   { type: 'keyword' },
       kind:         { type: 'keyword' },                                 // People | Location
+      type:         { type: 'keyword' },                                 // Parent | Child (stored; seeded from parent_url)
       keyword:      { type: 'keyword' },                                 // matched sitemap filename / lexeme
       url_count:    { type: 'integer' },                                 // total <loc> in the child sitemap
       item_count:   { type: 'integer' },                                 // People/Location urls kept
@@ -42,6 +43,16 @@ async function ensureIndex(client) {
   if (!(ex.body === true || ex === true)) await client.indices.create({ index: INDEX, body: MAPPING });
 }
 
+// Classify a sitemap's Type: Sub-Domain (on a non-www subdomain of the company domain) > Child (found
+// under a sitemap index, i.e. has a parent) > Parent (top-level). Stored + admin-editable.
+function deriveType(sitemapUrl, domain, parentUrl) {
+  const dom = String(domain || '').toLowerCase();
+  let host = ''; try { host = new URL(sitemapUrl).hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { /* */ }
+  if (dom && host && host !== dom && host.endsWith('.' + dom)) return 'Sub-Domain';
+  if (parentUrl && String(parentUrl).trim()) return 'Child';
+  return 'Parent';
+}
+
 // Build a Library doc from a cc-engine.discoverSitemaps watch, tagged with the source company's metadata.
 function docFromWatch(w, extra = {}) {
   return {
@@ -49,6 +60,7 @@ function docFromWatch(w, extra = {}) {
     domain: w.domain || '',
     parent_url: w.parentUrl || '',
     kind: w.kind || '',
+    type: deriveType(w.sitemapUrl, w.domain, w.parentUrl),
     keyword: w.keyword || '',
     url_count: w.urlCount || 0,
     item_count: w.itemCount || 0,
@@ -71,7 +83,7 @@ async function bulkUpsert(client, docs, nowIso) {
     const id = String(d.sitemap_url || '');
     if (!id || Buffer.byteLength(id) > 512) continue;                    // OpenSearch _id hard cap
     const mutable = {
-      domain: d.domain || '', parent_url: d.parent_url || '', kind: d.kind || '', keyword: d.keyword || '',
+      domain: d.domain || '', parent_url: d.parent_url || '', kind: d.kind || '', type: d.type || deriveType(d.sitemap_url, d.domain, d.parent_url), keyword: d.keyword || '',
       url_count: d.url_count || 0, item_count: d.item_count || 0, ratio: Number(d.ratio || 0), by_name: !!d.by_name,
       industry: d.industry || '', company_id: d.company_id || '', lastmod: d.lastmod || '',
       status: d.status || 'active', last_seen: now,
@@ -123,10 +135,8 @@ const SORT_COLS = new Set(['item_count', 'url_count', 'ratio', 'domain', 'kind',
 function buildFilter(f = {}) {
   const filter = [], must = [];
   if (f.kind) filter.push({ term: { kind: f.kind } });
-  // Type = Parent (top-level sitemap, no parent index) vs Child (found under a sitemap index). Derived
-  // from parent_url (stored '' for top-level, a URL for children).
-  if (f.type === 'Parent') filter.push({ term: { parent_url: '' } });
-  else if (f.type === 'Child') filter.push({ bool: { must_not: [{ term: { parent_url: '' } }] } });
+  // Type = Parent (top-level sitemap) vs Child (found under a sitemap index) — stored field, editable.
+  if (f.type === 'Parent' || f.type === 'Child') filter.push({ term: { type: f.type } });
   if (f.industry) {
     const arr = (Array.isArray(f.industry) ? f.industry : String(f.industry).split(',')).map((s) => s.trim()).filter(Boolean);
     if (arr.length === 1) filter.push({ term: { industry: arr[0] } });
@@ -157,7 +167,7 @@ async function facets(client, f = {}) {
   const r = await client.search({ index: INDEX, body: { size: 0, track_total_hits: true, query: buildFilter(f), aggs: {
     kind: { terms: { field: 'kind', size: 5 } },
     industry: { terms: { field: 'industry', size: 40 } },
-    type: { filters: { filters: { Parent: { term: { parent_url: '' } }, Child: { bool: { must_not: [{ term: { parent_url: '' } }] } } } } },
+    type: { terms: { field: 'type', size: 3 } },
     items: { sum: { field: 'item_count' } },
   } } });
   const b = r.body || r; const a = b.aggregations;
@@ -166,12 +176,12 @@ async function facets(client, f = {}) {
     harvestable: Math.round(a.items.value || 0),
     kind: (a.kind.buckets || []).map((x) => ({ key: x.key, count: x.doc_count })),
     industry: (a.industry.buckets || []).map((x) => ({ key: x.key, count: x.doc_count })),
-    type: Object.entries((a.type && a.type.buckets) || {}).map(([k, v]) => ({ key: k, count: v.doc_count })),
+    type: ((a.type && a.type.buckets) || []).map((x) => ({ key: x.key, count: x.doc_count })),
   };
 }
 
 // Fields an admin may mass-edit in the Library UI.
-const EDITABLE = new Set(['kind', 'industry', 'keyword', 'status']);
+const EDITABLE = new Set(['kind', 'type', 'industry', 'keyword', 'status']);
 
 // Partial bulk update by _id (sitemap_url). Validates fields against EDITABLE + kind values. Returns
 // { updated, errors, total }.
@@ -179,6 +189,7 @@ async function bulkUpdate(client, ids, updates) {
   const doc = {};
   for (const k in (updates || {})) { if (EDITABLE.has(k)) doc[k] = String(updates[k] == null ? '' : updates[k]); }
   if (doc.kind && !['People', 'Location'].includes(doc.kind)) delete doc.kind;
+  if (doc.type && !['Parent', 'Child', 'Sub-Domain'].includes(doc.type)) delete doc.type;
   const list = [...new Set((ids || []).map((x) => String(x || '').trim()).filter(Boolean))];
   if (!Object.keys(doc).length || !list.length) return { updated: 0, errors: 0, total: list.length };
   let updated = 0, errors = 0;
@@ -207,4 +218,4 @@ async function bulkDelete(client, ids) {
   return { deleted, errors };
 }
 
-module.exports = { INDEX, MAPPING, makeClient, ensureIndex, docFromWatch, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, bulkDelete };
+module.exports = { INDEX, MAPPING, makeClient, ensureIndex, deriveType, docFromWatch, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, bulkDelete };

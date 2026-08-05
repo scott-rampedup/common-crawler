@@ -1495,6 +1495,7 @@ const server = http.createServer(async (req, res) => {
         const ids = Array.isArray(b && b.ids) ? b.ids : [];
         if (!sitemaps.EDITABLE.has(field)) return jsonErr(res, 400, 'That field cannot be bulk-edited');
         if (field === 'kind' && !['People', 'Location'].includes(value)) return jsonErr(res, 400, 'Kind must be People or Location');
+        if (field === 'type' && !['Parent', 'Child', 'Sub-Domain'].includes(value)) return jsonErr(res, 400, 'Type must be Parent, Child, or Sub-Domain');
         if (!ids.length) return jsonErr(res, 400, 'No sitemaps selected');
         if (ids.length > 20000) return jsonErr(res, 400, 'Too many selected (max 20,000)');
         sendJson(res, { ok: true, ...(await sitemaps.bulkUpdate(sitemapsClient, ids, { [field]: value })) });
