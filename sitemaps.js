@@ -32,15 +32,31 @@ const MAPPING = {
       status:       { type: 'keyword' },                                 // active | ...
       discovered_at:{ type: 'date' },
       last_seen:    { type: 'date' },
+      monitored:    { type: 'boolean' },                                 // opt-in: re-check + gap-fill this sitemap
+      last_checked: { type: 'date' },                                    // last monitor pass over this sitemap
+      last_new:     { type: 'integer' },                                 // URLs handed to extraction last pass
+      total_new:    { type: 'integer' },                                 // cumulative extracted via monitoring
+      monitor_note: { type: 'keyword' },                                 // last monitor status/error
     },
   },
 };
 
 const makeClient = os.makeClient;
 
+// Fields added after the index was first created — applied via putMapping on an existing index (additive,
+// non-breaking). Keeps a live Library current with new columns (the monitor fields) without a reindex.
+const ADDED_FIELDS = {
+  type:         { type: 'keyword' },
+  monitored:    { type: 'boolean' },
+  last_checked: { type: 'date' },
+  last_new:     { type: 'integer' },
+  total_new:    { type: 'integer' },
+  monitor_note: { type: 'keyword' },
+};
 async function ensureIndex(client) {
   const ex = await client.indices.exists({ index: INDEX });
-  if (!(ex.body === true || ex === true)) await client.indices.create({ index: INDEX, body: MAPPING });
+  if (!(ex.body === true || ex === true)) { await client.indices.create({ index: INDEX, body: MAPPING }); return; }
+  try { await client.indices.putMapping({ index: INDEX, body: { properties: ADDED_FIELDS } }); } catch (e) { /* additive-only; ignore if already present */ }
 }
 
 // Classify a sitemap's Type from its URL structure (stored + admin-editable):
@@ -104,6 +120,23 @@ async function bulkUpsert(client, docs, nowIso) {
   return { upserted, errors };
 }
 
+// The monitored sitemaps of a kind, LEAST-recently-checked first (never-checked first), for a monitor pass.
+async function monitoredBatch(client, size = 2000, kind = 'People') {
+  const filter = [{ term: { monitored: true } }];
+  if (kind) filter.push({ term: { kind } });
+  const r = await client.search({ index: INDEX, body: {
+    size, query: { bool: { filter } },
+    sort: [{ last_checked: { order: 'asc', missing: '_first' } }, { sitemap_url: 'asc' }],
+  } });
+  return ((r.body || r).hits.hits || []).map((h) => h._source);
+}
+
+// Update a sitemap's monitor state after a pass (partial doc).
+async function setMonitorState(client, sitemapUrl, patch) {
+  if (!sitemapUrl) return;
+  try { await client.update({ index: INDEX, id: sitemapUrl, body: { doc: patch } }); } catch (e) { /* best-effort */ }
+}
+
 // Which of these domains already have at least one Library entry (for the driver's resume skip).
 async function existingDomains(client, domains) {
   const list = [...new Set((domains || []).map((d) => String(d || '').trim().toLowerCase()).filter(Boolean))];
@@ -141,6 +174,7 @@ function buildFilter(f = {}) {
   if (f.kind) filter.push({ term: { kind: f.kind } });
   // Type (stored, editable): Parent (top-level) / Child (under an index) / Sub-Domain.
   if (['Parent', 'Child', 'Sub-Domain'].includes(f.type)) filter.push({ term: { type: f.type } });
+  if (f.monitored === 'yes' || f.monitored === true) filter.push({ term: { monitored: true } });
   if (f.industry) {
     const arr = (Array.isArray(f.industry) ? f.industry : String(f.industry).split(',')).map((s) => s.trim()).filter(Boolean);
     if (arr.length === 1) filter.push({ term: { industry: arr[0] } });
@@ -185,7 +219,7 @@ async function facets(client, f = {}) {
 }
 
 // Fields an admin may mass-edit in the Library UI.
-const EDITABLE = new Set(['kind', 'type', 'industry', 'keyword', 'status']);
+const EDITABLE = new Set(['kind', 'type', 'industry', 'keyword', 'status', 'monitored']);
 
 // Partial bulk update by _id (sitemap_url). Validates fields against EDITABLE + kind values. Returns
 // { updated, errors, total }.
@@ -194,6 +228,7 @@ async function bulkUpdate(client, ids, updates) {
   for (const k in (updates || {})) { if (EDITABLE.has(k)) doc[k] = String(updates[k] == null ? '' : updates[k]); }
   if (doc.kind && !['People', 'Location'].includes(doc.kind)) delete doc.kind;
   if (doc.type && !['Parent', 'Child', 'Sub-Domain'].includes(doc.type)) delete doc.type;
+  if ('monitored' in doc) doc.monitored = /^(1|true|on|yes)$/i.test(doc.monitored);   // boolean field
   const list = [...new Set((ids || []).map((x) => String(x || '').trim()).filter(Boolean))];
   if (!Object.keys(doc).length || !list.length) return { updated: 0, errors: 0, total: list.length };
   let updated = 0, errors = 0;
@@ -248,4 +283,4 @@ async function each(client, f, onRow, cap = 200000) {
   return n;
 }
 
-module.exports = { INDEX, MAPPING, makeClient, ensureIndex, deriveType, docFromWatch, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, bulkDelete, csvHeader, rowToCsvLine, each };
+module.exports = { INDEX, MAPPING, makeClient, ensureIndex, deriveType, docFromWatch, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, bulkDelete, csvHeader, rowToCsvLine, each, monitoredBatch, setMonitorState };

@@ -58,6 +58,12 @@
     td.sl-have.sl-full b { color: #15803d; }
     /* Sitemap URL link: keep long URLs tidy (full URL on hover) */
     a.sl-sm { display: inline-block; max-width: 440px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+    /* Monitor column */
+    .sl-mon { font-size: 0.9rem; }
+    .sl-mon-d { color: #6b7280; font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+    .sl-mon-n { color: #15803d; font-weight: 650; font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+    .sl-checkline { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; color: #374151; cursor: pointer; }
+    .sl-checkline input { width: 15px; height: 15px; accent-color: #2563eb; }
   </style>
 </head>
 <body class="search-page">
@@ -116,6 +122,7 @@
               <option value="no">Ratio-only</option>
             </select>
           </label>
+          <label class="sl-checkline" title="Only sitemaps opted in to new-hire monitoring"><input id="fMonitored" type="checkbox" /> 🔔 Monitored only</label>
         </div>
 
         <div class="search-actions">
@@ -130,6 +137,8 @@
         <div class="results-toolbar">
           <p id="resultsSummary">Loading…</p>
           <div class="toolbar-actions">
+            <span id="slMonStatus" class="selected-info" title="Sitemaps opted in to new-hire monitoring"></span>
+            <button id="slRunMonitor" class="ghost" type="button" title="Run one gap-fill pass now over monitored People sitemaps">🔔 Run monitor</button>
             <span id="slSelInfo" class="selected-info"></span>
             <button id="slBulkEdit" class="ghost" type="button" style="display:none">✎ Bulk edit field…</button>
             <button id="slDelete" class="danger" type="button" style="display:none">🗑 Delete</button>
@@ -175,6 +184,7 @@
           <select id="slBulkField">
             <option value="kind">Kind (People / Location)</option>
             <option value="type">Type (Parent / Child / Sub-Domain)</option>
+            <option value="monitored">Monitor for new hires (On / Off)</option>
             <option value="industry">Industry</option>
             <option value="keyword">Keyword (detected name)</option>
           </select>
@@ -215,6 +225,7 @@
       { key: 'ratio',      label: 'Ratio',        sort: 'ratio' },
       { key: 'industry',   label: 'Industry' },
       { key: 'lastmod',    label: 'Last modified' },
+      { key: 'monitor',    label: 'Monitor' },
     ];
 
     function filters() {
@@ -223,6 +234,7 @@
         domain: $('fDomain').value.trim(), keyword: $('fKeyword').value.trim(),
         industry: [...sel.industry].join(','),
         minCount: $('fMinCount').value.trim(), byName: $('fByName').value,
+        monitored: $('fMonitored').checked ? 'yes' : '',
       };
     }
     function qs(extra) {
@@ -305,7 +317,7 @@
       const dash = '<span class="cc-empty">—</span>';
       $('slPager').style.display = total > PAGE ? 'flex' : 'none';
       if (!rows.length) {
-        $('slBody').innerHTML = '<tr><td colspan="10" style="padding:34px 16px;text-align:center;color:#9ca3af">' +
+        $('slBody').innerHTML = '<tr><td colspan="' + (COLS.length + 1) + '" style="padding:34px 16px;text-align:center;color:#9ca3af">' +
           (hasSearched ? 'No sitemaps match these filters. Try removing a filter.' : 'Loading…') + '</td></tr>';
         rowsById = {}; updateSel(); return;
       }
@@ -324,6 +336,11 @@
         const domCell = d.domain
           ? '<a class="domain-link" href="' + domHref + '" title="Open ' + (isLoc ? 'Company' : 'Contact') + ' Crawler for ' + esc(d.domain) + '">' + esc(d.domain) + '</a>'
           : dash;
+        const monCell = d.monitored
+          ? '<span class="sl-mon" title="Monitored for new hires">🔔</span>' +
+            (d.last_checked ? ' <span class="sl-mon-d" title="Last checked">' + esc(String(d.last_checked).slice(0, 10)) + '</span>' : ' <span class="cc-empty">unchecked</span>') +
+            (Number(d.total_new) ? ' <span class="sl-mon-n" title="' + Number(d.total_new).toLocaleString() + ' new URLs found by the monitor so far' + (Number(d.last_new) ? ' (' + Number(d.last_new).toLocaleString() + ' last pass)' : '') + '">+' + Number(d.total_new).toLocaleString() + '</span>' : '')
+          : dash;
         return '<tr' + (selected.has(id) ? ' class="selected"' : '') + '>' +
           '<td class="check-col"><input type="checkbox" class="row-check slRow" data-id="' + esc(id) + '"' + checked + ' /></td>' +
           '<td>' + domCell + '</td>' +
@@ -335,6 +352,7 @@
           '<td>' + ratio + '</td>' +
           '<td>' + (d.industry ? esc(tc(d.industry)) : dash) + '</td>' +
           '<td>' + (d.lastmod ? esc(String(d.lastmod).slice(0, 10)) : dash) + '</td>' +
+          '<td>' + monCell + '</td>' +
         '</tr>';
       }).join('');
       document.querySelectorAll('.slRow').forEach((cb) => cb.addEventListener('change', () => {
@@ -393,6 +411,7 @@
       if ($('fKeyword').value.trim()) add('name', $('fKeyword').value.trim(), () => { $('fKeyword').value = ''; });
       if ($('fMinCount').value.trim()) add('min pages', $('fMinCount').value.trim(), () => { $('fMinCount').value = ''; });
       if ($('fByName').value) add('match', $('fByName').value === 'yes' ? 'name-matched' : 'ratio-only', () => { $('fByName').value = ''; });
+      if ($('fMonitored').checked) add('monitor', 'monitored only', () => { $('fMonitored').checked = false; });
       for (const ind of sel.industry) add('industry', ind, () => sel.industry.delete(ind));
       const host = $('slChips');
       if (!chips.length) { host.hidden = true; host.innerHTML = ''; return; }
@@ -424,7 +443,7 @@
 
     function clearAll() {
       ['fq', 'fDomain', 'fKeyword', 'fMinCount'].forEach((i) => { $(i).value = ''; });
-      $('fKind').value = ''; $('fType').value = ''; $('fByName').value = ''; sel.industry.clear();
+      $('fKind').value = ''; $('fType').value = ''; $('fByName').value = ''; $('fMonitored').checked = false; sel.industry.clear();
       search(0);
     }
 
@@ -435,6 +454,7 @@
     $('fKind').addEventListener('change', () => search(0));
     $('fType').addEventListener('change', () => search(0));
     $('fByName').addEventListener('change', () => search(0));
+    $('fMonitored').addEventListener('change', () => search(0));
     $('addIndustry').addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return; e.preventDefault();
       const v = e.target.value.trim().toLowerCase(); if (v) { sel.industry.add(v); e.target.value = ''; search(0); }
@@ -452,8 +472,13 @@
     function slRebuildValue() {
       const f = $('slBulkField').value; const wrap = $('slBulkValueWrap'); wrap.innerHTML = '';
       let el;
-      if (f === 'kind' || f === 'type') { el = document.createElement('select'); (f === 'kind' ? ['People', 'Location'] : ['Parent', 'Child', 'Sub-Domain']).forEach((v) => { const o = document.createElement('option'); o.value = v; o.textContent = v; el.appendChild(o); }); }
-      else { el = document.createElement('input'); el.type = 'text'; el.placeholder = f === 'industry' ? 'e.g. real estate' : 'e.g. agents, locations'; }
+      if (f === 'kind' || f === 'type' || f === 'monitored') {
+        el = document.createElement('select');
+        const opts = f === 'kind' ? [['People', 'People'], ['Location', 'Location']]
+          : f === 'type' ? [['Parent', 'Parent'], ['Child', 'Child'], ['Sub-Domain', 'Sub-Domain']]
+          : [['yes', 'On — monitor for new hires'], ['no', 'Off']];
+        opts.forEach(([v, label]) => { const o = document.createElement('option'); o.value = v; o.textContent = label; el.appendChild(o); });
+      } else { el = document.createElement('input'); el.type = 'text'; el.placeholder = f === 'industry' ? 'e.g. real estate' : 'e.g. agents, locations'; }
       el.id = 'slBulkValue'; wrap.appendChild(el);
     }
     function closeBulk() { $('slBulkModal').style.display = 'none'; }
@@ -496,10 +521,41 @@
       } catch (e) { alert('Delete failed: ' + e.message); }
     });
 
+    // ---- monitor: status pill + run-now (admin) ----
+    async function loadMonitorStatus() {
+      try {
+        const r = await fetch('/api/sitemaps/monitor/status'); if (!r.ok) return;
+        const d = await r.json();
+        const bits = [];
+        bits.push('🔔 ' + Number(d.monitored || 0).toLocaleString() + ' monitored');
+        if (d.totalNew) bits.push('+' + Number(d.totalNew).toLocaleString() + ' new found');
+        if (d.lastChecked) bits.push('last ' + String(d.lastChecked).slice(0, 10));
+        if (d.running) bits.push('running…');
+        $('slMonStatus').textContent = bits.join(' · ');
+      } catch (e) { /* non-fatal */ }
+    }
+    $('slRunMonitor').addEventListener('click', async () => {
+      const btn = $('slRunMonitor'); btn.disabled = true; const label = btn.textContent; btn.textContent = '🔔 Running…';
+      try {
+        const r = await fetch('/api/sitemaps/monitor/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+        const d = await r.json(); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        if (d.skipped) alert('A monitor pass is already running — try again shortly.');
+        else alert('Monitor pass complete.\n\n' +
+          'Sitemaps scanned: ' + Number(d.scanned || 0).toLocaleString() + '\n' +
+          'With a gap: ' + Number(d.withGap || 0).toLocaleString() + '\n' +
+          'New page URLs sent to extraction: ' + Number(d.extracted || 0).toLocaleString() + '\n' +
+          'Errors: ' + Number(d.errors || 0).toLocaleString() +
+          (d.extracted ? '\n\nNew contacts land under Source = "Sitemap Monitor" as extraction finishes.' : ''));
+        loadMonitorStatus(); search(from);
+      } catch (e) { alert('Run monitor failed: ' + e.message); }
+      btn.disabled = false; btn.textContent = label;
+    });
+
     // ---- initial load: index-wide total for the hint, then show everything (pages desc) ----
     (async function init() {
       try { const r = await fetch('/api/sitemaps/facets'); if (r.ok) { const d = await r.json(); $('slTotalIdx').textContent = (d.total || 0).toLocaleString(); } }
       catch (e) { $('slTotalIdx').textContent = '—'; }
+      loadMonitorStatus();
       search(0);
     })();
   </script>

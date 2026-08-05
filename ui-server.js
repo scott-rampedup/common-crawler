@@ -170,6 +170,26 @@ const monitor = makeMonitor({
   extract: (urls, label) => { startJob(urls, '', false, 'webpage', 'Monitor', label || 'Monitor: new bios', null, 'Sitemap Monitor'); },
   log: (m) => console.log(`[monitor] ${m}`),
 });
+
+// ---- Sitemap LIBRARY monitor (gap-fill over opt-in Library sitemaps -> contacts) ----
+let LOCATION_SITEMAP_NAMES = new Set();
+try {
+  const lcsv = fs.readFileSync(path.join(__dirname, 'Sitemap extensions - locations.csv'), 'utf8');
+  LOCATION_SITEMAP_NAMES = new Set(lcsv.split(/\r?\n/).map((s) => s.trim().toLowerCase()).filter((l, i) => l && !(i === 0 && l === 'name')));
+} catch (e) { /* optional */ }
+const { makeLibMonitor } = require('./sitemap-lib-monitor');
+let libMonitor = null;
+function getLibMonitor() {   // lazy: sitemapsClient + reader are set in startup()
+  if (!libMonitor && sitemapsClient && reader && reader.client) {
+    libMonitor = makeLibMonitor({
+      sitemaps, sitemapsClient, contactsClient: reader.client, contactsIndex: openSearch.INDEX, ccEngine,
+      extract: (urls, label) => startJob(urls, '', false, 'webpage', 'Monitor', label || 'Sitemap Monitor', null, 'Sitemap Monitor'),
+      directoryRules: {}, genderMap: GENDER_MAP, bioSitemapNames: BIO_SITEMAP_NAMES, locationSitemapNames: LOCATION_SITEMAP_NAMES,
+      log: (m) => console.log('[sitemap-lib-monitor] ' + m),
+    });
+  }
+  return libMonitor;
+}
 let monitorRunning = false;
 // Single guard shared by the scheduled tick AND the manual /api/monitor/run endpoint, so two passes
 // never overlap.
@@ -1470,7 +1490,7 @@ const server = http.createServer(async (req, res) => {
     const q = url.searchParams;
     const from = Math.max(0, Number(q.get('from')) || 0);
     const size = Math.min(200, Math.max(1, Number(q.get('size_n')) || 50));
-    const f = { kind: q.get('kind') || '', type: q.get('type') || '', industry: q.get('industry') || '', domain: q.get('domain') || '', keyword: q.get('keyword') || '', byName: q.get('byName') || '', minCount: q.get('minCount') || '', q: q.get('q') || '' };
+    const f = { kind: q.get('kind') || '', type: q.get('type') || '', industry: q.get('industry') || '', domain: q.get('domain') || '', keyword: q.get('keyword') || '', byName: q.get('byName') || '', minCount: q.get('minCount') || '', monitored: q.get('monitored') || '', q: q.get('q') || '' };
     try { sendJson(res, await sitemaps.search(sitemapsClient, f, { from, size, sort: q.get('sort') || 'item_count', dir: q.get('dir') || 'desc' })); }
     catch (e) { jsonErr(res, 500, e.message); }
     return;
@@ -1479,9 +1499,32 @@ const server = http.createServer(async (req, res) => {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     if (!sitemapsClient) { jsonErr(res, 503, 'Sitemap Library index not available (OpenSearch off).'); return; }
     const q = url.searchParams;
-    const f = { kind: q.get('kind') || '', type: q.get('type') || '', industry: q.get('industry') || '', domain: q.get('domain') || '', keyword: q.get('keyword') || '', byName: q.get('byName') || '', minCount: q.get('minCount') || '', q: q.get('q') || '' };
+    const f = { kind: q.get('kind') || '', type: q.get('type') || '', industry: q.get('industry') || '', domain: q.get('domain') || '', keyword: q.get('keyword') || '', byName: q.get('byName') || '', minCount: q.get('minCount') || '', monitored: q.get('monitored') || '', q: q.get('q') || '' };
     try { sendJson(res, await sitemaps.facets(sitemapsClient, f)); }
     catch (e) { jsonErr(res, 500, e.message); }
+    return;
+  }
+  // Run the Library monitor now (admin): one bounded gap-fill pass over monitored People sitemaps.
+  if (url.pathname === '/api/sitemaps/monitor/run' && req.method === 'POST') {
+    if (!isAdmin) { jsonErr(res, 403, 'Monitor run is reserved for admins'); return; }
+    const lm = getLibMonitor();
+    if (!lm) { jsonErr(res, 503, 'Sitemap Library monitor not available (OpenSearch off).'); return; }
+    readJsonBody(req, async (b) => {
+      try { const cap = Math.min(50000, Math.max(1, Number(b && b.cap) || 5000)); sendJson(res, await lm.runPass({ cap })); }
+      catch (e) { jsonErr(res, 500, e.message); }
+    });
+    return;
+  }
+  // Monitor status (analyst): monitored count + cumulative new-found + last check time.
+  if (url.pathname === '/api/sitemaps/monitor/status' && req.method === 'GET') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!sitemapsClient) { jsonErr(res, 503, 'Sitemap Library index not available.'); return; }
+    try {
+      const r = await sitemapsClient.search({ index: sitemaps.INDEX, body: { size: 0, track_total_hits: true, query: { term: { monitored: true } }, aggs: { newsum: { sum: { field: 'total_new' } }, checked: { max: { field: 'last_checked' } } } } });
+      const bd = r.body || r;
+      const lm = getLibMonitor();
+      sendJson(res, { monitored: bd.hits.total.value, totalNew: Math.round((bd.aggregations.newsum.value) || 0), lastChecked: bd.aggregations.checked.value_as_string || null, running: lm ? lm.isRunning() : false });
+    } catch (e) { jsonErr(res, 500, e.message); }
     return;
   }
   // Download the Library (or the current filtered subset) as CSV (analyst+).
@@ -1489,7 +1532,7 @@ const server = http.createServer(async (req, res) => {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     if (!sitemapsClient) { jsonErr(res, 503, 'Sitemap Library index not available (OpenSearch off).'); return; }
     const q = url.searchParams;
-    const f = { kind: q.get('kind') || '', type: q.get('type') || '', industry: q.get('industry') || '', domain: q.get('domain') || '', keyword: q.get('keyword') || '', byName: q.get('byName') || '', minCount: q.get('minCount') || '', q: q.get('q') || '' };
+    const f = { kind: q.get('kind') || '', type: q.get('type') || '', industry: q.get('industry') || '', domain: q.get('domain') || '', keyword: q.get('keyword') || '', byName: q.get('byName') || '', minCount: q.get('minCount') || '', monitored: q.get('monitored') || '', q: q.get('q') || '' };
     res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="sitemap-library.csv"' });
     res.write(sitemaps.csvHeader() + '\n');
     try { await sitemaps.each(sitemapsClient, f, async (d) => { if (!res.write(sitemaps.rowToCsvLine(d) + '\n')) await new Promise((r) => res.once('drain', r)); }, 200000); }
@@ -2050,6 +2093,7 @@ pruneOldJobs();
       sitemapsClient = sitemaps.makeClient(process.env.OPENSEARCH_ENDPOINT);     // Sitemap Library index
       console.log('Search backend: OpenSearch (SEARCH_BACKEND=opensearch).');
       optout.ensure(reader.client).then((c) => c && console.log('Opt-out registry index created.')).catch((e) => console.error('opt-out index ensure failed:', e.message));
+      sitemaps.ensureIndex(sitemapsClient).then(() => console.log('Sitemap Library index ready (monitor fields ensured).')).catch((e) => console.error('sitemaps index ensure failed:', e.message));
       // Ongoing firmographic enrichment: append company data (industry/size/HQ/founded/LinkedIn/name) to any
       // contact still missing it by joining its domain to the companies index. Runs a bounded sweep shortly
       // after boot and every FIRMO_SWEEP_HOURS (default 6) — after the one-time backfill this just processes
@@ -2067,6 +2111,15 @@ pruneOldJobs();
         setTimeout(firmoSweep, 10 * 60 * 1000);                        // ~10 min after boot
         setInterval(firmoSweep, FS_HOURS * 3600 * 1000);
         console.log(`Firmographic enrichment sweep: ON, every ${FS_HOURS}h (cap ${FS_CAP.toLocaleString()}/run).`);
+      }
+      // Sitemap LIBRARY monitor: periodic gap-fill pass over opt-in (monitored) Library sitemaps.
+      if (process.env.SITEMAP_LIB_MONITOR !== '0') {
+        const SM_HOURS = Math.max(1, Number(process.env.SITEMAP_LIB_MONITOR_HOURS) || 24);
+        const SM_CAP = Number(process.env.SITEMAP_LIB_MONITOR_MAX) || 5000;
+        const smPass = async () => { const lm = getLibMonitor(); if (!lm) return; try { await lm.runPass({ cap: SM_CAP }); } catch (e) { console.error('[sitemap-lib-monitor] pass error:', e.message); } };
+        setTimeout(smPass, 12 * 60 * 1000);                            // ~12 min after boot
+        setInterval(smPass, SM_HOURS * 3600 * 1000);
+        console.log(`Sitemap Library monitor: ON, every ${SM_HOURS}h (cap ${SM_CAP.toLocaleString()}/pass).`);
       }
       // Keep OpenSearch current with the processing DB: stream fleet-ingested/edited contacts across.
       // Only meaningful when the source of truth is Postgres (DATABASE_URL); SQLite fallback has no fleet.
