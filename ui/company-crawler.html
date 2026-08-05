@@ -737,6 +737,16 @@
 
     // seed the size facet (counts fill in after first search)
     renderFacet('size', $('facetSize'), [], SIZE_BANDS);
+
+    // Deep-link from other tabs (e.g. Sitemap Library Location domains): prefill filters + auto-search.
+    (function applyUrlParams() {
+      const p = new URLSearchParams(location.search);
+      let any = false;
+      const set = (key, id) => { const v = p.get(key); if (v != null && v !== '') { $(id).value = v; any = true; } };
+      set('domain', 'fDomain'); set('name', 'fName'); set('region', 'fRegion'); set('locality', 'fLocality');
+      if (p.get('companyType')) { $('fCompanyType').value = p.get('companyType'); any = true; }
+      if (any) search(0);
+    })();
   </script>
 </body>
 </html>

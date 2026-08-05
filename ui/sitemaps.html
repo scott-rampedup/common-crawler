@@ -52,6 +52,10 @@
     .sl-parent { background: #fef3c7; color: #92400e; }
     .sl-child { background: #e0e7ff; color: #3730a3; }
     .sl-sub-domain { background: #cffafe; color: #155e75; }
+    /* Have column: red when we hold far fewer than the sitemap lists, green when we have them all */
+    td.sl-have b { font-variant-numeric: tabular-nums; }
+    td.sl-have.sl-gap b { color: #b91c1c; }
+    td.sl-have.sl-full b { color: #15803d; }
     /* Sitemap URL link: keep long URLs tidy (full URL on hover) */
     a.sl-sm { display: inline-block; max-width: 440px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
   </style>
@@ -207,6 +211,7 @@
       { key: 'type',       label: 'Type' },
       { key: 'sitemap',    label: 'Sitemap' },
       { key: 'item_count', label: 'Pages',        sort: 'item_count' },
+      { key: 'have',       label: 'Have' },
       { key: 'ratio',      label: 'Ratio',        sort: 'ratio' },
       { key: 'industry',   label: 'Industry' },
       { key: 'lastmod',    label: 'Last modified' },
@@ -267,11 +272,40 @@
       return '<span class="sl-pill ' + cls + '">' + esc(k || '?') + '</span>' + (byName ? '<span class="sl-tag">name</span>' : '');
     }
 
+    // Fill the "Have" column with how many contacts (People) / Location companies we actually hold for
+    // each row's domain, and colour the gap vs the sitemap's Pages count.
+    async function fetchHaveCounts(rows) {
+      const people = [...new Set(rows.filter((r) => r.kind === 'People').map((r) => r.domain).filter(Boolean))];
+      const location = [...new Set(rows.filter((r) => r.kind === 'Location').map((r) => r.domain).filter(Boolean))];
+      if (!people.length && !location.length) return;
+      let d = { people: {}, location: {} };
+      try {
+        const p = new URLSearchParams();
+        if (people.length) p.set('people', people.join(','));
+        if (location.length) p.set('location', location.join(','));
+        const r = await fetch('/api/sitemaps/have-counts?' + p.toString());
+        if (r.ok) d = await r.json();
+      } catch (e) { return; }
+      document.querySelectorAll('td.sl-have').forEach((td) => {
+        const dom = td.getAttribute('data-dom'), kind = td.getAttribute('data-kind'), pages = Number(td.getAttribute('data-pages')) || 0;
+        const map = kind === 'Location' ? (d.location || {}) : (d.people || {});
+        const have = map[dom] != null ? map[dom] : 0;
+        td.innerHTML = '<b>' + have.toLocaleString() + '</b>';
+        td.classList.remove('sl-gap', 'sl-full');
+        if (pages > 0) {
+          const gap = pages - have;
+          if (have >= pages) { td.classList.add('sl-full'); td.title = 'Have all ' + pages.toLocaleString(); }
+          else if (gap > Math.max(5, pages * 0.1)) { td.classList.add('sl-gap'); td.title = 'Missing ~' + gap.toLocaleString() + ' of ' + pages.toLocaleString() + ' in the sitemap'; }
+          else td.title = have.toLocaleString() + ' of ' + pages.toLocaleString();
+        }
+      });
+    }
+
     function render(rows) {
       const dash = '<span class="cc-empty">—</span>';
       $('slPager').style.display = total > PAGE ? 'flex' : 'none';
       if (!rows.length) {
-        $('slBody').innerHTML = '<tr><td colspan="9" style="padding:34px 16px;text-align:center;color:#9ca3af">' +
+        $('slBody').innerHTML = '<tr><td colspan="10" style="padding:34px 16px;text-align:center;color:#9ca3af">' +
           (hasSearched ? 'No sitemaps match these filters. Try removing a filter.' : 'Loading…') + '</td></tr>';
         rowsById = {}; updateSel(); return;
       }
@@ -283,13 +317,21 @@
         const ratio = (d.ratio != null && d.ratio !== '') ? Math.round(d.ratio * 100) + '%' : dash;
         const type = d.type || (d.parent_url ? 'Child' : 'Parent');
         const smText = String(id).replace(/^https?:\/\//i, '');
+        const isLoc = d.kind === 'Location';
+        const domHref = isLoc
+          ? '/company-crawler?domain=' + encodeURIComponent(d.domain || '') + '&companyType=Location'
+          : '/search?domain=' + encodeURIComponent(d.domain || '');
+        const domCell = d.domain
+          ? '<a class="domain-link" href="' + domHref + '" title="Open ' + (isLoc ? 'Company' : 'Contact') + ' Crawler for ' + esc(d.domain) + '">' + esc(d.domain) + '</a>'
+          : dash;
         return '<tr' + (selected.has(id) ? ' class="selected"' : '') + '>' +
           '<td class="check-col"><input type="checkbox" class="row-check slRow" data-id="' + esc(id) + '"' + checked + ' /></td>' +
-          '<td>' + (d.domain ? esc(d.domain) : dash) + '</td>' +
+          '<td>' + domCell + '</td>' +
           '<td>' + kindPill(d.kind, d.by_name) + '</td>' +
           '<td><span class="sl-type sl-' + type.toLowerCase() + '">' + type + '</span></td>' +
           '<td><a class="domain-link sl-sm" href="' + esc(abs(id)) + '" target="_blank" rel="noopener" title="' + esc(id) + '">' + esc(smText) + '</a></td>' +
           '<td class="cc-count">' + pages + '</td>' +
+          '<td class="sl-have" data-dom="' + esc(d.domain || '') + '" data-kind="' + esc(d.kind || '') + '" data-pages="' + (Number(d.item_count) || 0) + '"><span class="cc-empty">…</span></td>' +
           '<td>' + ratio + '</td>' +
           '<td>' + (d.industry ? esc(tc(d.industry)) : dash) + '</td>' +
           '<td>' + (d.lastmod ? esc(String(d.lastmod).slice(0, 10)) : dash) + '</td>' +
@@ -302,6 +344,7 @@
         updateSel();
       }));
       rowsById = byId;
+      fetchHaveCounts(rows);
       const shownTo = Math.min(from + PAGE, total);
       const pages = Math.max(1, Math.ceil(total / PAGE)), cur = Math.floor(from / PAGE) + 1;
       $('slPageInfo').textContent = 'Page ' + cur + ' of ' + pages.toLocaleString() + ' · ' + (from + 1).toLocaleString() + '–' + shownTo.toLocaleString() + ' of ' + total.toLocaleString();

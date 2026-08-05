@@ -1497,6 +1497,31 @@ const server = http.createServer(async (req, res) => {
     res.end();
     return;
   }
+  // How many contacts/locations we ACTUALLY have for a set of domains (split by kind) — drives the
+  // Library "Have vs Pages" delta column. People -> count in the contacts index; Location -> count of
+  // company_type=Location rows in the companies index. Both by domain (one agg each).
+  if (url.pathname === '/api/sitemaps/have-counts' && req.method === 'GET') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    const q = url.searchParams;
+    const normDom = (s) => String(s || '').toLowerCase().trim().replace(/^www\./, '');
+    const people = [...new Set((q.get('people') || '').split(',').map(normDom).filter(Boolean))].slice(0, 200);
+    const location = [...new Set((q.get('location') || '').split(',').map(normDom).filter(Boolean))].slice(0, 200);
+    const out = { people: {}, location: {} };
+    try {
+      if (people.length && reader._os && reader.client) {
+        const r = await reader.client.search({ index: openSearch.INDEX, body: { size: 0, query: { terms: { domain: people } }, aggs: { d: { terms: { field: 'domain', size: people.length } } } } });
+        for (const b of (((r.body || r).aggregations.d.buckets) || [])) out.people[b.key] = b.doc_count;
+      }
+    } catch (e) { /* best-effort */ }
+    try {
+      if (location.length && companiesClient) {
+        const r = await companiesClient.search({ index: companies.INDEX, body: { size: 0, query: { bool: { filter: [{ terms: { domain: location } }, { term: { 'company_type.keyword': 'Location' } }] } }, aggs: { d: { terms: { field: 'domain', size: location.length } } } } });
+        for (const b of (((r.body || r).aggregations.d.buckets) || [])) out.location[b.key] = b.doc_count;
+      }
+    } catch (e) { /* best-effort */ }
+    sendJson(res, out);
+    return;
+  }
   // Mass-edit the Library (admin): set one whitelisted field on many selected sitemaps.
   if (url.pathname === '/api/sitemaps/bulk-update' && req.method === 'POST') {
     if (!isAdmin) { jsonErr(res, 403, 'Bulk edit is reserved for admins'); return; }
