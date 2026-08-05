@@ -64,7 +64,16 @@ async function fetchGeojson(url, tries = 3) {
     brands.push({ name: (name || '').trim(), website: (website || '').trim().toLowerCase(), country: (country || '').trim(),
       spider: (spider || '').trim(), type: (type || '').trim(), link: link.trim(), id: atp.idFor({ spider, website, name }) });
   }
-  const work = limit ? brands.slice(0, limit) : brands;
+  let work = limit ? brands.slice(0, limit) : brands;
+  if (skipLoaded) {                                          // resume: skip brands already stamped loaded>0
+    const done = new Set();
+    let resp = await atpClient.search({ index: atp.INDEX, scroll: '2m', size: 2000, _source: false, body: { query: { range: { loaded: { gt: 0 } } } } });
+    let sid = (resp.body || resp)._scroll_id;
+    for (;;) { const hits = (resp.body || resp).hits.hits; if (!hits.length) break; for (const h of hits) done.add(h._id); resp = await atpClient.scroll({ scroll_id: sid, scroll: '2m' }); sid = (resp.body || resp)._scroll_id; }
+    try { await atpClient.clearScroll({ body: { scroll_id: [sid] } }); } catch (e) { /* */ }
+    const before = work.length; work = work.filter((b) => !done.has(b.id));
+    console.error(`--skip-loaded: ${done.size} brand(s) already loaded; ${before - work.length} skipped`);
+  }
   console.error(`${brands.length} brand(s) with a link; processing ${work.length} (concurrency ${concurrency})`);
 
   const totals = { brands: 0, indexed: 0, errors: 0, empty: 0, failed: 0 };
