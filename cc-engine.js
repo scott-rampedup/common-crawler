@@ -1883,7 +1883,7 @@ if(require.main === module){
         isBioOrContactUrl("https://www.century21.com/agent/detail/fl/jacksonville/agents/dragan-spiridonovic/aid-P00200000000033dyujCKdEsXQx08N4pMQLeFT62")
         && !isBioOrContactUrl("https://www.century21.com/agent/detail/fl/jacksonville/agents/aid-P00200000000033dyujCKdEsXQx08N4pMQLeFT62"));
       // team-page terms must work whether in the SUBDOMAIN or the PATH (with a person leaf)
-      const teamTerms = ["insurance-agents","staff","bio","contacts","advisor","advisors","broker","brokers","realtor","realtors"];
+      const teamTerms = ["insurance-agents","staff","bio","contacts","advisor","advisors","broker","brokers","realtor","realtors","financialprofessionals","pathologists"];
       ok("team-page terms classify as bio in both subdomain and path positions",
         teamTerms.every((t) =>
           isBioOrContactUrl(`https://example.com/${t}/john-smith`)
