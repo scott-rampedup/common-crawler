@@ -110,8 +110,10 @@ function buildFilter(f = {}) {
   if (f.country) filter.push({ term: { country: String(f.country).toUpperCase() } });
   if (f.state) { const a = listOf(f.state); a.length === 1 ? filter.push({ term: { state: a[0] } }) : filter.push({ terms: { state: a } }); }
   if (f.city) filter.push({ term: { city: String(f.city) } });
-  if (f.hasPhone === 'yes') filter.push({ exists: { field: 'phone' } });
-  if (f.hasWebsite === 'yes') filter.push({ exists: { field: 'website' } });
+  // Absent values are stored as '' (not omitted), so "has X" = field is present AND not empty.
+  if (f.hasPhone === 'yes') must.push({ bool: { must_not: [{ term: { phone: '' } }] } });
+  if (f.hasWebsite === 'yes') must.push({ bool: { must_not: [{ term: { website: '' } }] } });
+  if (f.hasEmail === 'yes') must.push({ bool: { must_not: [{ term: { email: '' } }] } });
   if (f.q) must.push({ query_string: { query: String(f.q), fields: ['name^2', 'brand^2', 'branch', 'addr_full', 'city', 'street'], default_operator: 'AND' } });
   const bool = {};
   if (filter.length) bool.filter = filter;

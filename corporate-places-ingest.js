@@ -87,14 +87,15 @@ async function fetchGeojson(url, tries = 3) {
         const feats = geo.features || [];
         if (!feats.length) { totals.empty++; await atp.setIngestState(atpClient, b.id, { loaded: 0, last_ingest: new Date().toISOString() }); continue; }
         const meta = { brand: b.name, type: b.type, spider: b.spider, brand_website: b.website, country: b.country };
-        let brandIndexed = 0;
+        let brandIndexed = 0, brandEmails = 0;
         for (let i = 0; i < feats.length; i += 1000) {
           const docs = feats.slice(i, i + 1000).map((f) => cp.docFromFeature(f, meta));
+          brandEmails += docs.filter((d) => d.email && d.email.trim()).length;
           const r = await cp.bulkIndex(client, docs);
           brandIndexed += r.indexed; totals.indexed += r.indexed; totals.errors += r.errors;
         }
         totals.brands++;
-        await atp.setIngestState(atpClient, b.id, { loaded: brandIndexed, last_ingest: new Date().toISOString() });
+        await atp.setIngestState(atpClient, b.id, { loaded: brandIndexed, emails: brandEmails, last_ingest: new Date().toISOString() });
         if (n % 25 === 0 || n === work.length) console.error(`  [${n}/${work.length}] ${b.name}: +${brandIndexed} | total indexed ${totals.indexed.toLocaleString()} | empty ${totals.empty} | failed ${totals.failed}`);
       } catch (e) { totals.failed++; console.error(`  FAIL ${b.name} (${b.link}): ${e.message}`); }
     }

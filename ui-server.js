@@ -1655,7 +1655,7 @@ const server = http.createServer(async (req, res) => {
 
   // ---------- All The Places Library (atp_library) — admin only ----------
   const atpFilters = (q) => ({ q: q.get('q') || '', website: q.get('website') || '', country: q.get('country') || '',
-    type: q.get('type') || '', minCount: q.get('minCount') || '', hasLink: q.get('hasLink') || '' });
+    type: q.get('type') || '', minCount: q.get('minCount') || '', hasLink: q.get('hasLink') || '', hasEmail: q.get('hasEmail') || '' });
   if (url.pathname === '/api/atp/search' && req.method === 'GET') {
     if (!isAdmin) { jsonErr(res, 403, 'Forbidden'); return; }
     if (!atpClient) { jsonErr(res, 503, 'ATP Library index not available (OpenSearch off).'); return; }
@@ -1728,7 +1728,7 @@ const server = http.createServer(async (req, res) => {
   // ---------- Corporate Places (corporate_places) — any signed-in user (read-only) ----------
   const placeFilters = (q) => ({ q: q.get('q') || '', brand: q.get('brand') || '', type: q.get('type') || '',
     category: q.get('category') || '', country: q.get('country') || '', state: q.get('state') || '',
-    city: q.get('city') || '', hasPhone: q.get('hasPhone') || '', hasWebsite: q.get('hasWebsite') || '' });
+    city: q.get('city') || '', hasPhone: q.get('hasPhone') || '', hasWebsite: q.get('hasWebsite') || '', hasEmail: q.get('hasEmail') || '' });
   if (url.pathname === '/api/corporate-places/search' && req.method === 'GET') {
     if (!placesClient) { jsonErr(res, 503, 'Corporate Places index not available (OpenSearch off).'); return; }
     const q = url.searchParams;

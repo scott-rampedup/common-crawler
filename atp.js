@@ -25,6 +25,7 @@ const MAPPING = {
       link:       { type: 'keyword' },                                   // "Most Recent Link" -> geojson
       date:       { type: 'keyword' },                                   // run date if present
       loaded:     { type: 'integer' },                                   // places ingested into corporate_places
+      emails:     { type: 'integer' },                                   // places with a non-empty email (drives "Has email")
       last_ingest:{ type: 'date' },
       source_file:{ type: 'keyword' },
       loaded_at:  { type: 'date' },
@@ -35,7 +36,7 @@ const MAPPING = {
 
 const makeClient = os.makeClient;
 
-const ADDED_FIELDS = { loaded: { type: 'integer' }, last_ingest: { type: 'date' } };
+const ADDED_FIELDS = { loaded: { type: 'integer' }, emails: { type: 'integer' }, last_ingest: { type: 'date' } };
 async function ensureIndex(client) {
   const ex = await client.indices.exists({ index: INDEX });
   if (!(ex.body === true || ex === true)) { await client.indices.create({ index: INDEX, body: MAPPING }); return; }
@@ -87,7 +88,7 @@ async function setIngestState(client, id, patch) {
   try { await client.update({ index: INDEX, id, body: { doc: patch } }); } catch (e) { /* best-effort */ }
 }
 
-const SORT_COLS = new Set(['name.kw', 'count', 'country', 'type', 'spider', 'website', 'loaded', 'loaded_at']);
+const SORT_COLS = new Set(['name.kw', 'count', 'country', 'type', 'spider', 'website', 'loaded', 'emails', 'loaded_at']);
 
 function buildFilter(f = {}) {
   const filter = [], must = [];
@@ -100,6 +101,8 @@ function buildFilter(f = {}) {
   if (f.website) filter.push({ wildcard: { website: `*${String(f.website).toLowerCase()}*` } });
   if (f.hasLink === 'yes') filter.push({ wildcard: { link: 'http*' } });
   if (f.hasLink === 'no') must.push({ bool: { must_not: [{ wildcard: { link: 'http*' } }] } });
+  if (f.hasEmail === 'yes') filter.push({ range: { emails: { gt: 0 } } });
+  if (f.hasEmail === 'no') must.push({ bool: { must_not: [{ range: { emails: { gt: 0 } } }] } });   // 0 or unset
   const mc = Number(f.minCount); if (mc > 0) filter.push({ range: { count: { gte: mc } } });
   if (f.q) must.push({ query_string: { query: String(f.q), fields: ['name', 'website', 'spider', 'type'], default_operator: 'AND' } });
   const bool = {};
@@ -181,7 +184,7 @@ async function bulkDelete(client, ids) {
 
 // ---- CSV export (respects the UI filters) ----
 const EXPORT_COLS = [['name', 'Name'], ['website', 'Website'], ['country', 'Country'], ['spider', 'Spider'],
-  ['source', 'Source'], ['count', 'Count'], ['type', 'Type'], ['link', 'All the places Most Recent Link'], ['loaded', 'Loaded']];
+  ['source', 'Source'], ['count', 'Count'], ['type', 'Type'], ['link', 'All the places Most Recent Link'], ['loaded', 'Loaded'], ['emails', 'Emails']];
 const csvCell = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
 const csvHeader = () => EXPORT_COLS.map((c) => c[1]).join(',');
 const rowToCsvLine = (d) => EXPORT_COLS.map(([k]) => csvCell(d[k])).join(',');

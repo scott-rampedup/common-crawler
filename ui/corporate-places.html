@@ -81,6 +81,7 @@
           </label>
           <label class="checkbox-label inline"><input id="fHasPhone" type="checkbox" /> Has phone</label>
           <label class="checkbox-label inline"><input id="fHasWebsite" type="checkbox" /> Has website</label>
+          <label class="checkbox-label inline"><input id="fHasEmail" type="checkbox" /> Has email</label>
         </div>
         <div class="search-actions">
           <button id="slSearch" class="primary" type="button">Search</button>
@@ -142,7 +143,7 @@
         brand: [...sel.brand].join(','), type: [...sel.type].join(','), category: [...sel.category].join(','),
         country: [...sel.country].join(','), state: [...sel.state].join(','),
         city: $('fCity').value.trim(),
-        hasPhone: $('fHasPhone').checked ? 'yes' : '', hasWebsite: $('fHasWebsite').checked ? 'yes' : '',
+        hasPhone: $('fHasPhone').checked ? 'yes' : '', hasWebsite: $('fHasWebsite').checked ? 'yes' : '', hasEmail: $('fHasEmail').checked ? 'yes' : '',
       };
     }
     function qs(extra) {
@@ -258,6 +259,7 @@
       if ($('fCity').value.trim()) add('city', $('fCity').value.trim(), () => { $('fCity').value = ''; });
       if ($('fHasPhone').checked) add('has', 'phone', () => { $('fHasPhone').checked = false; });
       if ($('fHasWebsite').checked) add('has', 'website', () => { $('fHasWebsite').checked = false; });
+      if ($('fHasEmail').checked) add('has', 'email', () => { $('fHasEmail').checked = false; });
       const host = $('slChips');
       if (!chips.length) { host.hidden = true; host.innerHTML = ''; return; }
       host.hidden = false;
@@ -268,7 +270,7 @@
 
     function clearAll() {
       ['fq', 'fCity'].forEach((i) => { $(i).value = ''; });
-      $('fHasPhone').checked = false; $('fHasWebsite').checked = false;
+      $('fHasPhone').checked = false; $('fHasWebsite').checked = false; $('fHasEmail').checked = false;
       for (const k in sel) sel[k].clear();
       search(0);
     }
@@ -278,6 +280,7 @@
     ['fq', 'fCity'].forEach((i) => $(i).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search(0); } }));
     $('fHasPhone').addEventListener('change', () => search(0));
     $('fHasWebsite').addEventListener('change', () => search(0));
+    $('fHasEmail').addEventListener('change', () => search(0));
     $('addBrand').addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return; e.preventDefault();
       const v = e.target.value.trim(); if (v) { sel.brand.add(v); e.target.value = ''; search(0); }
