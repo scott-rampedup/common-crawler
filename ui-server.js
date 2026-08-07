@@ -11,6 +11,7 @@ const { runDomains, COLUMNS, extractBioUrlsFromSitemaps, extractBioUrlGroups, is
 const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords, geocodePhone, classifyEmail, cleanEmail, findPosition } = require('./extractor');
 const { modelEmail, render: renderEmailLocal, TEMPLATES: EMAIL_TEMPLATES } = require('./email-pattern');
 const emailModel = require('./email-model');   // shared email-modelling (also used by the worker fleet)
+const emailVerify = require('./email-verify'); // deliverability check for MODELLED emails (Exhaust API)
 const { importSheet } = require('./sheet-import');
 const { siteSearch, bioRowsToRecords } = require('./serper');
 const vcard = require('./vcard');
@@ -581,12 +582,18 @@ function pruneOldJobs() {
 async function modelMissingEmailsForRecords(records) {
   return emailModel.modelMissingEmails(records, {
     dbQuery: (domain) => db.query({ domain, emailType: 'Professional', pageSize: 500 }).then((r) => r.rows || []),
-    // Prefer a company's stored email model (set via Bulk Edit) over guessing from samples.
-    patternQuery: companiesClient ? (domain) => companies.getEmailModel(companiesClient, domain) : null,
+    // Prefer a company's stored email model (set via Bulk Edit) over guessing from samples. Fall back to
+    // the registrable domain so a model stored on massmutual.com also covers financialprofessionals.massmutual.com.
+    patternQuery: companiesClient ? async (domain) => (await companies.getEmailModel(companiesClient, domain)) || (await companies.getEmailModel(companiesClient, emailModel.registrableDomain(domain))) : null,
     // Going forward: model an email for EVERY email-less record that has a gender (a recognized person),
     // using {first}.{last}@<registrable-domain> when no stored/learned pattern exists, so no gendered bio
     // is dropped for lack of an email. Env override: EMAIL_DEFAULT_PATTERN=0 disables, or set a template.
     defaultPattern: process.env.EMAIL_DEFAULT_PATTERN === '0' ? null : (process.env.EMAIL_DEFAULT_PATTERN || '{first}.{last}'),
+    // Validate each MODELLED address against the deliverability API and try other patterns/domains until
+    // a GOOD one (verified mailbox or catch-all). EMAIL_VERIFY=0 disables; EMAIL_VERIFY_REQUIRE=0 keeps a
+    // best-guess when nothing validates (default: drop unverifiable guesses on verifiable domains).
+    verify: process.env.EMAIL_VERIFY === '0' ? null : emailVerify.verifyEmail,
+    requireGood: process.env.EMAIL_VERIFY_REQUIRE !== '0',
   });
 }
 

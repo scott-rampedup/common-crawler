@@ -26,6 +26,7 @@ const { cleanEmail, analyzePhones } = require('./extractor');
 const companies = require('./companies');
 const firmoEnrich = require('./enrich-firmographics');
 const openSearch = require('./opensearch');
+const emailVerify = require('./email-verify');
 
 const arg = (n, d) => { const a = process.argv.find((x) => x.startsWith('--' + n + '=')); return a ? a.split('=').slice(1).join('=') : d; };
 const has = (n) => process.argv.includes('--' + n);
@@ -53,6 +54,8 @@ function rootDomain(d) {
   const forceEmailDomain = arg('force-email-domain', '').toLowerCase();
   const deleteModelled = has('delete-modelled');
   const storeModel = has('store-model');
+  const verify = has('verify');                       // validate candidates against the deliverability API
+  const requireGood = !has('no-require-good');        // with --verify, drop records that never validate GOOD
 
   const db = await makeDb({ connectionString: process.env.DATABASE_URL, ssl: !!process.env.PGSSL });
   const coClient = companies.makeClient(process.env.OPENSEARCH_ENDPOINT);
@@ -94,6 +97,13 @@ function rootDomain(d) {
       forced++;
     }
     console.error(`Forced pattern "${forcePattern}" @${forceEmailDomain}: ${forced.toLocaleString()} modelled`);
+  } else if (verify) {
+    // Validated mode: stored/learned/default candidates tried against the deliverability API until GOOD.
+    learned = await emailModel.modelMissingEmails(emailless, {
+      dbQuery: (domain) => db.query({ domain, emailType: 'Professional', pageSize: 500 }).then((r) => r.rows || []),
+      patternQuery: async (domain) => (await companies.getEmailModel(coClient, domain)) || (await companies.getEmailModel(coClient, emailModel.registrableDomain(domain))),
+      defaultPattern: DEFAULT_TPL, verify: emailVerify.verifyEmail, requireGood,
+    });
   } else {
     // 2) Learn where possible (stored model, then real emails for the domain).
     learned = await emailModel.modelMissingEmails(emailless, {

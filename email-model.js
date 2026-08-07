@@ -8,7 +8,10 @@
  * `dbQuery(domain) -> records[]`), and synthesize an address tagged Email Type 'Modelled'.
  */
 const { cleanEmail, classifyEmail } = require('./extractor');
-const { modelEmail, render } = require('./email-pattern');
+const { modelEmail, render, inferEmailPattern } = require('./email-pattern');
+
+// Candidate local-part templates tried (in order) when verifying against the validation API.
+const CANDIDATE_TEMPLATES = ['{first}.{last}', '{f}{last}', '{first}{last}', '{first}_{last}', '{last}.{first}', '{f}.{last}', '{first}'];
 
 function rootDomain(url) {
   const t = String(url || '').trim(); if (!t) return '';
@@ -36,7 +39,11 @@ function registrableDomain(host) {
 // `defaultPattern` (optional, e.g. '{first}.{last}'): after learning fails, model ANY still-email-less
 // record that has a gender (i.e. a recognized person) with this pattern @ its registrable domain — so
 // no named/gendered bio is dropped for want of an email. All modelled emails are tagged 'Modelled'.
-async function modelMissingEmails(records, { dbQuery = null, patternQuery = null, defaultPattern = null } = {}) {
+// `verify` (optional, async email->{ok,good,catchAll,noMx}): when set, each modelled address is checked
+// against the deliverability API and different patterns/domains are tried until one is GOOD (verified
+// mailbox or catch-all domain). `requireGood` (default true when verifying): if no candidate is GOOD,
+// leave the record unmodelled rather than inventing a bad address (API errors fall back to a best guess).
+async function modelMissingEmails(records, { dbQuery = null, patternQuery = null, defaultPattern = null, verify = null, requireGood = true } = {}) {
   const list = records || [];
   const missing = list.filter((r) => !cleanEmail(r['Email Address']) && r['First'] && r['Last'] && r['Gender']);
   if (!missing.length) return 0;
@@ -50,41 +57,70 @@ async function modelMissingEmails(records, { dbQuery = null, patternQuery = null
   }
 
   let modelled = 0;
+  const domainClass = new Map();   // emailDomain -> 'catch_all' | 'no_mx' | 'verifiable' (cache across people)
+
   for (const [domain, people] of byDomain) {
-    // Prefer a company's STORED email model (admin-set/learned) over guessing from samples.
-    if (patternQuery) {
-      let stored = null;
-      try { stored = await patternQuery(domain); } catch (e) { /* best-effort */ }
-      if (stored && stored.pattern && stored.email_domain) {
-        for (const r of people) {
-          const local = render(stored.pattern, r['First'], r['Last']);
-          if (local) { r['Email Address'] = `${local}@${stored.email_domain}`; r['Email Type'] = 'Modelled'; modelled++; }
-        }
-        continue;                                                             // stored model wins; skip sample-learning
-      }
-    }
+    // Resolve a stored company model + a pattern learned from samples (both feed candidate ordering).
+    let stored = null;
+    if (patternQuery) { try { stored = await patternQuery(domain); } catch (e) { /* */ } }
     const samples = [];
-    const addSample = (r) => {
-      const email = cleanEmail(r['Email Address']);
-      if (email && r['First'] && r['Last'] && classifyEmail(email) === 'Professional') {
-        samples.push({ first: r['First'], last: r['Last'], email });
+    const addSample = (r) => { const email = cleanEmail(r['Email Address']); if (email && r['First'] && r['Last'] && classifyEmail(email) === 'Professional') samples.push({ first: r['First'], last: r['Last'], email }); };
+    for (const r of list) if (domainOf(r) === domain) addSample(r);
+    if (dbQuery) { try { for (const r of (await dbQuery(domain)) || []) addSample(r); } catch (e) { /* */ } }
+    const learned = samples.length ? inferEmailPattern(samples) : null;
+
+    if (!verify) {
+      // ---- Unverified path (existing behavior): stored -> learned -> default ----
+      if (stored && stored.pattern && stored.email_domain) {
+        for (const r of people) { const l = render(stored.pattern, r['First'], r['Last']); if (l) { r['Email Address'] = `${l}@${stored.email_domain}`; r['Email Type'] = 'Modelled'; modelled++; } }
+        continue;
       }
-    };
-    for (const r of list) if (domainOf(r) === domain) addSample(r);          // samples in this batch
-    if (dbQuery) { try { for (const r of (await dbQuery(domain)) || []) addSample(r); } catch (e) { /* best-effort */ } }
-    if (!samples.length) continue;                                            // no pattern to learn from
+      if (learned) {
+        for (const r of people) { const email = modelEmail(samples, r['First'], r['Last']); if (email) { r['Email Address'] = email; r['Email Type'] = 'Modelled'; modelled++; } }
+      }
+      continue;   // remaining handled by the default-fallback block below
+    }
+
+    // ---- Verified path: try candidate (pattern @ email-domain) until GOOD ----
+    const patterns = [];
+    const pushP = (t) => { if (t && !patterns.includes(t)) patterns.push(t); };
+    pushP(stored && stored.pattern); pushP(learned && learned.pattern); pushP(defaultPattern);
+    for (const t of CANDIDATE_TEMPLATES) pushP(t);
+    const emailDomains = [];
+    const pushD = (d) => { if (d && !emailDomains.includes(d)) emailDomains.push(d); };
+    pushD(stored && stored.email_domain); pushD(learned && learned.domain); pushD(registrableDomain(domain)); pushD(domain);
+
     for (const r of people) {
-      const email = modelEmail(samples, r['First'], r['Last']);
-      if (email) { r['Email Address'] = email; r['Email Type'] = 'Modelled'; modelled++; }
+      let set = false;
+      for (const ed of emailDomains) {
+        const cls = domainClass.get(ed);
+        if (cls === 'no_mx') continue;
+        if (cls === 'catch_all') { const l = render(patterns[0], r['First'], r['Last']); if (l) { r['Email Address'] = `${l}@${ed}`; r['Email Type'] = 'Modelled'; modelled++; set = true; } break; }
+        for (const tpl of patterns) {
+          const l = render(tpl, r['First'], r['Last']); if (!l) continue;
+          const email = `${l}@${ed}`;
+          const v = await verify(email);
+          if (!v || !v.ok) { r['Email Address'] = email; r['Email Type'] = 'Modelled'; modelled++; set = true; break; }   // API error → best-guess, don't drop
+          if (v.noMx) { domainClass.set(ed, 'no_mx'); break; }              // dead domain → try next email domain
+          if (v.catchAll) { domainClass.set(ed, 'catch_all'); r['Email Address'] = email; r['Email Type'] = 'Modelled'; modelled++; set = true; break; }
+          if (v.good) { r['Email Address'] = email; r['Email Type'] = 'Modelled'; modelled++; set = true; break; }
+          // else BAD → try the next pattern
+        }
+        if (set) break;
+        if (!domainClass.get(ed)) domainClass.set(ed, 'verifiable');        // remember: this domain needs per-mailbox checks
+      }
+      if (!set && !requireGood) {                                           // opt-in best-guess when nothing verified
+        const dom = registrableDomain(domain); const l = render(defaultPattern || CANDIDATE_TEMPLATES[0], r['First'], r['Last']);
+        if (dom && l) { r['Email Address'] = `${l}@${dom}`; r['Email Type'] = 'Modelled'; modelled++; }
+      }
     }
   }
 
-  // Default fallback: model every still-email-less gendered bio with the default pattern @ its
-  // registrable domain. Keeps named/gendered people that would otherwise be dropped at the email-keyed
-  // upsert; the address is a best guess, so it's tagged 'Modelled' like every other synthesized email.
-  if (defaultPattern) {
+  // Default fallback (UNVERIFIED path only): model every still-email-less gendered bio with the default
+  // pattern @ its registrable domain, so no named/gendered person is dropped for want of an email.
+  if (defaultPattern && !verify) {
     for (const r of missing) {
-      if (cleanEmail(r['Email Address'])) continue;                    // already modelled above
+      if (cleanEmail(r['Email Address'])) continue;
       const dom = registrableDomain(domainOf(r));
       if (!dom) continue;
       const local = render(defaultPattern, r['First'], r['Last']);
@@ -97,7 +133,7 @@ async function modelMissingEmails(records, { dbQuery = null, patternQuery = null
   return modelled;
 }
 
-module.exports = { modelMissingEmails, domainOf, rootDomain };
+module.exports = { modelMissingEmails, domainOf, rootDomain, registrableDomain };
 
 // ---------------------------------------------------------------------------------------------
 if (require.main === module && process.argv.includes('--selftest')) {
