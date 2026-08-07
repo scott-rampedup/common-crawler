@@ -296,9 +296,14 @@ function buildQuery(o = {}) {
 function sortFor(o = {}) {
   let col = colName(o.sort || ''); if (o.sort === 'Domain') col = 'domain';
   if (SORTABLE[col]) return [{ [SORTABLE[col]]: { order: Number(o.dir) === -1 ? 'desc' : 'asc', missing: '_last' } }];
-  // Default view: NEW HIRES (Sitemap Monitor) first, then newest-scanned. So each morning's fresh
-  // new-hire detections surface at the top of the Contact Crawler.
-  return [{ new_hire: { order: 'desc', missing: '_last' } }, { updated_at: { order: Number(o.dir) === -1 ? 'asc' : 'desc', missing: '_last' } }];
+  // Default view: most recently UPDATED first — newest "last updated date" at the top of the Contact
+  // Crawler. new_hire is a secondary tiebreaker (fresh detections stamp a current updated_at, so they
+  // still surface at the top), and email is a stable final tiebreaker for deterministic paging.
+  return [
+    { updated_at: { order: Number(o.dir) === -1 ? 'asc' : 'desc', missing: '_last' } },
+    { new_hire: { order: 'desc', missing: '_last' } },
+    { email: 'asc' },
+  ];
 }
 
 async function search(client, o = {}) {
