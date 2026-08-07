@@ -47,9 +47,17 @@ function rootDomain(d) {
   const domainFilter = arg('domain', '').toLowerCase();
   const limit = Number(arg('limit', 0)) || 0;
   const JOBS_DIR = arg('jobs', process.env.JOBS_DIR || '/data/jobs');
+  // Correction mode: force ONE pattern + email domain for the matched records (skips learn/default),
+  // optionally delete the previously-modelled records for that email domain first, and store the model.
+  const forcePattern = arg('force-pattern', '');
+  const forceEmailDomain = arg('force-email-domain', '').toLowerCase();
+  const deleteModelled = has('delete-modelled');
+  const storeModel = has('store-model');
 
   const db = await makeDb({ connectionString: process.env.DATABASE_URL, ssl: !!process.env.PGSSL });
   const coClient = companies.makeClient(process.env.OPENSEARCH_ENDPOINT);
+  const osClient = openSearch.makeClient(process.env.OPENSEARCH_ENDPOINT);
+  const OSINDEX = process.env.OPENSEARCH_INDEX || 'contacts';
 
   // 1) Collect email-less-but-named records across all job files (dedupe by source URL).
   const files = fs.readdirSync(JOBS_DIR).filter((f) => f.endsWith('.json') && f.startsWith('j_'));
@@ -75,27 +83,38 @@ function rootDomain(d) {
   console.error(`Email-less, named, unique: ${emailless.length.toLocaleString()}`);
   if (!emailless.length) { console.error('Nothing to recover.'); process.exit(0); }
 
-  // 2) Learn where possible (stored model, then real emails for the domain).
-  const learned = await emailModel.modelMissingEmails(emailless, {
-    dbQuery: (domain) => db.query({ domain, emailType: 'Professional', pageSize: 500 }).then((r) => r.rows || []),
-    patternQuery: (domain) => companies.getEmailModel(coClient, domain),
-  });
-
-  // 3) Default-pattern fallback for whatever's still email-less.
-  let defaulted = 0;
-  for (const r of emailless) {
-    if (cleanEmail(r['Email Address'])) continue;
-    const dom = rootDomain(r['Domain'] || emailModel.rootDomain(r['Web Source URL']));
-    if (!dom) continue;
-    const local = render(DEFAULT_TPL, r['First'], r['Last']);
-    if (!local) continue;
-    r['Email Address'] = `${local}@${dom}`;
-    r['Email Type'] = 'Modelled';
-    defaulted++;
+  let learned = 0, defaulted = 0, forced = 0;
+  if (forcePattern && forceEmailDomain) {
+    // Correction mode: model EVERY matched record with the one explicit pattern + email domain.
+    for (const r of emailless) {
+      const local = render(forcePattern, r['First'], r['Last']);
+      if (!local) continue;
+      r['Email Address'] = `${local}@${forceEmailDomain}`;
+      r['Email Type'] = 'Modelled';
+      forced++;
+    }
+    console.error(`Forced pattern "${forcePattern}" @${forceEmailDomain}: ${forced.toLocaleString()} modelled`);
+  } else {
+    // 2) Learn where possible (stored model, then real emails for the domain).
+    learned = await emailModel.modelMissingEmails(emailless, {
+      dbQuery: (domain) => db.query({ domain, emailType: 'Professional', pageSize: 500 }).then((r) => r.rows || []),
+      patternQuery: (domain) => companies.getEmailModel(coClient, domain),
+    });
+    // 3) Default-pattern fallback for whatever's still email-less.
+    for (const r of emailless) {
+      if (cleanEmail(r['Email Address'])) continue;
+      const dom = rootDomain(r['Domain'] || emailModel.rootDomain(r['Web Source URL']));
+      if (!dom) continue;
+      const local = render(DEFAULT_TPL, r['First'], r['Last']);
+      if (!local) continue;
+      r['Email Address'] = `${local}@${dom}`;
+      r['Email Type'] = 'Modelled';
+      defaulted++;
+    }
   }
 
   const modelled = emailless.filter((r) => cleanEmail(r['Email Address']));
-  console.error(`Modelled: ${modelled.length.toLocaleString()} (learned ${learned.toLocaleString()}, default-pattern ${defaulted.toLocaleString()})`);
+  console.error(`Modelled: ${modelled.length.toLocaleString()} (learned ${learned.toLocaleString()}, default-pattern ${defaulted.toLocaleString()}, forced ${forced.toLocaleString()})`);
 
   // by-domain breakdown (top 20)
   const byDom = new Map();
@@ -104,6 +123,26 @@ function rootDomain(d) {
   console.error('Top domains:', top.map(([d, n]) => `${d}:${n}`).join('  '));
 
   if (dry) { console.error('\n--dry: no writes. Sample modelled emails:'); for (const r of modelled.slice(0, 8)) console.error(`  ${r['First']} ${r['Last']} <${r['Email Address']}> [${r['Email Type']}] ${r['Domain']}`); process.exit(0); }
+
+  // 3b) Correction: remove the previously-modelled records for this email domain from BOTH stores first,
+  // so the wrong-pattern versions don't linger alongside the corrected ones (osSync doesn't mirror deletes).
+  if (deleteModelled && forceEmailDomain) {
+    const q = { bool: { must: [{ term: { email_type: 'Modelled' } }, { wildcard: { email: `*@${forceEmailDomain}` } }] } };
+    const emails = [];
+    let after = null;
+    for (;;) {
+      const body = { size: 5000, _source: false, query: q, sort: [{ email: 'asc' }] };
+      if (after) body.search_after = after;
+      const hits = (await osClient.search({ index: OSINDEX, body })).body.hits.hits;
+      if (!hits.length) break;
+      for (const h of hits) emails.push(h._id);
+      after = hits[hits.length - 1].sort;
+      if (hits.length < 5000) break;
+    }
+    console.error(`Deleting ${emails.length.toLocaleString()} previously-modelled *@${forceEmailDomain} record(s) from both stores…`);
+    for (const e of emails) { try { await db.deleteByEmail(e); } catch (err) { /* */ } }
+    try { await openSearch.bulkDelete(osClient, emails); } catch (err) { console.error('OS bulkDelete:', err.message); }
+  }
 
   // 4) Ingest via the normal upsert (dedupe by email, score-gated).
   const analyzed = analyzePhones(modelled);
@@ -114,6 +153,14 @@ function rootDomain(d) {
     if ((i / 2000) % 10 === 0) console.error(`  ingested ${Math.min(i + 2000, analyzed.length).toLocaleString()}/${analyzed.length.toLocaleString()} (added ${added.toLocaleString()})`);
   }
   console.error(`DONE ingest: processed ${processed.toLocaleString()}, added ${added.toLocaleString()} new. (Postgres → OpenSearch via delta sync.)`);
+
+  // Store the email model on the company so FUTURE crawls/modelling of this domain use it automatically.
+  if (storeModel && forcePattern && forceEmailDomain) {
+    try {
+      const r = await companies.setEmailModelByDomain(coClient, forceEmailDomain, { pattern: forcePattern, email_domain: forceEmailDomain });
+      console.error(`Stored email model on company ${forceEmailDomain}: pattern "${forcePattern}" (updated ${((r && r.updated) || 0)} company doc(s)).`);
+    } catch (e) { console.error('store-model failed:', e.message); }
+  }
 
   // 5) Optional: trigger the firmographic (company-level) enrichment now, newest-first.
   if (has('enrich')) {

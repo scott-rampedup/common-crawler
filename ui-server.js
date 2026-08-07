@@ -583,13 +583,18 @@ async function modelMissingEmailsForRecords(records) {
     dbQuery: (domain) => db.query({ domain, emailType: 'Professional', pageSize: 500 }).then((r) => r.rows || []),
     // Prefer a company's stored email model (set via Bulk Edit) over guessing from samples.
     patternQuery: companiesClient ? (domain) => companies.getEmailModel(companiesClient, domain) : null,
+    // Going forward: model an email for EVERY email-less record that has a gender (a recognized person),
+    // using {first}.{last}@<registrable-domain> when no stored/learned pattern exists, so no gendered bio
+    // is dropped for lack of an email. Env override: EMAIL_DEFAULT_PATTERN=0 disables, or set a template.
+    defaultPattern: process.env.EMAIL_DEFAULT_PATTERN === '0' ? null : (process.env.EMAIL_DEFAULT_PATTERN || '{first}.{last}'),
   });
 }
 
 async function modelMissingEmails(job) {
-  if ((job.mode || 'domain') !== 'webpage') return 0;          // sitemap/webpage only
+  // Model missing emails for ALL job modes now (not just sitemap/webpage): any email-less record with a
+  // gender gets a modelled address so it isn't dropped at the email-keyed upsert.
   const n = await modelMissingEmailsForRecords([...job.recordsByEmail.values()]);
-  if (n) console.log(`Job ${job.id}: modelled ${n} email(s) from company pattern(s).`);
+  if (n) console.log(`Job ${job.id}: modelled ${n} missing email(s).`);
   return n;
 }
 

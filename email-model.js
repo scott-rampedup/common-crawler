@@ -19,9 +19,24 @@ function rootDomain(url) {
 // back to the source URL's host so modelling works for both.
 const domainOf = (r) => String((r && r['Domain']) || '').toLowerCase() || rootDomain(r && r['Web Source URL']);
 
+// registrable-ish domain (strip subdomains); keeps two-part TLDs like co.uk together. Used as the email
+// domain for the default-pattern fallback so a bio on a subdomain (financialprofessionals.massmutual.com)
+// models against the parent (massmutual.com).
+function registrableDomain(host) {
+  const h = String(host || '').toLowerCase().replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, '').trim();
+  if (!h) return '';
+  const p = h.split('.');
+  if (p.length <= 2) return h;
+  const last2 = p.slice(-2).join('.');
+  return /^(co|com|org|net|gov|edu|ac)\.[a-z]{2}$/.test(last2) ? p.slice(-3).join('.') : last2;
+}
+
 // Mutate `records` IN PLACE: model emails for the email-less bios. Returns the count modelled.
 // `dbQuery(domain)` (optional, async) returns existing records for that domain to learn the pattern.
-async function modelMissingEmails(records, { dbQuery = null, patternQuery = null } = {}) {
+// `defaultPattern` (optional, e.g. '{first}.{last}'): after learning fails, model ANY still-email-less
+// record that has a gender (i.e. a recognized person) with this pattern @ its registrable domain — so
+// no named/gendered bio is dropped for want of an email. All modelled emails are tagged 'Modelled'.
+async function modelMissingEmails(records, { dbQuery = null, patternQuery = null, defaultPattern = null } = {}) {
   const list = records || [];
   const missing = list.filter((r) => !cleanEmail(r['Email Address']) && r['First'] && r['Last'] && r['Gender']);
   if (!missing.length) return 0;
@@ -61,6 +76,22 @@ async function modelMissingEmails(records, { dbQuery = null, patternQuery = null
     for (const r of people) {
       const email = modelEmail(samples, r['First'], r['Last']);
       if (email) { r['Email Address'] = email; r['Email Type'] = 'Modelled'; modelled++; }
+    }
+  }
+
+  // Default fallback: model every still-email-less gendered bio with the default pattern @ its
+  // registrable domain. Keeps named/gendered people that would otherwise be dropped at the email-keyed
+  // upsert; the address is a best guess, so it's tagged 'Modelled' like every other synthesized email.
+  if (defaultPattern) {
+    for (const r of missing) {
+      if (cleanEmail(r['Email Address'])) continue;                    // already modelled above
+      const dom = registrableDomain(domainOf(r));
+      if (!dom) continue;
+      const local = render(defaultPattern, r['First'], r['Last']);
+      if (!local) continue;
+      r['Email Address'] = `${local}@${dom}`;
+      r['Email Type'] = 'Modelled';
+      modelled++;
     }
   }
   return modelled;
