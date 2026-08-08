@@ -20,7 +20,7 @@ const COLUMNS = [
   { key: 'Email Address',  label: 'Email Address', type: 'text',     sortable: true  },
   { key: 'Email Type',     label: 'Type',          type: 'text',     sortable: true  },
   { key: 'New Hire',       label: 'New',           type: 'newhire',  sortable: false },
-  { key: 'updated_at',     label: 'Last Updated',  type: 'date',     sortable: false },
+  { key: 'updated_at',     label: 'Last Updated',  type: 'date',     sortable: true  },   // sorts server-side (SORTABLE.updated_at)
   { key: 'LinkedIn URL',   label: 'LinkedIn',      type: 'linkedin', sortable: false },
   { key: 'Facebook',       label: 'Facebook',      type: 'social',   sortable: false },
   { key: 'Twitter',        label: 'Twitter',       type: 'social',   sortable: false },

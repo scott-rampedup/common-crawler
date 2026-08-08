@@ -244,6 +244,7 @@ const SORTABLE = {
   first: 'first.kw', last: 'last.kw', title: 'title.kw', company: 'company.kw',
   directory: 'directory', email_type: 'email_type', phone_type: 'phone_type', gender: 'gender',
   domain: 'domain', position: 'position', phone: 'phone', type: 'type', source: 'source', email: 'email',
+  updated_at: 'updated_at',   // Last Updated column (date) — sortable in the Contact Crawler
 };
 
 // Translate the UI filter opts into an OpenSearch query. Same semantics as db-pg whereFor():
