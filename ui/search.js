@@ -20,6 +20,7 @@ const COLUMNS = [
   { key: 'Email Address',  label: 'Email Address', type: 'text',     sortable: true  },
   { key: 'Email Type',     label: 'Type',          type: 'text',     sortable: true  },
   { key: 'New Hire',       label: 'New',           type: 'newhire',  sortable: false },
+  { key: 'updated_at',     label: 'Last Updated',  type: 'date',     sortable: false },
   { key: 'LinkedIn URL',   label: 'LinkedIn',      type: 'linkedin', sortable: false },
   { key: 'Facebook',       label: 'Facebook',      type: 'social',   sortable: false },
   { key: 'Twitter',        label: 'Twitter',       type: 'social',   sortable: false },
@@ -454,6 +455,10 @@ function renderRows() {
         b.type = 'button'; b.className = 'row-edit-btn'; b.title = 'Edit'; b.textContent = '✎';
         b.addEventListener('click', (e) => { e.stopPropagation(); openEditModal([record]); });
         cell.appendChild(b);
+      } else if (col.type === 'date') {
+        // Last-updated timestamp → show the date (YYYY-MM-DD); full timestamp on hover.
+        cell.style.whiteSpace = 'nowrap';
+        if (value) { cell.textContent = String(value).slice(0, 10); cell.title = String(value); }
       } else if (col.type === 'position') {
         cell.className = 'position-cell';
         cell.textContent = properCase(value || '');
