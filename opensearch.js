@@ -236,6 +236,7 @@ function docToRecord(doc) {
   rec['Company Name'] = doc.company_name || '';
   rec['Company LinkedIn'] = doc.company_linkedin || '';
   rec['New Hire'] = (doc.source === 'Sitemap Monitor') ? 'Y' : '';   // derived flag for the Contact Crawler
+  rec.updated_at = doc.updated_at || '';                             // Last Updated column (display + already sortable)
   return rec;
 }
 
