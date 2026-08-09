@@ -1546,7 +1546,7 @@ const server = http.createServer(async (req, res) => {
   }
   // Run the Library monitor now (admin): one bounded gap-fill pass over monitored People sitemaps.
   if (url.pathname === '/api/sitemaps/monitor/run' && req.method === 'POST') {
-    if (!isAdmin) { jsonErr(res, 403, 'Monitor run is reserved for admins'); return; }
+    if (!isAdmin && !hasLoaderToken) { jsonErr(res, 403, 'Monitor run is reserved for admins'); return; }   // loader token = unattended trigger
     const lm = getLibMonitor();
     if (!lm) { jsonErr(res, 503, 'Sitemap Library monitor not available (OpenSearch off).'); return; }
     readJsonBody(req, async (b) => {
