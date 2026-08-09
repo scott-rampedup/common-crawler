@@ -1,8 +1,9 @@
 /**
- * sitemap-lib-monitor.js — the Sitemap Library's built-in monitor (gap-fill model). For each opt-in
- * (monitored=true) People sitemap, re-fetch it and extract only the page URLs we DON'T already have a
- * contact for — the contacts DB is the baseline, so this closes the "Have vs Pages" gap and lands new
- * hires (Source='Sitemap Monitor'). Replaces the old SQLite watched_sitemaps monitor.
+ * sitemap-lib-monitor.js — the Sitemap Library's built-in monitor (gap-fill model). Re-checks the WHOLE
+ * Library's People sitemaps for deltas: re-fetch each and extract only the page URLs we DON'T already have
+ * a contact for — the contacts DB is the baseline, so this closes the "Have vs Pages" gap and lands new
+ * hires (Source='Sitemap Monitor'). Monitoring is ON for every sitemap by default (monitored=false opts a
+ * sitemap out); last_checked ordering rotates coverage so all get re-checked over the schedule.
  * Phase 1 = People -> contacts. (Location -> companies is a later phase.)
  */
 
@@ -43,60 +44,61 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
     return have;
   }
 
-  // One bounded pass over monitored People sitemaps, least-recently-checked first. `cap` = max URLs
-  // handed to extraction this pass (the rest resume next pass via the last_checked ordering).
-  async function runPass({ cap = 5000 } = {}) {
+  const peopleUrls = (watches) => [...new Set((watches || []).filter((w) => w.kind === 'People').flatMap((w) => (w.urls || []).map((u) => u.url)))];
+
+  // One pass over the Library's People sitemaps (least-recently-checked first). Re-fetches each, finds the
+  // page URLs we DON'T already have a contact for (delta), and hands them to extraction — so every sitemap
+  // is re-checked for new hires. Concurrency for throughput; missing URLs are batched into a few big jobs
+  // (not one per sitemap). `cap` bounds URLs enqueued per pass; last_checked ordering rotates the rest.
+  async function runPass({ cap = 300000, conc = 16, batch = 50000, flush = 3000 } = {}) {
     if (running) { log('monitor pass already running — skipping'); return { skipped: true }; }
     running = true;
-    const summary = { scanned: 0, withGap: 0, extracted: 0, errors: 0 };
-    try {
-      const rows = await sitemaps.monitoredBatch(sitemapsClient, 2000, 'People');
-      const nowIso = new Date().toISOString();
-      for (const d of rows) {
-        if (summary.extracted >= cap) break;
-        summary.scanned++;
-        try {
-          const peopleUrls = (watches) => [...new Set((watches || []).filter((w) => w.kind === 'People').flatMap((w) => (w.urls || []).map((u) => u.url)))];
-          // Pass 1 (strict): filename lexicon + per-URL name ratio, as at discovery. A leaf People sitemap
-          // yields one watch; a People Parent index expands to several child watches — union them.
-          const { watches } = await ccEngine.discoverSitemaps({ urls: [d.sitemap_url], directoryRules, genderMap, bioSitemapNames, locationSitemapNames });
-          let pageUrls = peopleUrls(watches);
-          // Pass 2 (keyword): only if the strict pass fell short of what we recorded for this sitemap, and
-          // the row carries a keyword. Re-classify trusting the keyword's profession tokens (substring match
-          // on child/leaf filenames) and UNION in whatever extra People URLs it surfaces.
-          let kwAdded = 0;
+    const summary = { scanned: 0, withGap: 0, extracted: 0, jobs: 0, errors: 0 };
+    const nowIso = new Date().toISOString();
+    let buffer = [];
+    const doFlush = () => { if (!buffer.length) return; const urls = buffer; buffer = []; try { extract(urls, `Sitemap Monitor: ${urls.length} new bio URL(s)`); summary.jobs++; } catch (e) { summary.errors++; } };
+
+    const processOne = async (d) => {
+      if (summary.extracted >= cap) return;
+      summary.scanned++;
+      try {
+        const { watches } = await ccEngine.discoverSitemaps({ urls: [d.sitemap_url], directoryRules, genderMap, bioSitemapNames, locationSitemapNames });
+        let pageUrls = peopleUrls(watches);
+        // keyword second pass ONLY when the strict pass got nothing (avoids doubling fetches at scale)
+        if (!pageUrls.length) {
           const hints = keywordTokens(d.keyword);
-          const expected = Number(d.item_count) || 0;
-          if (hints.size && (pageUrls.length === 0 || (expected && pageUrls.length < expected))) {
-            try {
-              const { watches: w2 } = await ccEngine.discoverSitemaps({ urls: [d.sitemap_url], directoryRules, genderMap, bioSitemapNames, locationSitemapNames, keywordHints: hints });
-              const before = pageUrls.length;
-              pageUrls = [...new Set([...pageUrls, ...peopleUrls(w2)])];
-              kwAdded = pageUrls.length - before;
-            } catch (e) { /* keyword pass is best-effort; keep the strict result */ }
-          }
-          let missing = [];
-          if (pageUrls.length) {
-            const have = await haveSet(pageUrls);
-            missing = pageUrls.filter((u) => !have.has(u));
-            if (missing.length > cap - summary.extracted) missing = missing.slice(0, cap - summary.extracted);
-          }
-          if (missing.length) {
-            summary.withGap++;
-            try { extract(missing, 'Sitemap Monitor: ' + (d.domain || '')); summary.extracted += missing.length; } catch (e) { summary.errors++; }
-          }
-          await sitemaps.setMonitorState(sitemapsClient, d.sitemap_url, {
-            last_checked: nowIso, last_new: missing.length,
-            total_new: (Number(d.total_new) || 0) + missing.length,
-            monitor_note: pageUrls.length ? (kwAdded ? ('keyword pass +' + kwAdded + ' urls') : '') : 'no urls fetched',
-          });
-        } catch (e) {
-          summary.errors++;
-          try { await sitemaps.setMonitorState(sitemapsClient, d.sitemap_url, { last_checked: nowIso, monitor_note: String(e.message || 'error').slice(0, 200) }); } catch (e2) { /* */ }
+          if (hints.size) { try { const { watches: w2 } = await ccEngine.discoverSitemaps({ urls: [d.sitemap_url], directoryRules, genderMap, bioSitemapNames, locationSitemapNames, keywordHints: hints }); pageUrls = peopleUrls(w2); } catch (e) { /* */ } }
         }
+        let missing = [];
+        if (pageUrls.length) { const have = await haveSet(pageUrls); missing = pageUrls.filter((u) => !have.has(u)); }
+        if (missing.length && summary.extracted < cap) {
+          const room = cap - summary.extracted;
+          if (missing.length > room) missing = missing.slice(0, room);
+          summary.withGap++; summary.extracted += missing.length;
+          buffer.push(...missing);
+          if (buffer.length >= flush) doFlush();
+        }
+        await sitemaps.setMonitorState(sitemapsClient, d.sitemap_url, {
+          last_checked: nowIso, last_new: missing.length,
+          total_new: (Number(d.total_new) || 0) + missing.length,
+          monitor_note: pageUrls.length ? '' : 'no urls fetched',
+        });
+      } catch (e) {
+        summary.errors++;
+        try { await sitemaps.setMonitorState(sitemapsClient, d.sitemap_url, { last_checked: nowIso, monitor_note: String(e.message || 'error').slice(0, 200) }); } catch (e2) { /* */ }
       }
+    };
+
+    try {
+      const rows = await sitemaps.monitoredBatch(sitemapsClient, batch, 'People');
+      log(`monitor pass: ${rows.length} sitemap(s) this pass (conc ${conc}, cap ${cap})`);
+      // process in concurrent chunks
+      for (let i = 0; i < rows.length && summary.extracted < cap; i += conc) {
+        await Promise.all(rows.slice(i, i + conc).map(processOne));
+      }
+      doFlush();
       try { await sitemapsClient.indices.refresh({ index: sitemaps.INDEX }); } catch (e) { /* */ }
-      log(`monitor pass: scanned ${summary.scanned}, gaps ${summary.withGap}, extracted ${summary.extracted}, errors ${summary.errors}`);
+      log(`monitor pass done: scanned ${summary.scanned}, gaps ${summary.withGap}, extracted ${summary.extracted} in ${summary.jobs} job(s), errors ${summary.errors}`);
     } finally { running = false; }
     return summary;
   }

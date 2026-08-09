@@ -121,7 +121,10 @@ async function bulkUpsert(client, docs, nowIso) {
       industry: d.industry || '', company_id: d.company_id || '', lastmod: d.lastmod || '',
       status: d.status || 'active', last_seen: now,
     };
-    const full = { sitemap_url: id, source: d.source || 'discovered', discovered_at: now, ...mutable };
+    // Monitoring is ON by default for every Library sitemap (the nightly monitor re-checks all of them for
+    // deltas); set d.monitored=false only to opt a sitemap OUT. Only written on first insert (in `full`),
+    // so a re-sight never flips an existing opt-out back on.
+    const full = { sitemap_url: id, source: d.source || 'discovered', discovered_at: now, monitored: (d.monitored === false ? false : true), ...mutable };
     body.push({ update: { _index: INDEX, _id: id } });
     body.push({ doc: mutable, upsert: full });
   }
@@ -133,12 +136,16 @@ async function bulkUpsert(client, docs, nowIso) {
   return { upserted, errors };
 }
 
-// The monitored sitemaps of a kind, LEAST-recently-checked first (never-checked first), for a monitor pass.
-async function monitoredBatch(client, size = 2000, kind = 'People') {
-  const filter = [{ term: { monitored: true } }];
+// Sitemaps to monitor for deltas, LEAST-recently-checked first (never-checked first). By default this is
+// EVERY active sitemap of the kind — monitoring is on for the whole Library; `monitored=false` is an
+// explicit opt-out (e.g. junk). Capped at the result window; the last_checked ordering rotates coverage
+// across passes so the whole Library gets re-checked over time.
+async function monitoredBatch(client, size = 50000, kind = 'People') {
+  const filter = [];
   if (kind) filter.push({ term: { kind } });
+  const bool = { filter, must_not: [{ term: { monitored: false } }, { term: { status: 'inactive' } }] };
   const r = await client.search({ index: INDEX, body: {
-    size, query: { bool: { filter } },
+    size: Math.min(50000, size), query: { bool },
     sort: [{ last_checked: { order: 'asc', missing: '_first' } }, { sitemap_url: 'asc' }],
   } });
   return ((r.body || r).hits.hits || []).map((h) => h._source);

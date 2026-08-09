@@ -2283,14 +2283,18 @@ pruneOldJobs();
         setInterval(firmoSweep, FS_HOURS * 3600 * 1000);
         console.log(`Firmographic enrichment sweep: ON, every ${FS_HOURS}h (cap ${FS_CAP.toLocaleString()}/run).`);
       }
-      // Sitemap LIBRARY monitor: periodic gap-fill pass over opt-in (monitored) Library sitemaps.
+      // Sitemap LIBRARY monitor: re-checks the WHOLE Library (all active People sitemaps) for deltas on a
+      // schedule — re-fetch each, extract the page URLs we don't have a contact for. last_checked ordering
+      // rotates coverage across passes; run often enough (default every 12h) that all get re-checked daily.
       if (process.env.SITEMAP_LIB_MONITOR !== '0') {
-        const SM_HOURS = Math.max(1, Number(process.env.SITEMAP_LIB_MONITOR_HOURS) || 24);
-        const SM_CAP = Number(process.env.SITEMAP_LIB_MONITOR_MAX) || 5000;
-        const smPass = async () => { const lm = getLibMonitor(); if (!lm) return; try { await lm.runPass({ cap: SM_CAP }); } catch (e) { console.error('[sitemap-lib-monitor] pass error:', e.message); } };
+        const SM_HOURS = Math.max(1, Number(process.env.SITEMAP_LIB_MONITOR_HOURS) || 12);
+        const SM_CAP = Number(process.env.SITEMAP_LIB_MONITOR_MAX) || 300000;      // max bio URLs enqueued per pass
+        const SM_CONC = Math.max(1, Number(process.env.SITEMAP_LIB_MONITOR_CONC) || 16);
+        const SM_BATCH = Math.max(1, Number(process.env.SITEMAP_LIB_MONITOR_BATCH) || 50000); // sitemaps re-checked per pass
+        const smPass = async () => { const lm = getLibMonitor(); if (!lm) return; try { await lm.runPass({ cap: SM_CAP, conc: SM_CONC, batch: SM_BATCH }); } catch (e) { console.error('[sitemap-lib-monitor] pass error:', e.message); } };
         setTimeout(smPass, 12 * 60 * 1000);                            // ~12 min after boot
         setInterval(smPass, SM_HOURS * 3600 * 1000);
-        console.log(`Sitemap Library monitor: ON, every ${SM_HOURS}h (cap ${SM_CAP.toLocaleString()}/pass).`);
+        console.log(`Sitemap Library monitor: ON, every ${SM_HOURS}h (up to ${SM_BATCH.toLocaleString()} sitemaps, cap ${SM_CAP.toLocaleString()} URLs/pass, conc ${SM_CONC}).`);
       }
       // Keep OpenSearch current with the processing DB: stream fleet-ingested/edited contacts across.
       // Only meaningful when the source of truth is Postgres (DATABASE_URL); SQLite fallback has no fleet.
