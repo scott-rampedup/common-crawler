@@ -68,14 +68,29 @@ async function pool(items, n, fn) { let i = 0; const workers = Array.from({ leng
   if (!targets.length) { console.error('Nothing to probe.'); process.exit(0); }
 
   // 2) Probe each domain: robots.txt + common paths -> discoverSitemaps (recurse + classify, via proxy).
+  //    Results are FLUSHED to the Library incrementally (every ~300 sitemaps) — so a kill/deploy/restart
+  //    never loses work, and re-running with --skip-existing resumes where it left off.
   const CANDIDATES = (d) => [`https://${d}/sitemap.xml`, `https://${d}/sitemap_index.xml`, `https://${d}/sitemap-index.xml`, `https://${d}/wp-sitemap.xml`];
-  const docByUrl = new Map();
-  const tally = { probed: 0, withSitemap: 0, people: 0, location: 0, errors: 0 };
-  let done = 0;
+  const seenUrl = new Set();
+  let pending = [];
+  const tally = { probed: 0, withSitemap: 0, people: 0, location: 0, errors: 0, upserted: 0, monitored: 0 };
+  let done = 0, flushing = false;
+
+  async function flushPending() {
+    if (dry || flushing || !pending.length) return;
+    flushing = true;
+    const batch = pending.splice(0, pending.length);
+    try {
+      const now = new Date().toISOString();
+      const r = await sitemaps.bulkUpsert(smClient, batch, now); tally.upserted += r.upserted;
+      const ids = batch.map((x) => x.sitemap_url);
+      for (let i = 0; i < ids.length; i += 500) { const u = await sitemaps.bulkUpdate(smClient, ids.slice(i, i + 500), { monitored: 'true' }); tally.monitored += u.updated; }
+    } catch (e) { console.error('flush error:', e.message); }
+    flushing = false;
+  }
 
   await pool(targets, conc, async (d) => {
     tally.probed++;
-    // robots.txt -> declared sitemaps
     let smUrls = [];
     for (const ru of [`https://${d}/robots.txt`, `https://www.${d}/robots.txt`]) {
       try { const txt = await ccEngine.fetchDoc(ru); if (txt) { const p = ccEngine.parseRobots(txt); if (p.sitemaps && p.sitemaps.length) { smUrls = p.sitemaps; break; } } } catch (e) { /* */ }
@@ -89,32 +104,22 @@ async function pool(items, n, fn) { let i = 0; const workers = Array.from({ leng
     if (watches.length) {
       tally.withSitemap++;
       for (const w of watches) {
-        if (docByUrl.has(w.sitemapUrl)) continue;
-        docByUrl.set(w.sitemapUrl, { sitemap_url: w.sitemapUrl, domain: w.domain || d, parent_url: w.parentUrl || '',
+        if (seenUrl.has(w.sitemapUrl)) continue; seenUrl.add(w.sitemapUrl);
+        pending.push({ sitemap_url: w.sitemapUrl, domain: w.domain || d, parent_url: w.parentUrl || '',
           kind: w.kind, type: sitemaps.deriveType(w.sitemapUrl, w.domain || d), keyword: w.keyword || '',
           url_count: w.urlCount || 0, item_count: w.itemCount || 0, ratio: Number(w.ratio || 0), by_name: !!w.byName,
           industry, source: 'live' });
         if (w.kind === 'People') tally.people++; else tally.location++;
       }
+      if (pending.length >= 300) await flushPending();
     }
-    if (++done % 200 === 0) console.error(`  [${done}/${targets.length}] with-sitemap ${tally.withSitemap} · People ${tally.people} · Location ${tally.location} · err ${tally.errors}`);
+    if (++done % 200 === 0) console.error(`  [${done}/${targets.length}] with-sitemap ${tally.withSitemap} · People ${tally.people} · Location ${tally.location} · upserted ${tally.upserted} · err ${tally.errors}`);
   });
 
-  const docs = [...docByUrl.values()];
-  const domSeen = new Set(docs.map((x) => x.domain));
-  console.error(`\nProbed ${tally.probed.toLocaleString()} | domains with a People/Location sitemap: ${domSeen.size.toLocaleString()}`);
-  console.error(`People/Location sitemaps: ${docs.length.toLocaleString()} (People ${tally.people} · Location ${tally.location}), errors ${tally.errors}.`);
-  for (const x of docs.slice(0, 12)) console.error(`  [${x.kind}] ${x.sitemap_url} (${x.item_count} urls${x.by_name ? ', by-name' : ''})`);
-
-  if (dry) { console.error('\n--dry: no writes.'); process.exit(0); }
-  if (!docs.length) { console.error('Nothing to upsert.'); process.exit(0); }
-
-  const now = new Date().toISOString();
-  let upserted = 0, errors = 0; const ids = [];
-  for (let i = 0; i < docs.length; i += 500) { const b = docs.slice(i, i + 500); const r = await sitemaps.bulkUpsert(smClient, b, now); upserted += r.upserted; errors += r.errors; for (const x of b) ids.push(x.sitemap_url); }
-  let monitored = 0;
-  for (let i = 0; i < ids.length; i += 500) { const r = await sitemaps.bulkUpdate(smClient, ids.slice(i, i + 500), { monitored: 'true' }); monitored += r.updated; }
-  console.error(`\nDONE: upserted ${upserted.toLocaleString()} (errors ${errors}), monitored ${monitored.toLocaleString()}.`);
+  await flushPending();   // final
+  console.error(`\nProbed ${tally.probed.toLocaleString()} | People/Location sitemaps found ${seenUrl.size.toLocaleString()} (People ${tally.people} · Location ${tally.location}) | errors ${tally.errors}`);
+  if (dry) { console.error('--dry: no writes.'); process.exit(0); }
+  console.error(`DONE: upserted ${tally.upserted.toLocaleString()}, monitored ${tally.monitored.toLocaleString()}.`);
   try { console.error('Library now:', JSON.stringify(await sitemaps.stats(smClient))); } catch (e) { /* */ }
   process.exit(0);
 })().catch((e) => { console.error('ERR', e && e.stack || e); process.exit(1); });
