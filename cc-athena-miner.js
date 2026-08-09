@@ -504,7 +504,9 @@ async function main() {
   console.error(`Next: DATABASE_URL=… node load-queue.js ${warcOut}`);
 }
 
-module.exports = { buildDiscoverySql, buildCountSql, bioRegexSql, excludeRegexSql, sitemapRegexSql, buildSitemapSql, buildSitemapCountSql, parseCsv, parseCsvLine, normalizeKey, buildKeysTableSql, buildResolveSql, DEFAULT_TLDS };
+module.exports = { buildDiscoverySql, buildCountSql, bioRegexSql, excludeRegexSql, sitemapRegexSql, buildSitemapSql, buildSitemapCountSql, parseCsv, parseCsvLine, normalizeKey, buildKeysTableSql, buildResolveSql, DEFAULT_TLDS,
+  // AWS plumbing (reused by discover-child-sitemaps.js) — lazy SDK, so requiring this module stays cheap.
+  aws, runAthena, ensureBucket, ensureTable, s3StreamRows, latestCrawl, latestCrawls, DB, REGION };
 
 // ---- offline self-test: node cc-athena-miner.js --selftest ----
 if (require.main === module && process.argv.includes("--selftest")) {
