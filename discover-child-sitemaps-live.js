@@ -33,12 +33,14 @@ async function pool(items, n, fn) { let i = 0; const workers = Array.from({ leng
 
 (async () => {
   if (!process.env.OPENSEARCH_ENDPOINT) { console.error('need OPENSEARCH_ENDPOINT'); process.exit(1); }
-  const industry = arg('industry', 'real estate');
-  const country = arg('country', 'united states,united kingdom,canada,australia,new zealand,ireland');
-  const limitDomains = Number(arg('limit-domains', '2000')) || 2000;
-  const conc = Number(arg('conc', '12')) || 12;
-  const skipExisting = has('skip-existing');
-  const dry = has('dry');
+  // Config from flags OR env (env lets a dedicated `fly machine run` machine set them without command
+  // flags, which Fly would otherwise parse as its own).
+  const industry = arg('industry', '') || process.env.INDUSTRIES || 'real estate';
+  const country = arg('country', '') || process.env.COUNTRIES || 'united states,united kingdom,canada,australia,new zealand,ireland';
+  const limitDomains = Number(arg('limit-domains', '') || process.env.LIMIT_DOMAINS || 2000) || 2000;
+  const conc = Number(arg('conc', '') || process.env.CONC || 12) || 12;
+  const skipExisting = has('skip-existing') || /^(1|true|yes|on)$/i.test(process.env.SKIP_EXISTING || '');
+  const dry = has('dry') || /^(1|true|yes|on)$/i.test(process.env.DRY || '');
 
   const coClient = companies.makeClient(process.env.OPENSEARCH_ENDPOINT);
   const smClient = sitemaps.makeClient(process.env.OPENSEARCH_ENDPOINT);
