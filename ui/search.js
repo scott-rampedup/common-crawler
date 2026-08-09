@@ -17,6 +17,7 @@ const COLUMNS = [
   { key: 'Last',           label: 'Contact Name',  type: 'contactname', sortable: true  },
   { key: 'Company Name',   label: 'Company',       type: 'companyname', sortable: false, cls: 'company-col' },   // wider + bold; linked to the company website (Domain); falls back to the website when no name
   { key: 'Position',       label: 'Position',      type: 'position', sortable: true  },
+  { key: 'Gender',         label: 'Gender',        type: 'gender',   sortable: true  },
   { key: 'Email Address',  label: 'Email Address', type: 'text',     sortable: true  },
   { key: 'Email Type',     label: 'Type',          type: 'text',     sortable: true  },
   { key: 'New Hire',       label: 'New',           type: 'newhire',  sortable: false },
@@ -459,6 +460,10 @@ function renderRows() {
         // Last-updated timestamp → show the date (YYYY-MM-DD); full timestamp on hover.
         cell.style.whiteSpace = 'nowrap';
         if (value) { cell.textContent = String(value).slice(0, 10); cell.title = String(value); }
+      } else if (col.type === 'gender') {
+        cell.style.textAlign = 'center';
+        const g = String(value || '').trim().toUpperCase();
+        if (g === 'M' || g === 'F') { cell.textContent = g; cell.title = g === 'M' ? 'Male' : 'Female'; }
       } else if (col.type === 'position') {
         cell.className = 'position-cell';
         cell.textContent = properCase(value || '');
