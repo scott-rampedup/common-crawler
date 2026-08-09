@@ -506,7 +506,8 @@ async function main() {
 
 module.exports = { buildDiscoverySql, buildCountSql, bioRegexSql, excludeRegexSql, sitemapRegexSql, buildSitemapSql, buildSitemapCountSql, parseCsv, parseCsvLine, normalizeKey, buildKeysTableSql, buildResolveSql, DEFAULT_TLDS,
   // AWS plumbing (reused by discover-child-sitemaps.js) — lazy SDK, so requiring this module stays cheap.
-  aws, runAthena, ensureBucket, ensureTable, s3StreamRows, latestCrawl, latestCrawls, DB, REGION };
+  aws, runAthena, ensureBucket, ensureTable, s3StreamRows, latestCrawl, latestCrawls, DB, REGION,
+  buildDomainDiscoverySql };   // domain-restricted bio-page discovery (JOIN a domains table)
 
 // ---- offline self-test: node cc-athena-miner.js --selftest ----
 if (require.main === module && process.argv.includes("--selftest")) {
