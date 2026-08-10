@@ -37,6 +37,7 @@ const MAPPING = {
       last_new:     { type: 'integer' },                                 // URLs handed to extraction last pass
       total_new:    { type: 'integer' },                                 // cumulative extracted via monitoring
       monitor_note: { type: 'keyword' },                                 // last monitor status/error
+      expanded_at:  { type: 'date' },                                    // last sitemap-expand-urls pass (drives --resume)
     },
   },
 };
@@ -52,6 +53,7 @@ const ADDED_FIELDS = {
   last_new:     { type: 'integer' },
   total_new:    { type: 'integer' },
   monitor_note: { type: 'keyword' },
+  expanded_at:  { type: 'date' },
 };
 async function ensureIndex(client) {
   const ex = await client.indices.exists({ index: INDEX });
