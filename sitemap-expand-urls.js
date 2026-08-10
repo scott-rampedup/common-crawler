@@ -27,6 +27,9 @@ const path = require('path');
 const sitemaps = require('./sitemaps');
 const ccEngine = require('./cc-engine');
 const { loadGenderMap } = require('./extractor');
+// S3 upload is optional: a sharded fleet writes one part each, and corp-prospects-hop2 merges the parts
+// into the single URL list the Athena resolve wants (one index scan instead of one per shard).
+let S3 = null; try { S3 = require('@aws-sdk/client-s3'); } catch (e) { /* local-file mode only */ }
 
 const arg = (n, d) => { const i = process.argv.indexOf('--' + n); return i > 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : d; };
 const has = (n) => process.argv.includes('--' + n);
@@ -38,6 +41,10 @@ const CONC = Number(arg('conc', '') || process.env.CONC || 12) || 12;
 const LIMIT = Number(arg('limit', '') || process.env.LIMIT || 0) || 0;
 const RESUME = has('resume') || /^(1|true|yes|on)$/i.test(process.env.RESUME || '');
 const DRY = has('dry') || /^(1|true|yes|on)$/i.test(process.env.DRY || '');
+// S3_KEY (or --s3-key): upload OUT here when the pass finishes. A shard suffix is appended automatically
+// so six machines writing the same key don't overwrite each other.
+const S3_KEY = arg('s3-key', '') || process.env.S3_KEY || '';
+const OUT_BUCKET = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${process.env.AWS_REGION || 'us-east-1'}`;
 
 // Same FNV-1a split the live discovery fleet uses: a sitemap always lands in the same shard.
 const shardArg = arg('shard', '') || process.env.SHARD || '';
@@ -145,6 +152,16 @@ function keywordTokens(keyword) {
   }
   await drain();
   if (outStream) await new Promise((r) => outStream.end(r));
+
+  // Hand the part off to S3 so the merge step can pull every shard's URLs into one resolve.
+  if (S3_KEY && !DRY && S3) {
+    const key = SHARD_N > 1 ? `${S3_KEY}.shard-${SHARD_I}-of-${SHARD_N}` : S3_KEY;
+    try {
+      const s3 = new S3.S3Client({ region: process.env.AWS_REGION || 'us-east-1' });
+      await s3.send(new S3.PutObjectCommand({ Bucket: OUT_BUCKET, Key: key, Body: fs.readFileSync(OUT), ContentType: 'text/plain' }));
+      console.error(`uploaded ${tally.urls.toLocaleString()} URL(s) -> s3://${OUT_BUCKET}/${key}`);
+    } catch (e) { console.error('S3 upload FAILED (the local file is still on the machine):', e.message); process.exitCode = 1; }
+  }
 
   console.error(`\nDONE${DRY ? ' [DRY]' : ''}: ${tally.sitemaps.toLocaleString()} sitemap(s) in shard | fetched ${tally.fetched.toLocaleString()} `
     + `(${tally.withUrls.toLocaleString()} yielded URLs, ${tally.empty.toLocaleString()} empty, ${tally.errors.toLocaleString()} errors) `

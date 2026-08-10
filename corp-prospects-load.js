@@ -3,7 +3,7 @@
  * the Sitemap Library. The export already carries its own People/Location profiling, so this is a pure
  * catalog load: no crawling, no classification guesswork.
  *
- *   OPENSEARCH_ENDPOINT=… node corp-prospects-load.js ["Corp Prospects Child Sitemaps.csv"] [--dry] [--limit N]
+ *   OPENSEARCH_ENDPOINT=… node corp-prospects-load.js ["Corp Prospects Child Sitemaps.csv"] [--dry] [--limit N] [--monitored-off]
  *
  * Header-driven (columns are looked up by NAME, not position, so a re-export with extra/reordered columns
  * still loads):
@@ -27,6 +27,11 @@ const args = process.argv.slice(2);
 const arg = (f, d) => { const i = args.indexOf(f); return i > -1 && args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : d; };
 const DRY = args.includes('--dry');
 const LIMIT = Number(arg('--limit', '0')) || 0;
+// The nightly Library monitor sorts never-checked sitemaps FIRST and enqueues their pages for LIVE
+// extraction (up to 300k URLs/pass). Loading a big catalog with monitoring already on therefore pays the
+// proxy to fetch pages Common Crawl would serve for free. --monitored-off parks the catalog until the CC
+// backfill has run; flip it on afterwards with sitemaps.bulkUpdate({monitored:'true'}).
+const MONITORED_OFF = args.includes('--monitored-off');
 // First true positional = the CSV path. A bare word that FOLLOWS a --flag is that flag's value, not a path.
 const positional = args.filter((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1].startsWith('--')));
 const CSV = positional[0] || path.join(__dirname, 'Corp Prospects Child Sitemaps.csv');
@@ -123,8 +128,9 @@ const KIND = { people: 'People', person: 'People', bio: 'People', location: 'Loc
       lastmod: '',
       source: SOURCE,
       status: 'active',
-      // monitored is intentionally NOT set: bulkUpsert defaults it true on first insert and leaves an
-      // existing opt-out alone.
+      // Unless --monitored-off, this is left unset: bulkUpsert defaults monitored=true on first insert and
+      // leaves an existing opt-out alone.
+      ...(MONITORED_OFF ? { monitored: false } : {}),
     });
     tally.kept++;
     if (batch.length >= 1000) {
