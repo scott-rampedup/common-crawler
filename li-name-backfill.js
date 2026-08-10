@@ -67,7 +67,11 @@ const QUERY = {
   };
 
   for (;;) {
-    const body = { size: PAGE, query: QUERY, _source: ['first', 'last', 'gender', 'linkedin_url', 'email', 'email_type', 'domain'], sort: [{ _doc: 'asc' }] };
+    // Sort by email (the _id), NOT _doc: this scan mutates the very docs it is paging over, and a fixed
+    // contact drops out of the result set. Under _doc ordering that shifts every later doc up a slot and
+    // search_after silently skips them (the first production run scanned 230,000 of 237,362 and needed two
+    // mop-up passes). Sorting on a stable keyword makes the cursor immune to the writes behind it.
+    const body = { size: PAGE, query: QUERY, _source: ['first', 'last', 'gender', 'linkedin_url', 'email', 'email_type', 'domain'], sort: [{ email: 'asc' }] };
     if (after) body.search_after = after;
     const hits = (await client.search({ index: os.INDEX, body })).body.hits.hits;
     if (!hits.length) break;
