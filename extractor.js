@@ -98,6 +98,30 @@ const BIO_DIR_RAW = [
   "state-directory","support-staff","team","team_member","team_members","team1","team-1","team-2","teambio",
   "team-details","team-directory","teaminfo","teammates","teammember","team-member","teammembers","team-members",
   "teams","the-staff","the-team","university-directory","unser-team","ymca-staff","your-team",
+  // ---- People Path IDs from Directories.xlsx (the curated directory terminology) ----
+  // Only the ones BIO_DIRS didn't already cover. Two rows from that sheet are deliberately NOT here:
+  // "mortgage" and "integrations" — both are product/service directories (/mortgage/ on every lender,
+  // /integrations/ on every SaaS site), so as bio terms they would classify huge numbers of non-people
+  // pages as BIO URLs. Add them if the sheet really means them as people directories.
+  "ameripriseadvisors","associate","commercial-real-estate-agents","local-pros","medical-professionals",
+  "meet-the-doctor","meet-your-team","mydoctor","Our-Agents","our-physicians","PhysicianDirectory",
+  "physicians-staff","tax-preparers","loan-originator","account-executives","postdoctoral-fellow",
+  "faculty-member","academicstaff","academic-staff","investment-team","legal-team","administrative-team",
+  "administration-team","nursing-team","veterinary-nurses","veterinary-surgeons","veterinarians",
+  "physical-therapist","physical-therapists","occupational-therapist","receptionists","MINISTERS",
+  "estate_agent","property-agent","new-homes-sales-agent","meet-our-doctors",
+  // non-English people directories (fr/es/pt legal + accounting)
+  "avocat","avocats","expert-comptables","abogado","contador","contadors",
+  // board / governance
+  "board__staff","board_and_staff","board_bio","board_bios","board_board_staff","board_member",
+  "board_member_bio","board_profile","board_profiles","board-of-trustees","staff-and-board",
+  // bio / staff / team page variants seen in the wild (CMS themes, plugin post types)
+  "bio_page","bio_pages","staff_name","staff-view","staff_trusted","staff-info","staff-page","staff-bio",
+  "staff-bios","staff-1","staff_cat","staff_post","staff-data","cpt_staff_lst",
+  "team-view","team-showcase","team-category","team-bio","team_bios","team-profile","team_profiles",
+  "team-post","team-member-post","team-person","team_list","team_group","team-type","team-locations",
+  "all-team","our-team-members","dipl-team-member","wd-team-member","amo-team","em_team","cpo_team",
+  "ts-team","sh_team","wpm-team","team_mf","restly-team","wps-members",
 ];
 const BIO_DIRS = new Set(BIO_DIR_RAW.map((s) => normalizeForMatching(s)).filter(Boolean));
 
