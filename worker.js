@@ -111,6 +111,8 @@ function makeWorker(deps = {}) {
     if (recs.length) {
       // Model emails for email-less bios from the company's pattern (same-batch + central DB), so they
       // aren't dropped at the email-keyed upsert. Best-effort; the DB lookup is light + indexed.
+      // LinkedIn-slug name recovery before modelling, so a modelled address uses the corrected name.
+      try { require('./li-name').applyToRecords(recs); } catch (e) { /* best-effort */ }
       if (modelEmails && modelMissingEmails) {
         try { await modelMissingEmails(recs, { dbQuery: (domain) => dbpg.sampleProfessionalEmails(domain) }); }
         catch (e) { /* best-effort modelling */ }

@@ -19,6 +19,7 @@ const extractor = require('./extractor');
 const os = require('./opensearch');
 const { makeCcS3 } = require('./cc-s3');
 const { modelMissingEmails } = require('./email-model');
+const liName = require('./li-name');
 const wbc = require('./wireless-block-classifier');
 const vcard = require('./vcard');
 let ccEngine = null; try { ccEngine = require('./cc-engine'); } catch (e) { /* live fallback optional */ }
@@ -118,10 +119,15 @@ process.on('unhandledRejection', () => {});   // a raced/abandoned fetch rejecti
 
   // ---- accumulate extracted records; flush in chunks (filter -> model emails -> upsert) ----
   let pending = [];
-  let submitted = 0, withEmail = 0, upErrs = 0, modelled = 0, dropJunk = 0, dropNoEmail = 0, vcardApplied = 0;
+  let submitted = 0, withEmail = 0, upErrs = 0, modelled = 0, dropJunk = 0, dropNoEmail = 0, vcardApplied = 0, liNamed = 0;
   async function flush() {
     if (!pending.length) return;
     const recs = pending; pending = [];
+    // (a0) LinkedIn-slug name recovery FIRST: a bio page that yielded no name (or a name the map can't
+    // gender) but did yield a linkedin.com/in URL becomes a real, gendered person here. Runs before the
+    // person filter (so those records aren't dropped as junk) and before modelling (so the modelled
+    // address is built from the corrected name instead of needing a re-model afterwards).
+    try { const n = liName.applyToRecords(recs); liNamed += n.changed; } catch (e) { /* best-effort */ }
     // (a) keep only records that read as a real person (drops page-title "names" from contact/service pages)
     const people = recs.filter((r) => looksLikePerson(r['First'], r['Last']));
     dropJunk += recs.length - people.length;
@@ -193,5 +199,5 @@ process.on('unhandledRejection', () => {});   // a raced/abandoned fetch rejecti
     }
   }
   await flush();
-  console.error(`DONE: ${submitted.toLocaleString()} real contacts upserted (${modelled.toLocaleString()} emails modelled, ${vcardApplied.toLocaleString()} vCards merged) | dropped ${dropJunk.toLocaleString()} non-person + ${dropNoEmail.toLocaleString()} no-usable-email | ${upErrs} upsert-err | ${Math.round((Date.now() - t0) / 1000)}s`);
+  console.error(`DONE: ${submitted.toLocaleString()} real contacts upserted (${modelled.toLocaleString()} emails modelled, ${vcardApplied.toLocaleString()} vCards merged, ${liNamed.toLocaleString()} named from LinkedIn) | dropped ${dropJunk.toLocaleString()} non-person + ${dropNoEmail.toLocaleString()} no-usable-email | ${upErrs} upsert-err | ${Math.round((Date.now() - t0) / 1000)}s`);
 })().catch((e) => { console.error('ERR', e.message); process.exit(1); });

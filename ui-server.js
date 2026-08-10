@@ -11,6 +11,7 @@ const { runDomains, COLUMNS, extractBioUrlsFromSitemaps, extractBioUrlGroups, is
 const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords, geocodePhone, classifyEmail, cleanEmail, findPosition } = require('./extractor');
 const { modelEmail, render: renderEmailLocal, TEMPLATES: EMAIL_TEMPLATES } = require('./email-pattern');
 const emailModel = require('./email-model');   // shared email-modelling (also used by the worker fleet)
+const liName = require('./li-name');           // shared linkedin.com/in name+gender recovery (ingest + backfill)
 const emailVerify = require('./email-verify'); // deliverability check for MODELLED emails (Exhaust API)
 const { importSheet } = require('./sheet-import');
 const { siteSearch, bioRowsToRecords } = require('./serper');
@@ -580,6 +581,10 @@ function pruneOldJobs() {
 // the shared email-model module (the worker fleet uses the same logic); the central-DB sample lookup
 // goes through whichever contacts backend is active.
 async function modelMissingEmailsForRecords(records) {
+  // LinkedIn-slug name recovery first: a bio with no name (or an ungendered one) that carries a
+  // linkedin.com/in URL becomes a named, gendered person here — which is also what makes it eligible for
+  // modelling below, and means the modelled address is built from the corrected name.
+  try { liName.applyToRecords(records); } catch (e) { /* best-effort */ }
   return emailModel.modelMissingEmails(records, {
     dbQuery: (domain) => db.query({ domain, emailType: 'Professional', pageSize: 500 }).then((r) => r.rows || []),
     // Prefer a company's stored email model (set via Bulk Edit) over guessing from samples. Fall back to

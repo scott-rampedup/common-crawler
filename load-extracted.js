@@ -15,6 +15,7 @@ const { S3Client, ListObjectsV2Command, GetObjectCommand } = require('@aws-sdk/c
 const { NodeHttpHandler } = require('@smithy/node-http-handler');
 const os = require('./opensearch');
 const { modelMissingEmails } = require('./email-model');
+const liName = require('./li-name');
 
 (async () => {
   const prefix = process.argv[2] || 'cc-extracted/';
@@ -75,6 +76,8 @@ const { modelMissingEmails } = require('./email-model');
         const recs = body.trim().split('\n').filter(Boolean)
           .map((l) => { try { return JSON.parse(l); } catch (e) { return null; } })
           .filter(Boolean);
+        // LinkedIn-slug name recovery before modelling, so a modelled address uses the corrected name.
+        try { liName.applyToRecords(recs); } catch (e) { /* best-effort */ }
         if (MODEL) { try { await modelMissingEmails(recs, { dbQuery }); } catch (e) { /* best-effort */ } }
         const docs = recs
           .map((r2) => { try { return os.recordToDoc(r2, now); } catch (e) { return null; } })

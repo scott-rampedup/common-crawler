@@ -21,6 +21,7 @@ const path = require('path');
 const { makeCcS3 } = require('./cc-s3');
 const extractor = require('./extractor');
 const { modelMissingEmails } = require('./email-model');
+let liName = null; try { liName = require('./li-name'); } catch (e) { /* optional in older deploy packages */ }
 
 const s3 = new S3Client({});
 const fetchWarc = makeCcS3();                                             // S3-direct WARC reader (byte-identical to the fleet's)
@@ -58,6 +59,9 @@ exports.handler = async (event = {}) => {
   // Same enrichment the fleet does, minus geocode (no phone-blocks in the package). dbQuery returns []
   // so email modelling uses same-batch company patterns only (no PG lookup available from Lambda).
   if (records.length) {
+    // LinkedIn-slug name recovery before modelling (guarded require: an older deploy package may not
+    // carry li-name.js, and a missing optional module must not take the whole Lambda down).
+    try { if (liName) liName.applyToRecords(records); } catch (e) { /* best-effort */ }
     try { await modelMissingEmails(records, { dbQuery: async () => [] }); } catch (e) { /* best-effort */ }
     try { records = extractor.analyzePhones(records) || records; } catch (e) { /* best-effort */ }
   }

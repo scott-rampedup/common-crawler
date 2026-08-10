@@ -99,38 +99,37 @@ function cleanContactLinkedin(u) {
 }
 
 // Ensure every ingested contact gets a name + gender: derive First/Last from the email (firstname.lastname)
-// or a linkedin.com/in profile when the name is blank, then assign Gender from the names map (the premium
-// real-person signal). Lazily loads cc-home-enrich + the gender map; both cached. Never throws.
-let _che = null, _gmap = null;
+// when the name is blank, assign Gender from the names map (the premium real-person signal), and — when
+// there is STILL no gender — fall back to the name implied by the person's linkedin.com/in slug.
+// Lazily loads cc-home-enrich + li-name + the gender map; all cached. Never throws.
+let _che = null, _gmap = null, _li = null;
 const _cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : '';
 const _gmapLoad = () => { if (!_gmap) { try { _gmap = require('./extractor').loadGenderMap(require('path').join(__dirname, 'names-genders.csv')); } catch (e) { _gmap = {}; } } return _gmap; };
-// Split a separator-less linkedin.com/in slug (angelomarino -> Angelo Marino) using the names map as the
-// first-name lexicon. Conservative: no-separator slugs only (the separator parser owns hyphenated ones),
-// first name ≥4, org-word/length guards so org/vanity slugs (superior-negotiators, txlender) are skipped.
-const _ORG = /loan|lender|mortgage|realt|group|team|llc|inc|onlus|negotiat|insurance|agency|propert|homes|lawyer|consult|solutions|services|marketing|digital|media|studio|academy|foundation|network|global|partners|associates|capital|ventures|advisor|financial/;
-function _splitLinkedinSlug(url) {
-  const m = String(url || '').match(/linkedin\.com\/in\/([^/?#]+)/i); if (!m) return null;
-  const raw = m[1].toLowerCase(); if (/[-_.]/.test(raw)) return null;
-  const s = raw.replace(/[^a-z]/g, ''); if (s.length < 6 || s.length > 22 || _ORG.test(s)) return null;
-  const g = _gmapLoad();
-  for (let i = Math.min(s.length - 3, 12); i >= 4; i--) { const f = s.slice(0, i), l = s.slice(i); if (g[f] && l.length >= 3 && l.length <= 15) return { first: _cap(f), last: _cap(l) }; }
-  return null;
-}
+const _liLoad = () => { if (_li === null) { try { _li = require('./li-name'); } catch (e) { _li = false; } } return _li; };
 function ensureNameGender(doc) {
   try {
-    if (!(doc.first && String(doc.first).trim()) && !(doc.last && String(doc.last).trim()) && (doc.email || doc.linkedin_url)) {
+    // 1) blank name + a dotted email -> firstname.lastname. (The linkedin.com/in slug is handled in (3),
+    //    which also knows when a slug name is good enough to REPLACE a name we already have.)
+    if (!(doc.first && String(doc.first).trim()) && !(doc.last && String(doc.last).trim()) && doc.email) {
       if (!_che) { try { _che = require('./cc-home-enrich'); } catch (e) { _che = false; } }
-      let nm = null;
       if (_che) {
         const ne = _che.nameFromEmail(doc.email || '');
-        nm = (ne.first && ne.last) ? ne : null;
-        if (!nm && doc.linkedin_url) { const nl = _che.nameFromLinkedin(doc.linkedin_url); if (nl.first && nl.last) nm = nl; }
+        if (ne.first && ne.last) { doc.first = _cap(ne.first); doc.last = _cap(ne.last); doc.name = `${doc.first} ${doc.last}`.trim(); }
       }
-      if (!nm && doc.linkedin_url) nm = _splitLinkedinSlug(doc.linkedin_url);   // dictionary split of a concatenated /in slug
-      if (nm) { doc.first = _cap(nm.first); doc.last = _cap(nm.last); doc.name = `${doc.first} ${doc.last}`.trim(); }
     }
+    // 2) gender from the name we have
     if ((!doc.gender || !String(doc.gender).trim()) && doc.first) {
       doc.gender = _gmapLoad()[String(doc.first).toLowerCase()] || '';
+    }
+    // 3) no name at all, or a name the map can't gender -> use the LinkedIn slug's name. li-name.resolve
+    //    only overwrites an EXISTING name when the slug name resolves to a gender.
+    const _noName = !(doc.first && String(doc.first).trim()) || !(doc.last && String(doc.last).trim());
+    if ((_noName || !doc.gender || !String(doc.gender).trim()) && doc.linkedin_url) {
+      const li = _liLoad();
+      if (li) {
+        const r = li.resolve({ first: doc.first, last: doc.last, gender: doc.gender, linkedinUrl: doc.linkedin_url });
+        if (r) { doc.first = r.first; doc.last = r.last; doc.name = r.name; doc.gender = r.gender; }
+      }
     }
   } catch (e) { /* best-effort */ }
   return doc;
