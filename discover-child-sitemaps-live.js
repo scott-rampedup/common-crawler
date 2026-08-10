@@ -29,6 +29,8 @@ const PLATFORMS = new Set(['medium.com', 'wordpress.com', 'blogspot.com', 'wixsi
 const isPlatform = (d) => PLATFORMS.has(d) || [...PLATFORMS].some((p) => d.endsWith('.' + p));
 
 function loadNameSet(file) { try { return new Set(fs.readFileSync(path.join(__dirname, file), 'utf8').split(/\r?\n/).map((s) => s.trim().toLowerCase()).filter((l, i) => l && !(i === 0 && l === 'name'))); } catch (e) { return new Set(); } }
+// FNV-1a: cheap, stable across processes — the same domain always lands in the same shard.
+function hashDomain(d) { let h = 0x811c9dc5; for (let i = 0; i < d.length; i++) { h ^= d.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h; }
 async function pool(items, n, fn) { let i = 0; const workers = Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) { const idx = i++; try { await fn(items[idx], idx); } catch (e) { /* per-domain */ } } }); await Promise.all(workers); }
 
 (async () => {
@@ -41,6 +43,19 @@ async function pool(items, n, fn) { let i = 0; const workers = Array.from({ leng
   const conc = Number(arg('conc', '') || process.env.CONC || 12) || 12;
   const skipExisting = has('skip-existing') || /^(1|true|yes|on)$/i.test(process.env.SKIP_EXISTING || '');
   const dry = has('dry') || /^(1|true|yes|on)$/i.test(process.env.DRY || '');
+  // Horizontal split: SHARD="i/N" (or --shard i/N) keeps only the domains whose hash lands in slice i, so
+  // N machines can run the same command over disjoint, evenly-sized slices of the same domain list.
+  const shardArg = arg('shard', '') || process.env.SHARD || '';
+  const sm = /^(\d+)\s*\/\s*(\d+)$/.exec(shardArg.trim());
+  const shardIdx = sm ? Number(sm[1]) : 0;
+  const shardN = sm ? Math.max(1, Number(sm[2])) : 1;
+  if (shardArg && !sm) { console.error(`bad --shard "${shardArg}" (want i/N)`); process.exit(1); }
+  if (shardIdx >= shardN) { console.error(`--shard index ${shardIdx} out of range for N=${shardN}`); process.exit(1); }
+  // Flush found sitemaps to the Library in small batches: the probing is the expensive part, so getting
+  // results written early means a kill/OOM costs at most FLUSH sitemaps.
+  const flushAt = Math.max(1, Number(arg('flush', '') || process.env.FLUSH || 50) || 50);
+
+  const inShard = (d) => shardN === 1 || (hashDomain(d) % shardN) === shardIdx;
 
   const coClient = companies.makeClient(process.env.OPENSEARCH_ENDPOINT);
   const smClient = sitemaps.makeClient(process.env.OPENSEARCH_ENDPOINT);
@@ -51,12 +66,12 @@ async function pool(items, n, fn) { let i = 0; const workers = Array.from({ leng
   if (!process.env.PROXY_URL && !process.env.PROXY_FALLBACK_URL) console.error('WARNING: no PROXY_URL set — live fetches go direct (may be blocked).');
 
   // 1) Target domains (bounded for the pilot).
-  console.error(`Selecting up to ${limitDomains.toLocaleString()} domains: industry="${industry}", country="${country}"…`);
+  console.error(`Selecting up to ${limitDomains.toLocaleString()} domains: industry="${industry}", country="${country}"${shardN > 1 ? `, shard ${shardIdx}/${shardN}` : ''}…`);
   const domains = [];
   const seen = new Set();
   await companies.each(coClient, { industry, country }, (row) => {
     const d = String(row.domain || '').toLowerCase().trim().replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, '');
-    if (d && d.includes('.') && !d.includes(' ') && !isPlatform(d) && !seen.has(d)) { seen.add(d); domains.push(d); }
+    if (d && d.includes('.') && !d.includes(' ') && !isPlatform(d) && !seen.has(d)) { seen.add(d); if (inShard(d)) domains.push(d); }
   }, limitDomains * 3);   // over-scan a bit; we cap after skip-existing
   let targets = domains.slice(0, skipExisting ? domains.length : limitDomains);
 
