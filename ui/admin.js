@@ -223,8 +223,33 @@ if ($('altSave')) {
   });
 }
 
+// ---- Role-Based email terms (adds to the built-in ROLE_LOCALS; applied live on save) ----
+async function loadRoleTerms() {
+  try {
+    const d = await api('GET', '/api/config/role-email-terms');
+    if ($('roleTerms')) $('roleTerms').value = (d.terms || []).join('\n');
+    const built = d.builtIn || [];
+    if ($('roleBuiltIn')) $('roleBuiltIn').textContent = built.join(', ');
+    if ($('roleBuiltInCount')) $('roleBuiltInCount').textContent = built.length;
+  } catch (e) { /* config index may be off; leave blank */ }
+}
+if ($('roleTermsSave')) {
+  $('roleTermsSave').addEventListener('click', async () => {
+    const terms = $('roleTerms').value.split('\n').map((s) => s.trim()).filter(Boolean);
+    const msg = $('roleTermsMsg'); msg.textContent = 'Saving…'; msg.className = 'admin-msg';
+    try {
+      const d = await api('POST', '/api/config/role-email-terms', { terms });
+      // The server normalizes + de-dupes, so show what was actually stored rather than what was typed.
+      $('roleTerms').value = (d.terms || []).join('\n');
+      msg.textContent = `Saved ${d.saved} term(s) — applied to new classifications now.`;
+      msg.className = 'admin-msg ok';
+    } catch (e) { msg.textContent = 'Failed: ' + e.message; msg.className = 'admin-msg err'; }
+  });
+}
+
 loadUsers();
 loadPages();
 loadEmailStatus();
+loadRoleTerms();
 loadAltWebsites();
 monRefresh();

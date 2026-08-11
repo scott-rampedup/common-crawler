@@ -74,6 +74,18 @@
       </section>
 
       <section class="admin-section">
+        <h2>Role-Based Email Terms</h2>
+        <p class="admin-hint">One term per line. An email is classed <b>Role-Based</b> (a shared inbox, not a person) when its local part — or the first token of it — matches a term. So <code>leasing</code> catches <code>leasing@</code> and <code>leasing.uk@</code>, but never a person like <code>leslie@</code>. Paste a whole address if it's easier; only the part before the <code>@</code> is kept. These <b>add to</b> the built-in list, they never replace it, and a save applies immediately — no redeploy.</p>
+        <textarea id="roleTerms" rows="10" placeholder="leasing&#10;reservations&#10;frontdesk&#10;newbusiness" style="width:100%;box-sizing:border-box;font-family:ui-monospace,Consolas,monospace;font-size:0.85rem;padding:10px 12px;border:1px solid #d1d5db;border-radius:10px;"></textarea>
+        <div style="margin-top:10px"><button id="roleTermsSave" class="primary" type="button">Save terms</button></div>
+        <p id="roleTermsMsg" class="admin-msg"></p>
+        <details style="margin-top:10px">
+          <summary style="cursor:pointer;font-size:0.85rem;color:#4b5563">Already covered by the built-in list (<span id="roleBuiltInCount">0</span>) — no need to re-add these</summary>
+          <p id="roleBuiltIn" style="margin-top:8px;font-family:ui-monospace,Consolas,monospace;font-size:0.8rem;color:#4b5563;word-break:break-word"></p>
+        </details>
+      </section>
+
+      <section class="admin-section">
         <h2>Sitemap Monitor <span id="monBadge" class="pending-badge"></span></h2>
         <p class="admin-hint">Watches the <b>bio-dedicated child sitemaps</b> of the sites you add and, on a schedule, flags new bio URLs as candidate <b>new hires</b> — auto-extracted into the Contact Crawler and tagged <b>NEW HIRE</b> — and removed URLs as departures. Unchanged sitemaps are skipped via <code>&lt;lastmod&gt;</code>, so a pass costs almost nothing.</p>
         <div class="mon-form">

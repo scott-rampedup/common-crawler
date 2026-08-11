@@ -554,11 +554,32 @@ function pathIdFromUrl(url){
   return null;
 }
 
+// Admin-managed Role-Based terms, COMPLEMENTING the built-in ROLE_LOCALS above (never replacing it, so a
+// bad save can't switch the built-ins off). Injected at runtime the same way the email blocklist is —
+// ui-server loads the saved list from cc_config on boot and re-applies it on every save.
+let ROLE_LOCALS_ADMIN = new Set();
+// "Reservations", " FrontDesk ", even a pasted "leasing@acme.com" all normalize to the bare local-part
+// token, so an admin can paste whatever they have to hand.
+function normalizeRoleTerm(t){
+  return String(t == null ? "" : t).trim().toLowerCase().split("@")[0].replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "");
+}
+function setAdminRoleTerms(terms){
+  ROLE_LOCALS_ADMIN = new Set([...(terms || [])].map(normalizeRoleTerm).filter(Boolean));
+  return ROLE_LOCALS_ADMIN;
+}
+function getAdminRoleTerms(){ return [...ROLE_LOCALS_ADMIN]; }
+// Surfaced so the Admin screen can show what the admin list is ADDING to, instead of an admin guessing
+// and re-adding "info" or "sales" that already match.
+function getBuiltInRoleTerms(){ return [...ROLE_LOCALS].sort(); }
+
 function classifyEmail(email){
   if(!email) return "";
   const [local, domain] = email.toLowerCase().split("@"); if(!domain) return "";
   const base = local.split(/[._-]/)[0];
+  // Admin terms match exactly the way the built-ins do — on the whole local-part or its first token — so
+  // "leasing" catches leasing@ and leasing.uk@ but never a person like "leslie@".
   if(ROLE_LOCALS.has(local) || ROLE_LOCALS.has(base)) return "Role-Based";
+  if(ROLE_LOCALS_ADMIN.has(local) || ROLE_LOCALS_ADMIN.has(base)) return "Role-Based";
   if(FREE_DOMAINS.has(domain)) return "Personal";
   return "Professional";
 }
@@ -1189,7 +1210,7 @@ function loadDirectoryRules(filePath){
 }
 
 module.exports = { extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules,
-  cleanEmail, setEmailBlocklist, loadEmailBlocklist, analyzePhones, splitExtension,
+  cleanEmail, setEmailBlocklist, loadEmailBlocklist, setAdminRoleTerms, getAdminRoleTerms, getBuiltInRoleTerms, analyzePhones, splitExtension,
   geocodeRecords, geocodePhone, findPosition,
   toE164, countryCodeFromDomain, pathIdFromUrl, getBaseDomain, nameSlugFromUrl, lastPathSeg, lastPathFromUrl, structuredFromHtml, findSocials };   // reused by the Sheet importer + Site Search + DB normalizer
 

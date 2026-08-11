@@ -166,6 +166,24 @@ async function setAltWebsites(client, patterns) {
   return { saved: list.length, patterns: list };
 }
 
+// --- Role-Based email terms (admin list). Lives here beside the other cc_config admin lists rather than
+// in extractor.js, which is deliberately dependency-free and has no OpenSearch client. extractor owns the
+// MATCHING (setAdminRoleTerms); this owns the STORAGE, and ui-server joins them on boot + on save.
+// Empty by default: the built-in ROLE_LOCALS always applies, and this only ever adds to it. ---
+async function getRoleEmailTerms(client) {
+  try { const g = await client.get({ index: CONFIG_INDEX, id: 'role_email_terms' }); const t = (g.body || g)._source.terms; return Array.isArray(t) ? t : []; }
+  catch (e) { return []; }                                     // never saved yet -> no extra terms
+}
+async function setRoleEmailTerms(client, terms) {
+  // Same normalization extractor.normalizeRoleTerm applies, so what's stored is what will match: a bare
+  // local-part token, lowercased, with any @domain and surrounding punctuation stripped.
+  const list = [...new Set((Array.isArray(terms) ? terms : [])
+    .map((t) => String(t == null ? '' : t).trim().toLowerCase().split('@')[0].replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ''))
+    .filter(Boolean))];
+  await client.index({ index: CONFIG_INDEX, id: 'role_email_terms', body: { terms: list }, refresh: true });
+  return { saved: list.length, terms: list };
+}
+
 // Manual edit of a company doc (partial update by id). Only whitelisted fields; website edits keep domain
 // in sync. NOTE: a full company re-load (from the source dataset) would overwrite manual edits.
 const EDITABLE = new Set(['name', 'website', 'industry', 'size', 'country', 'region', 'locality', 'founded',
@@ -318,4 +336,4 @@ function isBadCompanyDomain(dom) {
   return !dom || NON_COMPANY_DOMAINS.has(dom);
 }
 
-module.exports = { INDEX, MAPPING, OUT_COLS, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, bulkUpdate, getEmailModel, setEmailModelByDomain, makeClient: os.makeClient };
+module.exports = { INDEX, MAPPING, OUT_COLS, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, getRoleEmailTerms, setRoleEmailTerms, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, bulkUpdate, getEmailModel, setEmailModelByDomain, makeClient: os.makeClient };

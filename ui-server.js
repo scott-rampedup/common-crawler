@@ -8,7 +8,9 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'ui');
 const RESULTS_CSV = path.join(__dirname, 'cc-results.csv');
 const { runDomains, COLUMNS, extractBioUrlsFromSitemaps, extractBioUrlGroups, isBioOrContactUrl, discoverBioUrlsFromCC, resolveLatestCrawl } = require('./cc-engine');
-const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords, geocodePhone, classifyEmail, cleanEmail, findPosition } = require('./extractor');
+const { loadGenderMap, loadEmailBlocklist, analyzePhones, geocodeRecords, geocodePhone, classifyEmail, cleanEmail, findPosition,
+  setAdminRoleTerms, getBuiltInRoleTerms } = require('./extractor');
+const BUILTIN_ROLE_TERMS = getBuiltInRoleTerms();   // static; shown on the Admin screen for reference
 const { modelEmail, render: renderEmailLocal, TEMPLATES: EMAIL_TEMPLATES } = require('./email-pattern');
 const emailModel = require('./email-model');   // shared email-modelling (also used by the worker fleet)
 const liName = require('./li-name');           // shared linkedin.com/in name+gender recovery (ingest + backfill)
@@ -1861,6 +1863,28 @@ const server = http.createServer(async (req, res) => {
     readJsonBody(req, async (b) => { try { sendJson(res, await companies.setAltWebsites(companiesClient, (b && b.patterns) || [])); } catch (e) { jsonErr(res, 500, e.message); } });
     return;
   }
+  // Role-Based email terms: extra local-part tokens that classify an address as Role-Based, on top of the
+  // built-in list. GET returns both so the admin can see what they're adding to; POST replaces the ADMIN
+  // list only and applies it to this process immediately (no redeploy, no restart).
+  if (url.pathname === '/api/config/role-email-terms' && req.method === 'GET') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (!companiesClient) { jsonErr(res, 503, 'Config index not available (OpenSearch off).'); return; }
+    try { sendJson(res, { terms: await companies.getRoleEmailTerms(companiesClient), builtIn: BUILTIN_ROLE_TERMS }); }
+    catch (e) { jsonErr(res, 500, e.message); }
+    return;
+  }
+  if (url.pathname === '/api/config/role-email-terms' && req.method === 'POST') {
+    if (!isAdmin) { jsonErr(res, 403, 'Admin access required'); return; }
+    if (!companiesClient) { jsonErr(res, 503, 'Config index not available (OpenSearch off).'); return; }
+    readJsonBody(req, async (b) => {
+      try {
+        const saved = await companies.setRoleEmailTerms(companiesClient, (b && b.terms) || []);
+        setAdminRoleTerms(saved.terms);                       // live: new classifications use it at once
+        sendJson(res, saved);
+      } catch (e) { jsonErr(res, 500, e.message); }
+    });
+    return;
+  }
   // CC home-page enrichment for selected companies: description/phone/email/socials/maps/linkedin/bio/
   // alternate-websites + the grouped Contacts string. Reads each company's home page from Common Crawl.
   if (url.pathname === '/api/companies/cc-enrich' && req.method === 'POST') {
@@ -2267,6 +2291,11 @@ pruneOldJobs();
       placesClient = corporatePlaces.makeClient(process.env.OPENSEARCH_ENDPOINT); // Corporate Places index
       console.log('Search backend: OpenSearch (SEARCH_BACKEND=opensearch).');
       optout.ensure(reader.client).then((c) => c && console.log('Opt-out registry index created.')).catch((e) => console.error('opt-out index ensure failed:', e.message));
+      // Admin Role-Based email terms: load the saved list so classifyEmail applies it from the first
+      // request. Failure is non-fatal — the built-in ROLE_LOCALS still classifies on its own.
+      companies.getRoleEmailTerms(companiesClient)
+        .then((t) => { setAdminRoleTerms(t); if (t.length) console.log(`Role-Based email terms: ${t.length} admin term(s) loaded (+${BUILTIN_ROLE_TERMS.length} built-in).`); })
+        .catch((e) => console.error('role-email-terms load failed:', e.message));
       sitemaps.ensureIndex(sitemapsClient).then(() => console.log('Sitemap Library index ready (monitor fields ensured).')).catch((e) => console.error('sitemaps index ensure failed:', e.message));
       atp.ensureIndex(atpClient).then(() => console.log('ATP Library index ready.')).catch((e) => console.error('atp index ensure failed:', e.message));
       corporatePlaces.ensureIndex(placesClient).then(() => console.log('Corporate Places index ready.')).catch((e) => console.error('corporate_places index ensure failed:', e.message));
