@@ -99,6 +99,46 @@ function node(script, args) {
   for (const u of seen) if (!resolved.has(keyOf(u))) { mo.write(u + '\n'); miss++; }
   await new Promise((r) => mo.end(r));
   console.error(`\nin Common Crawl: ${resolved.size.toLocaleString()} | not in CC: ${miss.toLocaleString()}${LIVE ? ' (live fallback ON)' : ' (skipped — set LIVE=1 to crawl them)'}`);
+  // Preserve the miss list off-machine. The first run's misses were lost when its machine was destroyed,
+  // which meant a later "scan more crawls" pass had no cheap way to target only the pages still missing.
+  if (miss) {
+    try {
+      const { PutObjectCommand: Put } = require('@aws-sdk/client-s3');
+      const key = `${PREFIX.replace(/[^/]*$/, '')}${TAG}-miss.txt`;
+      await s3.send(new Put({ Bucket: BUCKET, Key: key, Body: fs.createReadStream(F.miss), ContentLength: fs.statSync(F.miss).size, ContentType: 'text/plain' }));
+      console.error(`  miss list saved -> s3://${BUCKET}/${key}`);
+    } catch (e) { console.error('  (could not save the miss list to S3:', e.message + ')'); }
+  }
+
+  // ---- 2b) drop pointers for pages we have ALREADY ingested ----
+  // A second pass over older crawls re-finds most of what the first pass already resolved. Fetching and
+  // re-extracting those is ~1M wasted S3 reads for records the score gate will mostly reject anyway, so
+  // filter by web_source_url before extracting. SKIP_KNOWN=0 disables (e.g. to deliberately refresh).
+  if (!/^(0|false|no|off)$/i.test(process.env.SKIP_KNOWN || '') && fs.existsSync(F.ptr)) {
+    const osx = require('./opensearch');
+    const client = osx.makeClient(process.env.OPENSEARCH_ENDPOINT);
+    const lines = [];
+    const rl2 = readline.createInterface({ input: fs.createReadStream(F.ptr), crlfDelay: Infinity });
+    for await (const l of rl2) { if (l.trim()) lines.push(l); }
+    console.error(`\n══════ filtering ${lines.length.toLocaleString()} pointer(s) against contacts we already have ══════`);
+    const known = new Set();
+    const urls = lines.map((l) => { try { return JSON.parse(l).url; } catch (e) { return ''; } });
+    const uniq = [...new Set(urls.filter(Boolean))];
+    for (let i = 0; i < uniq.length; i += 1024) {
+      const chunk = uniq.slice(i, i + 1024);
+      try {
+        const r = await client.search({ index: osx.INDEX, body: { size: 0, query: { terms: { web_source_url: chunk } },
+          aggs: { u: { terms: { field: 'web_source_url', size: chunk.length } } } } });
+        for (const b of (((r.body || r).aggregations.u.buckets) || [])) known.add(b.key);
+      } catch (e) { /* best-effort: an unfiltered page costs a fetch, not correctness */ }
+      if (i && i % 102400 === 0) console.error(`  checked ${i.toLocaleString()}/${uniq.length.toLocaleString()} | already have ${known.size.toLocaleString()}`);
+    }
+    const kept = [];
+    for (let i = 0; i < lines.length; i++) if (urls[i] && !known.has(urls[i])) kept.push(lines[i]);
+    console.error(`  already ingested: ${known.size.toLocaleString()} | NEW to fetch: ${kept.length.toLocaleString()}`);
+    fs.writeFileSync(F.ptr, kept.join('\n') + (kept.length ? '\n' : ''));
+    if (!kept.length && !(LIVE && miss)) { console.error('\nnothing new in this crawl stack — done.'); return; }
+  }
 
   // ---- 3) ingest under the standard rules ----
   const exArgs = ['--ptr', F.ptr, '--tag', TAG];
