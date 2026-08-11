@@ -36,16 +36,28 @@ const TOP = Number(arg('--top', '40000')) || 40000;
   console.error(`known names: ${Object.keys(known).length.toLocaleString()}${DRY ? '  [DRY RUN]' : ''}`);
   console.error(`  thresholds: >=${MIN_COUNT} contacts per name, >=${(MIN_AGREE * 100).toFixed(0)}% agreement\n`);
 
-  // first.kw × gender, in one aggregation: for every first name, how many M and how many F.
-  const body = {
-    size: 0,
-    query: { bool: { must_not: [{ term: { gender: '' } }, { term: { 'first.kw': '' } }] } },
-    aggs: { names: { terms: { field: 'first.kw', size: TOP, order: { _count: 'desc' } },
-      aggs: { g: { terms: { field: 'gender', size: 4 } } } } },
-  };
+  // COMPOSITE, not a flat terms agg: there are far more than 65,535 distinct first names, and a terms agg
+  // with a sub-aggregation blows the bucket ceiling outright (observed: "too many buckets ... was 65536").
+  // Composite pages through every key instead of trying to materialize them at once.
+  const QUERY = { bool: { must_not: [{ term: { gender: '' } }, { term: { 'first.kw': '' } }] } };
   const t0 = Date.now();
-  const res = await client.search({ index: os.INDEX, body });
-  const buckets = ((res.body || res).aggregations.names.buckets) || [];
+  const buckets = [];
+  let afterKey = null;
+  for (;;) {
+    const body = {
+      size: 0, query: QUERY,
+      aggs: { names: { composite: { size: 2000, sources: [{ n: { terms: { field: 'first.kw' } } }], ...(afterKey ? { after: afterKey } : {}) },
+        aggs: { g: { terms: { field: 'gender', size: 4 } } } } },
+    };
+    const agg = ((await client.search({ index: os.INDEX, body })).body || {}).aggregations.names;
+    const page = agg.buckets || [];
+    if (!page.length) break;
+    for (const b of page) buckets.push({ key: b.key.n, doc_count: b.doc_count, g: b.g });
+    afterKey = agg.after_key;
+    if (!afterKey) break;
+    if (buckets.length % 20000 < 2000) console.error(`  paged ${buckets.length.toLocaleString()} distinct first name(s)…`);
+    if (buckets.length >= TOP) break;
+  }
   console.error(`distinct gendered first names seen: ${buckets.length.toLocaleString()}\n`);
 
   const additions = [];

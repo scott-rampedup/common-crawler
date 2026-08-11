@@ -30,16 +30,45 @@ const MIN_COUNT = Math.max(2, Number(arg('--min-count', '25')) || 25);
 const OUT = arg('--out', path.join(__dirname, 'titles-additions.csv'));
 const TOP = Number(arg('--top', '20000')) || 20000;
 
-// Page furniture and person names masquerading as titles. A title that is really the person's own name is
-// the single most common junk value in this field (every CMG record had one before the correction sheet).
-const JUNK = /^(home|about|about us|contact|contact us|team|our team|staff|meet the team|profile|biography|bio|welcome|news|blog|careers|privacy|terms|sitemap|search|login|menu|page not found|404)$/i;
+// The Title field is POLLUTED: it holds whatever text the page offered, which is usually the page <title>
+// and often the person's own name. A first pass over production returned "admin" (115k), "Nothing Found",
+// "One moment, please...", "No Results Found", "Select which cookies you accept" — CMS furniture, not jobs.
+// So a candidate must positively LOOK like a job title, not merely fail to look like junk.
+
+// A real job title almost always contains a role noun. Requiring one is what makes this high-precision.
+const ROLE_HINT = new RegExp('\\b(' + [
+  'officer', 'director', 'manager', 'supervisor', 'coordinator', 'administrator', 'executive', 'president',
+  'chair', 'chairman', 'chairwoman', 'principal', 'partner', 'associate', 'assistant', 'analyst', 'specialist',
+  'consultant', 'advisor', 'adviser', 'agent', 'broker', 'realtor', 'attorney', 'lawyer', 'solicitor',
+  'barrister', 'paralegal', 'counsel', 'banker', 'lender', 'originator', 'underwriter', 'processor',
+  'accountant', 'auditor', 'bookkeeper', 'controller', 'treasurer', 'secretary', 'clerk', 'registrar',
+  'engineer', 'architect', 'developer', 'designer', 'scientist', 'researcher', 'technician', 'technologist',
+  'physician', 'doctor', 'surgeon', 'dentist', 'nurse', 'practitioner', 'therapist', 'pathologist',
+  'pharmacist', 'veterinarian', 'counselor', 'counsellor', 'psychologist', 'psychiatrist', 'dietitian',
+  'teacher', 'professor', 'lecturer', 'instructor', 'educator', 'dean', 'provost', 'superintendent',
+  'planner', 'strategist', 'buyer', 'trader', 'appraiser', 'inspector', 'adjuster', 'estimator',
+  'representative', 'rep', 'ambassador', 'liaison', 'recruiter', 'trainer', 'coach', 'mentor',
+  'owner', 'founder', 'cofounder', 'proprietor', 'operator', 'contractor', 'builder', 'installer',
+  'stylist', 'groomer', 'chef', 'sommelier', 'pilot', 'captain', 'officer', 'paramedic', 'chiropractor',
+  'optometrist', 'orthodontist', 'podiatrist', 'radiologist', 'anesthesiologist', 'oncologist',
+  'ceo', 'cfo', 'coo', 'cto', 'cio', 'cmo', 'cco', 'evp', 'svp', 'vp', 'gm', 'md', 'esq',
+].join('|') + ')\\b', 'i');
+
+// Page furniture, CMS strings and non-title text seen in production.
+const JUNK = /^(home|about|about us|contact|contact us|team|our team|staff|meet the team|meet our team|profile|my profile|biography|bio|welcome|news|blog|careers|privacy|terms|sitemap|search|login|menu|page not found|404|admin|contacts|members|people|directory|leadership|our staff|our people|faculty|who we are|archives|nothing found|no results found|administration)$/i;
+const JUNK_SUBSTR = /(one moment|please wait|no results|nothing found|cookies?|javascript|enable|loading|error|untitled|click here|read more|learn more|coming soon|under construction|lorem ipsum|autor:|author:|\[email|@|https?:\/\/|www\.|\.com|\.co\.|\.org|\.net|\.nz|\.au)/i;
+
 const looksLikeTitle = (t) => {
   const s = String(t || '').trim();
   if (s.length < 3 || s.length > 60) return false;
   if (JUNK.test(s)) return false;
-  if (/[|<>{}]|https?:\/\//i.test(s)) return false;             // page-title separators / URLs
+  if (JUNK_SUBSTR.test(s)) return false;
+  if (/[|<>{}\[\]•·»«]|\.{2,}/.test(s)) return false;           // page-title separators, ellipses
+  if (/[?!]/.test(s)) return false;                             // questions/exclamations are copy, not titles
   if (!/[a-z]/i.test(s)) return false;
   if (/\d{3,}/.test(s)) return false;                           // ids, phone fragments
+  if (s.split(/\s+/).length > 6) return false;                  // a sentence, not a title
+  if (!ROLE_HINT.test(s)) return false;                         // the decisive test
   return true;
 };
 
