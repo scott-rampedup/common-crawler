@@ -95,7 +95,11 @@ process.on('unhandledRejection', () => {});   // a raced/abandoned fetch rejecti
   const genderMap = extractor.loadGenderMap(path.join(__dirname, 'names-genders.csv'));
   const fetchWarc = makeCcS3();
   const now = new Date().toISOString();
-  const CONC = Number(process.env.CONC) || 12;
+  // CONC drives the Common Crawl pump only: in-region S3 range reads, pure I/O, no politeness budget to
+  // respect (the archive is a public bucket that scales per-prefix). 12 left the fetch stage as the wall
+  // clock while the box idled; 64 keeps it busy and stays under the 256-socket pool cc-s3 now opens.
+  // LIVE_CONC is a different animal — it goes through the Evomi proxy at real sites, so it stays low.
+  const CONC = Number(process.env.CONC) || 64;
   const LIVE_CONC = Number(process.env.LIVE_CONC) || 4;
   const CHUNK = Number(process.env.CHUNK) || 5000;
   const tsOf = (t) => String(t || '').slice(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3');

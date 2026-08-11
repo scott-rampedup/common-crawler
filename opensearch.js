@@ -192,8 +192,13 @@ async function bulkUpsert(client, docs) {
     body.push({ update: { _index: INDEX, _id: id } });
     body.push({
       scripted_upsert: true, upsert: d,
+      // ctx.op='none' on the losing branch is what stops a lower-scored re-crawl from costing a full
+      // reindex. Without it the script "does nothing" but OpenSearch still rewrites the document — and a
+      // Lucene rewrite is a delete + insert, which is what then drives merges. The cluster had logged
+      // 159M index ops for 13.4M docs (~11.9 writes per stored doc), with merge time at 2.6x and refresh
+      // time at 1.4x total indexing time. Re-crawls that can't improve a record are now free.
       script: { lang: 'painless',
-        source: "if (params.doc.score >= ctx._source.score) { ctx._source = params.doc }",
+        source: "if (params.doc.score >= ctx._source.score) { ctx._source = params.doc } else { ctx.op = 'none' }",
         params: { doc: d } },
     });
   }

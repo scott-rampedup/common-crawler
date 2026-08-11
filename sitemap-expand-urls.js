@@ -132,7 +132,15 @@ function keywordTokens(keyword) {
 
   // Page the Library by sitemap_url (stable under the writes this run makes behind the cursor).
   let after = null, queue = [];
-  const drain = async () => { while (queue.length) { await Promise.all(queue.splice(0, CONC).map(expandOne)); } };
+  // Rolling pool, NOT batches of CONC: a batch barrier makes every worker wait on the slowest sitemap in
+  // its group of 12, and sitemap fetch times vary by an order of magnitude, so a single slow host idled
+  // eleven workers. Each worker now pulls the next item the moment it finishes.
+  const drain = async () => {
+    let i = 0;
+    const worker = async () => { for (;;) { const item = queue[i++]; if (item === undefined) return; await expandOne(item); } };
+    await Promise.all(Array.from({ length: Math.min(CONC, queue.length) }, worker));
+    queue = [];
+  };
   for (;;) {
     const body = { size: 2000, query: QUERY, _source: ['sitemap_url', 'domain', 'keyword', 'url_count'], sort: [{ sitemap_url: 'asc' }] };
     if (after) body.search_after = after;

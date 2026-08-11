@@ -39,7 +39,16 @@ function makeCcS3(opts = {}) {
   const requestPays = opts.requestPays || false;
   if (!s3) {
     const { S3Client } = require('@aws-sdk/client-s3');
-    s3 = new S3Client({ region });
+    // The SDK's default socket pool is 50, which silently caps WARC fetch concurrency no matter what
+    // CONC says. Size the pool above the intended concurrency so the fetch pump is the only limit.
+    const maxSockets = Number(process.env.S3_MAX_SOCKETS) || 256;
+    let requestHandler;
+    try {
+      const { NodeHttpHandler } = require('@smithy/node-http-handler');
+      const https = require('https');
+      requestHandler = new NodeHttpHandler({ httpsAgent: new https.Agent({ maxSockets, keepAlive: true }) });
+    } catch (e) { /* older SDK layout — fall back to the default handler */ }
+    s3 = new S3Client({ region, ...(requestHandler ? { requestHandler } : {}), maxAttempts: 5 });
   }
   const { GetObjectCommand } = require('@aws-sdk/client-s3');
 

@@ -885,6 +885,8 @@ const NEG_SITEMAP_NAME = /(?:^|[\/_-])(attachment|attachments|media|image|images
 // returns watches carrying `kind`. People = filename in bioSitemapNames OR bio-ratio passes; Location =
 // filename in locationSitemapNames OR location-ratio passes. When both pass, the higher ratio wins.
 // Powers the Sitemap Library build-out (discover-sitemaps.js). (offline-testable via _fetchDoc)
+// Delay between consecutive sitemap fetches on the SAME host during an index walk (env-tunable).
+const SITEMAP_FETCH_DELAY_MS = Number(process.env.SITEMAP_FETCH_DELAY_MS) || 120;
 async function discoverSitemaps(opts = {}){
   const { content = "", urls = [], directoryRules = {}, genderMap = {}, _fetchDoc = fetchDoc,
           minRatio = 0.30, minCount = 3, maxSitemaps = 200, maxUrls = 500000,
@@ -904,9 +906,12 @@ async function discoverSitemaps(opts = {}){
     else {
       if(seenSm.has(item.url)) continue;
       seenSm.add(item.url);
+      // Space consecutive fetches on this host, but only BETWEEN them. This used to sleep after every
+      // fetch, so a leaf sitemap — one fetch, no children, which is what the expander asks for 100k+
+      // times — paid the full delay for nothing. Spacing within an index walk is unchanged.
+      if(fetched > 0) await sleep(SITEMAP_FETCH_DELAY_MS);
       xml = await _fetchDoc(item.url);
       fetched++;
-      await sleep(120);
     }
     if(!xml) continue;
 
