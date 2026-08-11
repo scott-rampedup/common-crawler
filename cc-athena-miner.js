@@ -171,6 +171,47 @@ WHERE crawl='${crawl}' AND subset='warc'
   if (limit > 0) sql += `\nLIMIT ${limit}`;
   return sql;
 }
+// --- vCard mode -------------------------------------------------------------------------------------
+// A .vcf IS a contact record — name, title, org, email, phone, address, all structured and already
+// parsed by vcard.js. So unlike a bio page it needs no extraction heuristics at all: no name guessing,
+// no title matching, no email hunting. Contacts that carry a vCard are measurably far better than
+// average (87.8% gendered vs 54.4%, 59.5% with a phone vs 21.2%), which is what makes finding them
+// directly worth a dedicated pass.
+//
+// Matched two ways because publishers are inconsistent: the MIME type CC detected, and a .vcf path.
+// Both are needed — plenty of servers hand vCards back as text/plain or application/octet-stream, and
+// plenty of correct text/vcard responses sit on an extensionless download endpoint.
+const VCARD_MIMES = ['text/vcard', 'text/x-vcard', 'text/directory', 'text/x-vcalendar', 'application/vcard', 'application/x-vcard'];
+const VCARD_PATH_RE = '(?i)\\.vcf($|\\?)';
+const vcardWhere = () => `(content_mime_detected IN (${sqlStrList(VCARD_MIMES)}) OR regexp_like(url_path, '${VCARD_PATH_RE.replace(/'/g, "''")}'))`;
+
+function buildVcardCountSql({ crawl, tlds }) {
+  return `SELECT count(*) AS cards, count(DISTINCT url_host_registered_domain) AS domains,
+       count_if(content_mime_detected IN (${sqlStrList(VCARD_MIMES)})) AS by_mime,
+       count_if(regexp_like(url_path, '${VCARD_PATH_RE.replace(/'/g, "''")}')) AS by_path
+FROM ${DB}.ccindex
+WHERE crawl='${crawl}' AND subset='warc'
+  AND fetch_status=200
+  AND url_host_tld IN (${sqlStrList(tlds)})
+  AND ${vcardWhere()}`;
+}
+// Same {url,filename,offset,length,timestamp} shape extract-from-pointers already reads, so a vCard
+// harvest drops straight into the existing S3-direct fetch path with no new plumbing.
+function buildVcardWarcSql({ crawl, tlds, perDomain, limit }) {
+  const capCol = perDomain > 0 ? `,\n         row_number() OVER (PARTITION BY url_host_registered_domain ORDER BY url_path) AS rn` : '';
+  const inner = `SELECT url, warc_filename AS filename, warc_record_offset AS offset, warc_record_length AS length, fetch_time AS timestamp${capCol}
+  FROM ${DB}.ccindex
+  WHERE crawl='${crawl}' AND subset='warc'
+    AND fetch_status=200
+    AND url_host_tld IN (${sqlStrList(tlds)})
+    AND ${vcardWhere()}`;
+  let sql = perDomain > 0
+    ? `SELECT url, filename, offset, length, timestamp FROM (\n${inner}\n) WHERE rn <= ${perDomain}`
+    : inner;
+  if (limit > 0) sql += `\nLIMIT ${limit}`;
+  return sql;
+}
+
 // Read the sitemap-filename list from a one-column CSV (skips a leading 'name' header).
 function readSitemapNames(file) {
   return require("fs").readFileSync(file, "utf8").split(/\r?\n/).map((s) => s.trim())
@@ -325,6 +366,36 @@ async function main() {
   await ensureTable(A, crawl, output);
 
   if (flag("setup")) { console.error("setup complete (db/table/partition ready)."); return; }
+
+  // --- vCard mode: every .vcf in the crawl is already a complete contact record ---
+  if (flag("vcards")) {
+    const c = await runAthena(A, buildVcardCountSql({ crawl, tlds }), output, "vcard count");
+    const csv = await s3Text(A, c.output);
+    const rows = []; parseCsv(csv, (r) => rows.push(r));
+    const [cards, domains, byMime, byPath] = (rows[1] || []).map((v) => Number(v || 0));
+    console.error(`\nvCards in ${crawl} (tlds: ${tlds.join(",")})`);
+    console.error(`  cards           ${(cards || 0).toLocaleString()}`);
+    console.error(`  domains         ${(domains || 0).toLocaleString()}`);
+    console.error(`  matched by MIME ${(byMime || 0).toLocaleString()}`);
+    console.error(`  matched by .vcf ${(byPath || 0).toLocaleString()}`);
+    if (!warcOut) { console.error("\n(add --warc-out ptr.jsonl to emit WARC pointers for these)"); return; }
+    const r = await runAthena(A, buildVcardWarcSql({ crawl, tlds, perDomain, limit }), output, "vcard warc");
+    const loc = (await A.athena.send(new A.GetQueryExecutionCommand({ QueryExecutionId: r.id }))).QueryExecution.ResultConfiguration.OutputLocation;
+    let seen = 0, written = 0;
+    const ws = fs.createWriteStream(warcOut);
+    await s3StreamRows(A, loc, async (row) => {
+      if (seen++ === 0 && row[0] === "url") return;
+      const [url, filename, offset, length, timestamp] = row;
+      if (!url || !filename) return;
+      written++;
+      if (!ws.write(JSON.stringify({ url, filename, offset, length, timestamp }) + "\n"))
+        await new Promise((resolve) => ws.once("drain", resolve));
+    });
+    await new Promise((resolve) => ws.end(resolve));
+    console.error(`\nwrote ${written.toLocaleString()} vCard pointer(s) -> ${warcOut}`);
+    console.error(`Next: node vcard-from-pointers.js --ptr ${warcOut}`);
+    return;
+  }
 
   // --- exact-URL resolution mode: resolve a given bio-URL list -> WARC pointers for the worker fleet ---
   const resolveFile = arg("resolve-urls", "");
