@@ -182,7 +182,13 @@ WHERE crawl='${crawl}' AND subset='warc'
 // Both are needed — plenty of servers hand vCards back as text/plain or application/octet-stream, and
 // plenty of correct text/vcard responses sit on an extensionless download endpoint.
 const VCARD_MIMES = ['text/vcard', 'text/x-vcard', 'text/directory', 'text/x-vcalendar', 'application/vcard', 'application/x-vcard'];
-const VCARD_PATH_RE = '(?i)\\.vcf($|\\?)';
+// Deliberately BROAD. A vCard is very often served by a handler rather than a static file --
+// /vcard.aspx?id=123, /vcard.ashx, /downloadvcard.php, /people/smith/vcard -- and those handlers
+// routinely mislabel the response as text/html, so neither the MIME list nor a bare "\.vcf" catches
+// them. Over-matching is cheap here and under-matching is not: a false positive costs one S3 range
+// read and is then discarded, because vcard-from-pointers only keeps a record if the body actually
+// parses as BEGIN:VCARD. The parse is the real filter; this regex only has to cast a wide enough net.
+const VCARD_PATH_RE = '(?i)(\\.vcf($|\\?)|v-?card[^/]*\\.(aspx?|ashx|axd|php|jsp|do|cfm|cgi|py)|/v-?cards?(/|$|\\?)|(download|get|export|save|create)-?v-?card|vcard=)';
 const vcardWhere = () => `(content_mime_detected IN (${sqlStrList(VCARD_MIMES)}) OR regexp_like(url_path, '${VCARD_PATH_RE.replace(/'/g, "''")}'))`;
 
 function buildVcardCountSql({ crawl, tlds }) {
