@@ -34,6 +34,16 @@ const QUERY = {
   },
 };
 
+// Does this description actually talk about THIS person? Whole-word first-name match (so "Ann" doesn't
+// match "Announcing"), or the last name when the first is very short.
+function descMentions(description, first, last) {
+  const d = String(description || '').toLowerCase();
+  const f = String(first || '').trim().toLowerCase();
+  const l = String(last || '').trim().toLowerCase();
+  const word = (t) => t.length >= 3 && new RegExp('\\b' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(d);
+  return Boolean((f && word(f)) || (l && word(l)));
+}
+
 (async () => {
   if (!process.env.OPENSEARCH_ENDPOINT) { console.error('need OPENSEARCH_ENDPOINT'); process.exit(1); }
   let client = os.makeClient(process.env.OPENSEARCH_ENDPOINT);
@@ -68,8 +78,15 @@ const QUERY = {
       const s = h._source;
       // 1) the nickname root — cheapest and most certain (Bob -> Robert -> M)
       let g = bs.genderOfName(s.first, genderMap), how = 'nickname';
-      // 2) the person's own bio prose
-      if (!g && s.description) { g = bs.genderFromDescription(s.description); how = 'pronoun'; }
+      // 2) the person's own bio prose — but ONLY when the prose is demonstrably ABOUT this contact.
+      //    Many contacts are extracted from a shared roster page and inherit ONE description between them,
+      //    so its pronouns describe whichever person the blurb is about, not all of them. A dry run made
+      //    this obvious: "Satyajit Phadke" appeared twice carrying unrelated emails (hussain.babu@,
+      //    john.veidt@) off the same page and the same text. Requiring the description to name the contact
+      //    makes the signal self-referential and kills that whole failure mode.
+      if (!g && s.description && s.first && descMentions(s.description, s.first, s.last)) {
+        g = bs.genderFromDescription(s.description); how = 'pronoun';
+      }
       if (!g) { tally.noSignal++; continue; }
       if (how === 'nickname') tally.byNickname++; else tally.byPronoun++;
       if (samples.length < 12) samples.push({ email: s.email, name: `${s.first} ${s.last || ''}`.trim(), g, how });
