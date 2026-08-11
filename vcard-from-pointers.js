@@ -77,7 +77,7 @@ function normalizeVcardUrl(raw) {
   if (!jobs.length) process.exit(0);
 
   const t0 = Date.now();
-  const tally = { read: 0, parsed: 0, noName: 0, unreachable: 0, records: 0, gendered: 0, withPhone: 0, withEmail: 0, modelled: 0, upserted: 0, errors: 0 };
+  const tally = { read: 0, parsed: 0, noName: 0, unreachable: 0, records: 0, gendered: 0, withPhone: 0, withEmail: 0, modelled: 0, upserted: 0, errors: 0, timeouts: 0 };
   let pending = [];
 
   async function flush() {
@@ -94,15 +94,40 @@ function normalizeVcardUrl(raw) {
     }
   }
 
-  let idx = 0;
+  // Bound EVERY fetch. Live vCard hosts are frequently dead, slow or behind a wedged proxy socket, and an
+  // unbounded await here parks a worker forever — the exact failure that stalled a whole extraction run
+  // via vcard.enrichRecords. A first live pass over 25,744 URLs sat at zero progress for 25 minutes
+  // because of it. Timeouts count as failures and move on.
+  const FETCH_MS = Number(process.env.VCARD_FETCH_TIMEOUT_MS) || 12000;
+  const TIMEOUT = Symbol('timeout');
+  const fetchBounded = async (fn) => {
+    let timer;
+    try {
+      return await Promise.race([
+        Promise.resolve(fn()),
+        new Promise((resolve) => { timer = setTimeout(() => resolve(TIMEOUT), FETCH_MS); }),
+      ]);
+    } finally { clearTimeout(timer); }
+  };
+
+  let idx = 0, lastLogged = 0;
   const worker = async () => {
     for (;;) {
       const k = idx++; if (k >= jobs.length) return;
       const j = jobs[k];
+      // Progress on ATTEMPTS, printed before the work, so a run whose fetches are all failing still
+      // reports. The previous placement was after the `continue`s, so a fully-failing run printed
+      // nothing at all for 25 minutes — precisely when output matters most.
+      const done = tally.read + tally.errors + tally.timeouts;
+      if (done && done % 2000 === 0 && done !== lastLogged) {
+        lastLogged = done;
+        console.error(`  ${done.toLocaleString()}/${jobs.length.toLocaleString()} attempted | ok ${tally.read.toLocaleString()} | contacts ${tally.parsed.toLocaleString()} | failed ${tally.errors.toLocaleString()} | timed out ${tally.timeouts.toLocaleString()} | ${Math.round(done / ((Date.now() - t0) / 1000))}/s`);
+      }
       let text = '';
       try {
-        text = PTR ? await fetchWarc(j) : (ccEngine ? await ccEngine.fetchDoc(j.url) : '');
+        text = await fetchBounded(() => (PTR ? fetchWarc(j) : (ccEngine ? ccEngine.fetchDoc(j.url) : '')));
       } catch (e) { tally.errors++; continue; }
+      if (text === TIMEOUT) { tally.timeouts++; continue; }
       tally.read++;
       const rec = recordFromCard(text, j.url, nowIso);
       if (!rec) { if (text && /BEGIN:VCARD/i.test(text)) tally.noName++; continue; }
@@ -112,7 +137,6 @@ function normalizeVcardUrl(raw) {
       if (rec['Email Address']) tally.withEmail++;
       pending.push(rec);
       if (pending.length >= CHUNK) await flush();
-      if (tally.read % 5000 === 0) console.error(`  read ${tally.read.toLocaleString()}/${jobs.length.toLocaleString()} | contacts ${tally.parsed.toLocaleString()} | ${Math.round(tally.read / ((Date.now() - t0) / 1000))}/s`);
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONC, jobs.length) }, worker));
@@ -123,6 +147,6 @@ function normalizeVcardUrl(raw) {
   console.error(`  with a gender : ${tally.gendered.toLocaleString()} (${pct(tally.gendered)})`);
   console.error(`  with a phone  : ${tally.withPhone.toLocaleString()} (${pct(tally.withPhone)})`);
   console.error(`  with an email : ${tally.withEmail.toLocaleString()} (${pct(tally.withEmail)})`);
-  console.error(`  emails modelled ${tally.modelled.toLocaleString()} | dropped ${tally.noName.toLocaleString()} no-person-name`);
+  console.error(`  emails modelled ${tally.modelled.toLocaleString()} | dropped ${tally.noName.toLocaleString()} no-person-name | ${tally.errors.toLocaleString()} fetch failure(s), ${tally.timeouts.toLocaleString()} timeout(s)`);
   console.error(`  -> ${tally.records.toLocaleString()} upsertable${DRY ? '' : `, ${tally.upserted.toLocaleString()} upserted, ${tally.errors} error(s)`} | ${Math.round((Date.now() - t0) / 1000)}s`);
 })().catch((e) => { console.error('ERR', e && e.stack || e); process.exit(1); });
