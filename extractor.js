@@ -776,7 +776,14 @@ function extractRecord(html, url, deps = {}){
   // authoritative evidence the page is a person profile, so it counts as a bio page for name/phone/gender.
   const sd = html.indexOf("ld+json") >= 0 ? structuredFromHtml(html) : EMPTY_SD;
   const directory = classifyDirectory(url, html, deps.directoryRules, deps.genderMap);
-  const isBio = directory === "BIO URL" || sd.person;
+  // The bio's own opening clause ("Jane Smith is an experienced…") is computed HERE, not later, because it
+  // is also evidence the page is a person profile. Without this, a real bio under an opaque slug
+  // (/team/profile-9931, no schema.org) is discarded before the description is ever looked at — the slug
+  // says nothing, so classifyDirectory says "not a bio", and the record never exists to be improved.
+  const description = (metaContent(html,"og:description") || metaContent(html,"description")).slice(0,300);
+  const descName = description ? _bioSignals().nameFromDescription(description) : null;
+  const descPerson = !!(descName && descName.first && descName.last);
+  const isBio = directory === "BIO URL" || sd.person || descPerson;
   const pathHit = pathIdFromUrl(url);                  // {id, role} for the directory segment, or null
   const outDirectory = pathHit ? "Team" : (directory === "BIO URL" || sd.person ? "BIO URL" : directory);
   const last = lastPathSeg(url);
@@ -880,7 +887,6 @@ function extractRecord(html, url, deps = {}){
     if(sdLoc) phoneLocation = sdLoc;
   }
 
-  const description = (metaContent(html,"og:description") || metaContent(html,"description")).slice(0,300);
   const pageTtl = pageTitle(html);
   // A matched directory Path ID with a role (e.g. /attorneys/ -> "Attorney") drives both
   // Title and Position; otherwise Title = page title and Position = page-derived role.
@@ -891,8 +897,22 @@ function extractRecord(html, url, deps = {}){
   let position = role || findPosition(sd.jobTitle || pageTtl, description);
   let image = findImage(html, url);
   if(!image && sd.image) image = toAbs(sd.image, url);
-  let gender = first ? (genderMap[first.toLowerCase()] || "") : "";
+  // ---- Name waterfall, LAST resort: the bio's own opening clause ----
+  // Everything above (page heading, schema.org, URL slug, email) has already run. Bio prose almost always
+  // opens "<Full Name> is/joined/serves…", so when nothing else produced a name, take it from there.
+  // Taken as a UNIT, never token-merged: a junk slug like /team/profile-9931 yields first="Profile" with
+  // no last, and filling only the missing half produces "Profile Lin". Either the slug gave a complete
+  // name (it wins) or it didn't (the prose name replaces it wholesale).
+  let nameFromDesc = false;
+  if(!(first && lastName) && descPerson){
+    first = descName.first; lastName = descName.last; nameFromDesc = true;
+  }
+  // ---- Gender waterfall: names map -> nickname root -> schema.org -> the bio's pronouns ----
+  let gender = _bioSignals().genderOfName(first, genderMap);    // map lookup, then Bob -> Robert
   if(!gender && sd.gender) gender = sd.gender;                  // schema.org gender fills what the names map missed
+  // Pronouns in the person's own bio are an OBSERVED signal and work precisely where the names map fails
+  // (non-Western and rare first names). Only accepted when the prose is not self-contradictory.
+  if(!gender && description) gender = _bioSignals().genderFromDescription(description);
 
   // ---- Morgan Stanley advisor pages (advisor.morganstanley.com) ----
   // Server-rendered team-roster pages read from Common Crawl (the live site blocks datacenter IPs).
@@ -933,8 +953,15 @@ function extractRecord(html, url, deps = {}){
   // (e.g. /our-people/adam-gage) — this drops news headlines like /news/jane-doe-joins-as-... .
   if(!email){
     const slugTokens = isBio ? pathNameTokens(nameSlug).length : 0;
+    // descPerson clears the junk-slug guard for the same reason sd.person does: the bio's opening clause
+    // names the person AND states a biographical fact about them, which is stronger evidence than a slug.
+    // Still gated on first+last+gender, so a description-only bio survives only when a gender was also
+    // established — the combination is what keeps news headlines and marketing copy out.
+    // nameFromDesc (not descPerson) clears the junk-slug guard: only when the name we ended up with
+    // actually CAME from the bio prose. A news headline whose slug already yielded a plausible-but-wrong
+    // name must still be rejected by the slug-token test, exactly as before.
     const keepForModelling = deps.allowNoEmail && isBio && first && lastName && gender
-      && (sd.person || (slugTokens >= 2 && slugTokens <= 3));   // JSON-LD confirming a person also clears the junk-slug guard
+      && (sd.person || nameFromDesc || (slugTokens >= 2 && slugTokens <= 3));
     if(!keepForModelling) return null;         // require a valid email address for every other record
   }
 
@@ -1174,6 +1201,10 @@ function analyzePhones(records){
   }
   return rows;
 }
+
+// bio-signals requires extractor back (for its self-test), so load it lazily to avoid a require cycle.
+let _bs = null;
+function _bioSignals(){ if(!_bs){ try{ _bs = require("./bio-signals"); }catch(e){ _bs = { genderOfName:(f,m)=>(f&&m?(m[String(f).toLowerCase()]||""):""), genderFromDescription:()=>"", nameFromDescription:()=>null }; } } return _bs; }
 
 function loadGenderMap(filePath){
   const rows = loadRows(filePath);
