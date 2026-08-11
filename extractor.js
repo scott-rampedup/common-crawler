@@ -1177,7 +1177,11 @@ function analyzePhones(records){
 
 function loadGenderMap(filePath){
   const rows = loadRows(filePath);
-  const map = {};
+  // Object.create(null), NOT {}: with a plain object, a first name that collides with an Object.prototype
+  // key ("Constructor", "Valueof", "Tostring") returns the inherited FUNCTION instead of a gender, and it
+  // gets written straight to the record. Production had a contact whose gender was
+  // "function Object() { [native code] }" — one doc, but the class of bug is silent and unbounded.
+  const map = Object.create(null);
   for(const row of rows){
     const cols = parseCsvRow(row).map(s => s.trim().replace(/^"|"$/g, ""));
     const first = normalizeForMatching(cols[0] || "");
