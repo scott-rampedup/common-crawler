@@ -155,17 +155,39 @@ function applyVCardToRecord(record, v, opts = {}){
 // Download + apply the vCard for every record that carries a "vCard" URL. Mutates records in
 // place; bounded concurrency so a big job doesn't open thousands of sockets. Returns a small
 // summary. _fetch is injectable for offline tests.
+const TIMEOUT = Symbol("vcard-timeout");
 async function enrichRecords(records, opts = {}){
   const list = (records || []).filter((r) => r && /^https?:\/\//i.test(String(r["vCard"] || "")));
   const fetchOne = opts._fetch || fetchText;
   const concurrency = Math.max(1, opts.concurrency || 8);
   const cap = opts.max || Number(process.env.VCARD_MAX) || 5000;     // safety ceiling per pass
   const todo = list.slice(0, cap);
-  let fetched = 0, applied = 0, cursor = 0;
+  // HARD per-card ceiling. The built-in fetchText already times out, but callers inject their own fetcher
+  // (extract-from-pointers passes ccEngine.fetchDoc, which goes through the proxy), and an injected
+  // fetcher that hangs used to hang this function forever: enrichRecords is awaited inside the extract
+  // flush, which is awaited by the fetch workers, so ONE wedged proxy socket stalled an entire run --
+  // observed on the corp-prospects batch, which froze at 25,000 pages having written nothing. Never trust
+  // an injected fetcher to be bounded, and never let one bad card take the batch down.
+  const timeoutMs = Math.max(1000, Number(opts.timeoutMs) || Number(process.env.VCARD_TIMEOUT_MS) || 10000);
+  let fetched = 0, applied = 0, cursor = 0, timedOut = 0, errors = 0;
+  const fetchBounded = async (u) => {
+    let timer;
+    try {
+      return await Promise.race([
+        Promise.resolve(fetchOne(u)),
+        // resolve (not reject) a sentinel: a rejection here would be an unhandled rejection for the
+        // loser of the race in some Node versions, and a timeout isn't an error worth throwing.
+        new Promise((resolve) => { timer = setTimeout(() => resolve(TIMEOUT), timeoutMs); }),
+      ]);
+    } finally { clearTimeout(timer); }
+  };
   async function worker(){
     while(cursor < todo.length){
       const r = todo[cursor++];
-      const text = await fetchOne(String(r["vCard"]));
+      let text;
+      try { text = await fetchBounded(String(r["vCard"])); }
+      catch { errors++; continue; }                       // injected fetchers may throw; one card, not the batch
+      if(text === TIMEOUT){ timedOut++; continue; }
       if(!text || !/BEGIN:VCARD/i.test(text)) continue;
       fetched++;
       try{ if(applyVCardToRecord(r, parseVCard(text), opts)) applied++; }catch{ /* skip bad card */ }
@@ -173,7 +195,8 @@ async function enrichRecords(records, opts = {}){
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, todo.length) }, worker));
   if(list.length > cap) console.log(`vCard: capped at ${cap} of ${list.length} cards (raise VCARD_MAX to do more).`);
-  return { withVcard: list.length, fetched, applied };
+  if(timedOut || errors) console.log(`vCard: ${timedOut} timed out (>${timeoutMs}ms), ${errors} failed — skipped, batch continued.`);
+  return { withVcard: list.length, fetched, applied, timedOut, errors };
 }
 
 module.exports = { parseVCard, applyVCardToRecord, enrichRecords, fetchText };
