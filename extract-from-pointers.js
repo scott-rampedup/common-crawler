@@ -121,9 +121,55 @@ process.on('unhandledRejection', () => {});   // a raced/abandoned fetch rejecti
     return rows;
   }
 
+  // Prime that cache for a WHOLE batch in one msearch round trip per 200 domains, instead of letting
+  // modelMissingEmails discover domains one at a time and await a search for each.
+  //
+  // This is the difference between a working run and a stalled one on a domain-diverse corpus. The
+  // corp-prospects catalog is ~121,000 domains across ~115,000 sitemaps — roughly one company per
+  // sitemap — so a 5,000-record flush spans thousands of DISTINCT domains. Serialized, that is thousands
+  // of round trips inside the write path before a single contact is written: a re-run of the barren
+  // pages froze at 21,000 pages with 1 contact written and no progress for 8 minutes. Batched, the same
+  // work is a couple of dozen round trips.
+  const PRIME_BATCH = Number(process.env.PATTERN_BATCH) || 200;
+  async function primePatternCache(records) {
+    // Only domains that can actually use a pattern: a record missing an email but carrying a full name
+    // and a gender is the only thing modelMissingEmails will try to model.
+    const need = new Set();
+    for (const r of records) {
+      if (String(r['Email Address'] || '').trim()) continue;
+      if (!r['First'] || !r['Last'] || !r['Gender']) continue;
+      const d = String(r['Domain'] || '').toLowerCase() || (() => {
+        try { return new URL(r['Web Source URL'] || '').hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { return ''; }
+      })();
+      if (d && !patternCache.has(d)) need.add(d);
+    }
+    if (!need.size) return 0;
+    const domains = [...need];
+    for (let i = 0; i < domains.length; i += PRIME_BATCH) {
+      const chunk = domains.slice(i, i + PRIME_BATCH);
+      const body = [];
+      for (const d of chunk) {
+        body.push({ index: os.INDEX });
+        body.push({ size: 200, query: os.buildQuery({ domain: d, emailType: 'Professional' }),
+          _source: ['email', 'first', 'last', 'email_type', 'domain'] });
+      }
+      try {
+        const r = await withRetry(() => client.msearch({ body }));
+        const responses = ((r.body || r).responses) || [];
+        chunk.forEach((d, k) => {
+          const hits = (responses[k] && responses[k].hits && responses[k].hits.hits) || [];
+          patternCache.set(d, hits.map((h) => os.docToRecord(h._source)));
+        });
+      } catch (e) {
+        for (const d of chunk) patternCache.set(d, []);   // a failed lookup must not re-serialize later
+      }
+    }
+    return need.size;
+  }
+
   // ---- accumulate extracted records; flush in chunks (filter -> model emails -> upsert) ----
   let pending = [];
-  let submitted = 0, withEmail = 0, upErrs = 0, modelled = 0, dropJunk = 0, dropNoEmail = 0, vcardApplied = 0, liNamed = 0;
+  let submitted = 0, withEmail = 0, upErrs = 0, modelled = 0, dropJunk = 0, dropNoEmail = 0, vcardApplied = 0, liNamed = 0, primed = 0;
   async function flush() {
     if (!pending.length) return;
     const recs = pending; pending = [];
@@ -144,7 +190,10 @@ process.on('unhandledRejection', () => {});   // a raced/abandoned fetch rejecti
       try { const v = await vcard.enrichRecords(people, { genderMap, _fetch: ccEngine.fetchDoc }); vcardApplied += (v && v.applied) || 0; }
       catch (e) { /* best-effort */ }
     }
-    // (d) synthesize personal emails from the domain pattern for anyone STILL missing one
+    // (d) synthesize personal emails from the domain pattern for anyone STILL missing one.
+    //     Prime every domain's pattern in batched msearches FIRST, so modelMissingEmails only ever hits
+    //     the cache and never serializes a lookup inside the write path.
+    try { const n = await primePatternCache(people); if (n) primed += n; } catch (e) { /* best-effort */ }
     try { modelled += await modelMissingEmails(people, { dbQuery }); } catch (e) { /* best-effort */ }
     let out = people; try { out = extractor.analyzePhones(people) || people; } catch (e) { /* best-effort */ }
     // (d) keep only real people with a real (personal or modelled) email
