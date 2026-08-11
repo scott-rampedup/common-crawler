@@ -205,7 +205,7 @@ function parseUrlList(text) {
 function getSearchMode() {
   const checked = document.querySelector('input[name="searchMode"]:checked');
   const v = checked ? checked.value : 'domain';
-  return v === 'webpage' || v === 'sitemap' || v === 'ccdiscover' ? v : 'domain';
+  return v === 'webpage' || v === 'sitemap' || v === 'ccdiscover' || v === 'vcard' ? v : 'domain';
 }
 
 function updateModeHint() {
@@ -221,6 +221,10 @@ function updateModeHint() {
     elements.modeHint.textContent =
       'Common Crawl: auto-finds Bio/Contact pages for each domain straight from the Common Crawl archive (no sitemap needed), then processes them. Fast and bypasses live blocks.';
     if (elements.domainInput) elements.domainInput.placeholder = 'Enter one domain per line (e.g. example.com)';
+  } else if (mode === 'vcard') {
+    elements.modeHint.textContent =
+      'vCard: each .vcf is already a contact — name, title, email, phone and address are read straight from the card, with no page to crawl. Paste one vCard URL per line, or upload a .txt / .csv list.';
+    if (elements.domainInput) elements.domainInput.placeholder = 'Enter one vCard URL per line (e.g. example.com/team/jane-smith.vcf or /vcard.aspx?id=123)';
   } else if (mode === 'webpage') {
     elements.modeHint.textContent = 'Webpage: pulls contacts only from the exact URLs you provide (one per line).';
     if (elements.domainInput) elements.domainInput.placeholder = 'Enter one full webpage URL per line';
@@ -650,6 +654,57 @@ async function discoverFromCCAndRun(domains) {
   }
 }
 
+// vCard mode: no crawl job. Each .vcf IS the contact record, so the server fetches, parses and upserts
+// them directly and answers with counts. Accepts a pasted list or an uploaded .txt/.csv, tolerates a
+// header row and URLs with no scheme (bdl.dk/…/name.vcf), which is how these lists usually arrive.
+function parseVcardList(text) {
+  const out = [];
+  const seen = new Set();
+  for (const line of String(text || '').split(/[\n,]+/)) {
+    let s = line.trim().replace(/^["']|["']$/g, '');
+    if (!s) continue;
+    if (/^(vcards?|url|link|href)$/i.test(s)) continue;                 // header row
+    if (!/^https?:\/\//i.test(s)) {
+      if (!/^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(s)) continue;
+      s = 'https://' + s;
+    }
+    if (!seen.has(s)) { seen.add(s); out.push(s); }
+  }
+  return out;
+}
+
+async function ingestVcards(rawText) {
+  const urls = parseVcardList(rawText);
+  if (!urls.length) {
+    setSearchStatus('Enter one vCard URL per line (e.g. example.com/team/jane-smith.vcf).');
+    return;
+  }
+  setSearchStatus(`Reading ${urls.length.toLocaleString()} vCard(s)…`);
+  try {
+    const res = await fetch('/api/vcards/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls }),
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      throw new Error(payload.error || `HTTP ${res.status}`);
+    }
+    const r = await res.json();
+    const bits = [
+      `${(r.contacts || 0).toLocaleString()} contact(s) from ${(r.cards || 0).toLocaleString()} card(s)`,
+    ];
+    if (r.noPerson) bits.push(`${r.noPerson.toLocaleString()} card(s) named no person`);
+    if (r.unreachable) bits.push(`${r.unreachable.toLocaleString()} had no email`);
+    if (r.failed) bits.push(`${r.failed.toLocaleString()} could not be fetched`);
+    if (r.capped) bits.push(`capped at ${r.capped.toLocaleString()} per submission`);
+    setSearchStatus(bits.join(' · '));
+    try { await fetchJobs(); } catch (e) { /* list refresh is cosmetic */ }
+  } catch (error) {
+    setSearchStatus(`Could not read the vCards: ${error.message}`);
+  }
+}
+
 // Start a search as a server-side background job, then watch it via polling.
 async function searchContacts() {
   const mode = getSearchMode();
@@ -669,6 +724,10 @@ async function searchContacts() {
       return;
     }
     await discoverFromCCAndRun(domains);
+    return;
+  }
+  if (mode === 'vcard') {
+    await ingestVcards(elements.domainInput.value);
     return;
   }
   const domains = mode === 'webpage'

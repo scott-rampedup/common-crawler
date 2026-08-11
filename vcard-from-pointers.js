@@ -37,28 +37,24 @@ const CHUNK = Number(process.env.CHUNK) || 2000;
 
 const genderMap = ex.loadGenderMap(path.join(__dirname, 'names-genders.csv'));
 
-// A card is only worth a contact row if it names a person AND offers a way to reach them. ORG-only cards
-// (a company's own card) and cards with neither email nor phone are dropped.
-function recordFromCard(text, sourceUrl, nowIso) {
-  if (!text || !/BEGIN:VCARD/i.test(text)) return null;
-  let v; try { v = vcard.parseVCard(text); } catch (e) { return null; }
-  if (!v || !v.first || !v.last) return null;                  // no person name -> not a contact
-  const rec = {
-    'Time Stamp': nowIso.slice(0, 10), 'Source': 'vCard', 'Web Source URL': sourceUrl,
-    'Directory': 'BIO URL', 'Path ID': '', 'Domain': '', 'Last Path': '',
-    'First': '', 'Last': '', 'Gender': '', 'Title': '', 'Position': '', 'Description': '',
-    'Email Address': '', 'Email Type': '', 'LinkedIn URL': '', 'Facebook': '', 'Twitter': '',
-    'WhatsApp': '', 'Google Maps': '', 'vCard': sourceUrl,
-    'Phone': '', 'Phone Type': '', 'Phone Location': '', 'Phone 2': '', 'Phone 2 Type': '', 'Type': '',
-  };
-  // applyVCardToRecord does the whole merge — name, gender, title, email(+type), typed E.164 phones,
-  // address -> Phone Location — and is already covered by vcard.js's own 20 self-tests.
-  try { vcard.applyVCardToRecord(rec, v, { genderMap }); } catch (e) { return null; }
-  rec['Domain'] = ex.getBaseDomain(sourceUrl) || '';
-  if (!rec['First'] || !rec['Last']) return null;
-  if (!rec['Email Address'] && !rec['Phone']) return null;     // unreachable -> not worth a row
-  if (!rec['Gender']) rec['Gender'] = genderMap[String(rec['First']).toLowerCase()] || '';
-  return rec;
+// The card -> record mapping lives in vcard.js so the Data Importer's vCard mode and this bulk path
+// cannot drift apart.
+const recordFromCard = (text, sourceUrl, nowIso) => vcard.recordFromCardText(text, sourceUrl, { genderMap, nowIso });
+
+// A hand-exported list is rarely a clean one-URL-per-line file: it usually has a CSV header, may be
+// quoted, and very often has no scheme (bdl.dk/wp-content/.../Name.vcf). Normalize rather than make the
+// operator clean it up. Returns '' for anything that isn't plausibly a URL, which also drops the header.
+function normalizeVcardUrl(raw) {
+  let s = String(raw || '').trim().replace(/^["']|["'],?$/g, '').replace(/,$/, '').trim();
+  if (!s) return '';
+  if (s.includes(',')) s = s.split(',')[0].trim();          // first column of a wider CSV
+  if (/^(vcards?|url|link|href)$/i.test(s)) return '';       // header row
+  if (!/^https?:\/\//i.test(s)) {
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(s)) return ''; // not a host -> not a URL
+    s = 'https://' + s;
+  }
+  try { const u = new URL(s); if (u.protocol !== 'http:' && u.protocol !== 'https:') return ''; return u.href; }
+  catch (e) { return ''; }
 }
 
 (async () => {
@@ -70,11 +66,12 @@ function recordFromCard(text, sourceUrl, nowIso) {
 
   const jobs = [];
   const src = PTR || URLS;
+  const seenUrl = new Set();
   const rl = readline.createInterface({ input: fs.createReadStream(src), crlfDelay: Infinity });
   for await (const line of rl) {
     const t = line.trim(); if (!t) continue;
     if (PTR) { try { const p = JSON.parse(t); if (p && p.url && p.filename) jobs.push(p); } catch (e) { /* skip */ } }
-    else jobs.push({ url: t });
+    else { const u = normalizeVcardUrl(t); if (u && !seenUrl.has(u)) { seenUrl.add(u); jobs.push({ url: u }); } }
   }
   console.error(`${jobs.length.toLocaleString()} vCard(s) to read from ${PTR ? 'Common Crawl (S3-direct)' : 'the live web'}${DRY ? '  [DRY RUN — no writes]' : ''}`);
   if (!jobs.length) process.exit(0);

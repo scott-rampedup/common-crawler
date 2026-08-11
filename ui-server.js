@@ -1249,6 +1249,52 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /api/vcards/ingest  { urls: [...] }  -> fetch each vCard and upsert it as a contact.
+  // Not a crawl job: a .vcf IS the record, so there is no page to walk and no extraction to schedule.
+  // Fetch, parse, upsert, report — which is why this answers inline instead of creating a job.
+  if (url.pathname === '/api/vcards/ingest' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    readJsonBody(req, async (b) => {
+      const MAX = Number(process.env.VCARD_INGEST_MAX) || 2000;   // interactive path: bounded on purpose
+      const raw = Array.isArray(b && b.urls) ? b.urls : [];
+      const urls = [...new Set(raw.map((u) => String(u || '').trim()).filter(Boolean))].slice(0, MAX);
+      if (!urls.length) return jsonErr(res, 400, 'No vCard URLs supplied.');
+      const nowIso = new Date().toISOString();
+      const out = { submitted: raw.length, fetched: 0, cards: 0, contacts: 0, noPerson: 0, unreachable: 0, failed: 0, upserted: 0, capped: raw.length > MAX ? MAX : 0 };
+      const recs = [];
+      let i = 0;
+      const worker = async () => {
+        for (;;) {
+          const k = i++; if (k >= urls.length) return;
+          let text = '';
+          try { text = await ccEngine.fetchDoc(urls[k]); } catch (e) { out.failed++; continue; }
+          if (!text) { out.failed++; continue; }
+          out.fetched++;
+          if (!/BEGIN:VCARD/i.test(text)) continue;               // fetched something that isn't a card
+          out.cards++;
+          const rec = vcard.recordFromCardText(text, urls[k], { genderMap: GENDER_MAP, nowIso });
+          if (!rec) { out.noPerson++; continue; }
+          recs.push(rec);
+        }
+      };
+      try {
+        await Promise.all(Array.from({ length: Math.min(12, urls.length) }, worker));
+        try { await modelMissingEmailsForRecords(recs); } catch (e) { /* best-effort */ }
+        const docs = recs.map((r) => openSearch.recordToDoc(r, nowIso)).filter((d) => d && d.first && d.last && d.email);
+        out.contacts = docs.length;
+        out.unreachable = recs.length - docs.length;
+        if (reader._os && docs.length) {
+          for (let j = 0; j < docs.length; j += 1000) {
+            try { await openSearch.bulkUpsert(reader.client, docs.slice(j, j + 1000)); out.upserted += Math.min(1000, docs.length - j); }
+            catch (e) { /* counted by the difference */ }
+          }
+        }
+        sendJson(res, out);
+      } catch (e) { jsonErr(res, 500, e.message); }
+    });
+    return;
+  }
+
   // POST /api/jobs  { domains: [...], directoryFilter? }  -> start a job
   if (url.pathname === '/api/jobs' && req.method === 'POST') {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }

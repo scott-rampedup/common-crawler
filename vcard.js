@@ -199,7 +199,33 @@ async function enrichRecords(records, opts = {}){
   return { withVcard: list.length, fetched, applied, timedOut, errors };
 }
 
-module.exports = { parseVCard, applyVCardToRecord, enrichRecords, fetchText };
+// Build a CONTACT RECORD from a vCard body — the standalone path, where the card is the source rather
+// than an enrichment of a page-derived record. Shared by vcard-from-pointers (bulk) and the Data
+// Importer's vCard mode (interactive) so both behave identically.
+// Returns null when the card names no person (ORG-only company cards) or offers no way to reach them.
+function recordFromCardText(text, sourceUrl, opts = {}) {
+  if (!text || !/BEGIN:VCARD/i.test(text)) return null;
+  let v; try { v = parseVCard(text); } catch (e) { return null; }
+  if (!v || !v.first || !v.last) return null;
+  const url = String(sourceUrl || '');
+  const nowIso = opts.nowIso || new Date().toISOString();
+  const rec = {
+    'Time Stamp': nowIso.slice(0, 10), 'Source': opts.source || 'vCard', 'Web Source URL': url,
+    'Directory': 'BIO URL', 'Path ID': '', 'Domain': '', 'Last Path': '',
+    'First': '', 'Last': '', 'Gender': '', 'Title': '', 'Position': '', 'Description': '',
+    'Email Address': '', 'Email Type': '', 'LinkedIn URL': '', 'Facebook': '', 'Twitter': '',
+    'WhatsApp': '', 'Google Maps': '', 'vCard': url,
+    'Phone': '', 'Phone Type': '', 'Phone Location': '', 'Phone 2': '', 'Phone 2 Type': '', 'Type': '',
+  };
+  try { applyVCardToRecord(rec, v, opts); } catch (e) { return null; }
+  try { rec['Domain'] = getBaseDomain(url) || ''; } catch (e) { /* leave blank */ }
+  if (!rec['First'] || !rec['Last']) return null;
+  if (!rec['Email Address'] && !rec['Phone']) return null;      // unreachable -> not a usable contact
+  if (!rec['Gender'] && opts.genderMap) rec['Gender'] = opts.genderMap[String(rec['First']).toLowerCase()] || '';
+  return rec;
+}
+
+module.exports = { parseVCard, applyVCardToRecord, recordFromCardText, enrichRecords, fetchText };
 
 // ---- offline self-test: node vcard.js --selftest ----
 if(require.main === module && process.argv.includes("--selftest")){
