@@ -1149,3 +1149,49 @@ table.mon-table td.url a, table.mon-table td.u a { word-break: break-all; }
   .search-shell { height: auto; min-height: 100vh; }
   .search-layout { grid-template-columns: 1fr; }
 }
+
+/* ---- Bio URL queue counter (Data Importer) ---------------------------------
+   A queue that is only visible when someone runs a CLI command is a queue that
+   grows to millions unnoticed. Numbers are tabular so a changing count doesn't
+   reflow the row, and the "behind" state is coloured because a queue that never
+   empties is a worse failure than a large one that does. */
+.backlog-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 32px;
+}
+
+.backlog-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 108px;
+}
+
+.backlog-num {
+  font-size: 1.55rem;
+  font-weight: 600;
+  line-height: 1.1;
+  color: #111827;
+  font-variant-numeric: tabular-nums;
+}
+
+.backlog-lbl {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+}
+
+.backlog-panel.is-behind .backlog-num#backlogUrls,
+.backlog-panel.is-behind .backlog-num#backlogAge { color: #b45309; }
+
+.backlog-panel.is-draining .backlog-num#backlogState { color: #047857; }
+
+.backlog-panel.is-empty .backlog-num#backlogUrls { color: #047857; }
+
+.backlog-note {
+  margin: 12px 0 0;
+  color: #6b7280;
+  font-size: 0.85rem;
+}

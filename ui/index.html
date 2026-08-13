@@ -96,6 +96,24 @@
       </div>
     </section>
 
+    <!-- Bio-URL queue. The Sitemap Monitor discovers on a timer; this is what it has found and not yet
+         extracted. It was invisible until it reached 2.9M URLs, which is the reason it now has a counter. -->
+    <section class="jobs-panel backlog-panel" id="backlogPanel" hidden>
+      <div class="jobs-header">
+        <h2>Bio URL queue</h2>
+        <p class="jobs-hint" id="backlogHint">Discovered by the Sitemap Monitor, waiting to be extracted.</p>
+        <button id="drainButton" type="button" hidden>Drain now</button>
+        <button id="refreshBacklogButton" type="button">Refresh</button>
+      </div>
+      <div class="backlog-stats">
+        <div class="backlog-stat"><span class="backlog-num" id="backlogUrls">—</span><span class="backlog-lbl">URLs queued</span></div>
+        <div class="backlog-stat"><span class="backlog-num" id="backlogObjects">—</span><span class="backlog-lbl">batches</span></div>
+        <div class="backlog-stat"><span class="backlog-num" id="backlogAge">—</span><span class="backlog-lbl">oldest</span></div>
+        <div class="backlog-stat"><span class="backlog-num" id="backlogState">—</span><span class="backlog-lbl">drain</span></div>
+      </div>
+      <p class="backlog-note" id="backlogNote"></p>
+    </section>
+
     <section class="jobs-panel">
       <div class="jobs-header">
         <button id="jobsToggle" type="button" class="jobs-toggle" aria-expanded="false">▸</button>

@@ -773,6 +773,65 @@ async function fetchJobs() {
   }
 }
 
+// ---- Bio URL queue -----------------------------------------------------------------------------
+// The Sitemap Monitor discovers bio URLs on a 12h timer and appends them to an S3 queue; a scheduled
+// drain extracts them. Neither side was visible from the UI, so the queue reached 2,925,514 URLs before
+// anyone counted it. The counter below exists so that cannot happen quietly again.
+//
+// /api/backlog is cheap by construction — it derives the URL total from S3 key names rather than reading
+// objects — so polling it alongside jobs costs nothing.
+async function fetchBacklog() {
+  const panel = document.getElementById('backlogPanel');
+  if (!panel) return;
+  try {
+    const res = await fetch('/api/backlog');
+    if (res.status === 403) { panel.hidden = true; return; }   // analyst-only; hide rather than error
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const b = await res.json();
+    panel.hidden = false;
+
+    const num = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    num('backlogUrls', Number(b.urls || 0).toLocaleString());
+    num('backlogObjects', Number(b.objects || 0).toLocaleString());
+    num('backlogAge', b.oldestAgeHours == null ? '—' : (b.oldestAgeHours < 1 ? '<1h' : `${b.oldestAgeHours}h`));
+    num('backlogState', b.draining ? 'running' : (b.queueEnabled ? 'idle' : 'off'));
+
+    // "Behind" is about AGE, not size: a queue drained every 6h should never hold work older than that.
+    panel.classList.toggle('is-draining', !!b.draining);
+    panel.classList.toggle('is-empty', !b.urls);
+    panel.classList.toggle('is-behind', !b.draining && b.oldestAgeHours != null && b.oldestAgeHours > 12);
+
+    const note = document.getElementById('backlogNote');
+    if (note) {
+      const bits = [];
+      if (b.urls) bits.push(`${Number(b.objects).toLocaleString()} batch${b.objects === 1 ? '' : 'es'}, ${(b.bytes / 1e6).toFixed(1)}MB, oldest ${escapeHtml(b.oldest || '')}`);
+      else bits.push('Queue is empty — everything discovered has been extracted.');
+      if (b.liveJobs) bits.push('Inline live crawling is ON as well, which is slower than the queue drain and is lost on restart.');
+      if (b.lastDrain) bits.push(`Last drain finished ${escapeHtml(String(b.lastDrain.finished || '').slice(0, 19).replace('T', ' '))} (exit ${b.lastDrain.code}).`);
+      note.textContent = bits.join(' · ');
+    }
+    const drain = document.getElementById('drainButton');
+    if (drain) { drain.hidden = false; drain.disabled = !!b.draining; drain.textContent = b.draining ? 'Draining…' : 'Drain now'; }
+  } catch (error) {
+    const note = document.getElementById('backlogNote');
+    if (note) note.textContent = `Could not load the queue: ${error.message}`;
+  }
+}
+
+async function drainBacklogUI() {
+  const drain = document.getElementById('drainButton');
+  if (drain) { drain.disabled = true; drain.textContent = 'Starting…'; }
+  try {
+    const res = await fetch('/api/backlog/drain', { method: 'POST' });
+    const r = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(r.error || `HTTP ${res.status}`);
+    if (!r.started) window.alert(`Drain not started: ${r.reason || 'unknown'}`);
+  } catch (error) {
+    window.alert(`Could not start the drain: ${error.message}`);
+  }
+  fetchBacklog();
+}
+
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -1242,6 +1301,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   await fetchJobs();
   refreshDbCount();
+  fetchBacklog();
+  const drainBtn = document.getElementById('drainButton');
+  if (drainBtn) drainBtn.addEventListener('click', drainBacklogUI);
+  const refreshBacklogBtn = document.getElementById('refreshBacklogButton');
+  if (refreshBacklogBtn) refreshBacklogBtn.addEventListener('click', fetchBacklog);
+  // Slower than the 1.5s job poll — the queue moves in minutes, not seconds, and each call is an S3 LIST.
+  setInterval(fetchBacklog, 30000);
   // ?view=db (e.g. the "Master database" link on the Search page) opens the DB view directly;
   // otherwise open the newest job, or fall back to the legacy cc-results.csv view.
   if (new URLSearchParams(location.search).get('view') === 'db') {

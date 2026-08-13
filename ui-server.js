@@ -49,6 +49,40 @@ async function queueBioUrls(urls, label) {
     console.error('[monitor-queue] failed:', e.message);
   }
 }
+// ---- the DRAIN side of that queue ----
+// queueBioUrls is the producer and it is scheduled (setInterval, 12h). Until now the consumer was not
+// scheduled at all: `bio-etl --mode urls` existed, worked, and was only ever run by hand. The result was a
+// queue that grew every 12h forever — 2,925,514 URLs across 396 objects before it was first counted, while
+// the in-process live path it bypassed converted 10.2M handed-on URLs into 22,994 contacts (0.2%), because
+// startJob holds its queue in memory and every deploy drops it.
+//
+// So the drain runs on its own timer here. It is spawned as a CHILD PROCESS, not inlined: bio-etl shells
+// out to cc-athena-miner, lambda-drive and load-extracted in sequence, and a multi-hour pipeline must not
+// share a lifetime with the web server's event loop.
+let bioEtlRunning = false;
+let BIO_ETL_LAST = null;
+function runBioEtlDrain(reason) {
+  if (bioEtlRunning) { console.log('[bio-etl] already running — skipping this tick'); return; }
+  const region = process.env.AWS_REGION || 'us-east-1';
+  const bucket = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${region}`;
+  const args = ['--mode', 'urls', '--in', `s3://${bucket}/${MONITOR_QUEUE_PREFIX}`, '--drain'];
+  if (!/^(0|false|no|off)$/i.test(process.env.BIO_ETL_LIVE || '1')) args.push('--live');
+  bioEtlRunning = true;
+  const started = new Date().toISOString();
+  console.log(`[bio-etl] drain start (${reason}): node bio-etl.js ${args.join(' ')}`);
+  const child = require('child_process').spawn(process.execPath, [path.join(__dirname, 'bio-etl.js'), ...args], {
+    cwd: __dirname, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const tail = (buf) => String(buf).split('\n').filter(Boolean).forEach((l) => console.log('[bio-etl] ' + l));
+  child.stdout.on('data', tail); child.stderr.on('data', tail);
+  child.on('close', (code) => {
+    bioEtlRunning = false;
+    BIO_ETL_LAST = { started, finished: new Date().toISOString(), code };
+    console.log(`[bio-etl] drain finished with code ${code}`);
+  });
+  child.on('error', (e) => { bioEtlRunning = false; console.error('[bio-etl] spawn failed:', e.message); });
+}
+
 const emailVerify = require('./email-verify'); // deliverability check for MODELLED emails (Exhaust API)
 const { importSheet } = require('./sheet-import');
 const { siteSearch, bioRowsToRecords } = require('./serper');
@@ -1661,6 +1695,58 @@ const server = http.createServer(async (req, res) => {
     } catch (e) { jsonErr(res, 500, e.message); }
     return;
   }
+  // Bio-URL BACKLOG: how many discovered URLs are queued and NOT yet extracted.
+  //
+  // This exists because the queue was invisible. The Sitemap Monitor is on a 12h timer and appends a URL
+  // list to S3 every pass; the drain (`bio-etl --mode urls`) had no scheduler at all, so the queue grew
+  // for as long as the monitor ran and nothing showed it. 2.9M URLs accumulated before anyone counted.
+  //
+  // Counting is deliberately cheap: each object is named {stamp}-{count}.txt, so the URL total comes from
+  // a LIST of the key names — no GETs, no bytes transferred, safe to poll from the UI.
+  if (url.pathname === '/api/backlog' && req.method === 'GET') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    try {
+      const { S3Client, ListObjectsV2Command } = require('@aws-sdk/client-s3');
+      const region = process.env.AWS_REGION || 'us-east-1';
+      const bucket = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${region}`;
+      if (!_qs3) _qs3 = new S3Client({ region });
+      let token = null, objects = 0, bytes = 0, urls = 0, unnamed = 0, oldest = '', newest = '';
+      do {
+        const r = await _qs3.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: MONITOR_QUEUE_PREFIX, ContinuationToken: token }));
+        for (const o of (r.Contents || [])) {
+          objects++; bytes += o.Size || 0;
+          const m = /-(\d+)\.txt$/.exec(o.Key || '');
+          if (m) urls += Number(m[1]); else unnamed++;
+          const k = (o.Key || '').slice(MONITOR_QUEUE_PREFIX.length);
+          if (!oldest || k < oldest) oldest = k;
+          if (!newest || k > newest) newest = k;
+        }
+        token = r.IsTruncated ? r.NextContinuationToken : null;
+      } while (token);
+      // An oldest entry far behind the newest means the drain is not keeping up — surface the age rather
+      // than only the size, because a small queue that never empties is the worse failure.
+      const parseStamp = (k) => { const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})/.exec(k || ''); return m ? Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`) : 0; };
+      const oldestMs = parseStamp(oldest);
+      sendJson(res, {
+        objects, urls, bytes, unnamed,
+        oldest: oldest ? oldest.slice(0, 19).replace(/-(\d{2})-(\d{2})-(\d{2})$/, ' $1:$2:$3') : null,
+        newest: newest ? newest.slice(0, 19).replace(/-(\d{2})-(\d{2})-(\d{2})$/, ' $1:$2:$3') : null,
+        oldestAgeHours: oldestMs ? Math.round(((Date.now() - oldestMs) / 3600000) * 10) / 10 : null,
+        draining: bioEtlRunning,
+        lastDrain: BIO_ETL_LAST || null,
+        queueEnabled: MONITOR_QUEUE, liveJobs: MONITOR_LIVE_JOBS,
+      });
+    } catch (e) { jsonErr(res, 500, e.message); }
+    return;
+  }
+  // Kick the drain by hand (admin) — the schedule is the safety net, not the only way in.
+  if (url.pathname === '/api/backlog/drain' && req.method === 'POST') {
+    if (!isAdmin) { jsonErr(res, 403, 'Forbidden'); return; }
+    if (bioEtlRunning) { sendJson(res, { started: false, reason: 'already running' }); return; }
+    runBioEtlDrain('manual');
+    sendJson(res, { started: true });
+    return;
+  }
   // Download the Library (or the current filtered subset) as CSV (analyst+).
   if (url.pathname === '/api/sitemaps/export.csv' && req.method === 'GET') {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
@@ -2416,6 +2502,17 @@ pruneOldJobs();
         setTimeout(smPass, 12 * 60 * 1000);                            // ~12 min after boot
         setInterval(smPass, SM_HOURS * 3600 * 1000);
         console.log(`Sitemap Library monitor: ON, every ${SM_HOURS}h (up to ${SM_BATCH.toLocaleString()} sitemaps, cap ${SM_CAP.toLocaleString()} URLs/pass, conc ${SM_CONC}).`);
+      }
+      // The DRAIN for what that monitor produces. Scheduled deliberately more often than the producer
+      // (default 6h vs 12h) so the queue trends to empty instead of merely keeping pace — a drain running
+      // at exactly the producer's rate never recovers from a backlog, it only stops adding to one.
+      if (process.env.BIO_ETL_DRAIN !== '0') {
+        const BD_HOURS = Math.max(1, Number(process.env.BIO_ETL_DRAIN_HOURS) || 6);
+        setTimeout(() => runBioEtlDrain('startup'), 20 * 60 * 1000);   // ~20 min after boot, behind smPass
+        setInterval(() => runBioEtlDrain('schedule'), BD_HOURS * 3600 * 1000);
+        console.log(`Bio-URL queue drain: ON, every ${BD_HOURS}h (s3://…/${MONITOR_QUEUE_PREFIX}).`);
+      } else {
+        console.log('Bio-URL queue drain: OFF (BIO_ETL_DRAIN=0) — the monitor queue will grow unbounded.');
       }
       // Keep OpenSearch current with the processing DB: stream fleet-ingested/edited contacts across.
       // Only meaningful when the source of truth is Postgres (DATABASE_URL); SQLite fallback has no fleet.
