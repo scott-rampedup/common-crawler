@@ -14,6 +14,41 @@ const BUILTIN_ROLE_TERMS = getBuiltInRoleTerms();   // static; shown on the Admi
 const { modelEmail, render: renderEmailLocal, TEMPLATES: EMAIL_TEMPLATES } = require('./email-pattern');
 const emailModel = require('./email-model');   // shared email-modelling (also used by the worker fleet)
 const liName = require('./li-name');           // shared linkedin.com/in name+gender recovery (ingest + backfill)
+
+// ---- Monitor -> nightly bio-ETL queue -------------------------------------------------------------
+// The monitor's job is DISCOVERY: find the bio URLs we don't have contacts for. Extraction is a
+// separate, far heavier concern, and doing it inline caps the monitor at whatever one app machine can
+// live-crawl (LIVE_CONC=4). Measured: 54.2% of freshly-discovered bio URLs are already in Common Crawl,
+// and the Lambda fleet extracts at 4,386 pages/s against ~86/s here. So the monitor now APPENDS its
+// findings to an S3 queue that `bio-etl --mode urls` drains nightly: resolve in CC, Lambda the hits,
+// live-crawl only the remainder.
+//
+// MONITOR_QUEUE=0     -> don't queue (old behaviour only)
+// MONITOR_LIVE_JOBS=0 -> don't also start the inline live job (queue only; the nightly ETL does the work)
+// S3 has no append, so each pass writes its own object under the pending/ prefix and the ETL merges them.
+const MONITOR_QUEUE = !/^(0|false|no|off)$/i.test(process.env.MONITOR_QUEUE || '1');
+const MONITOR_LIVE_JOBS = !/^(0|false|no|off)$/i.test(process.env.MONITOR_LIVE_JOBS || '1');
+const MONITOR_QUEUE_PREFIX = process.env.MONITOR_QUEUE_PREFIX || 'monitor-queue/pending/';
+let _qs3 = null;
+async function queueBioUrls(urls, label) {
+  if (!MONITOR_QUEUE || !Array.isArray(urls) || !urls.length) return;
+  try {
+    if (!_qs3) {
+      const { S3Client } = require('@aws-sdk/client-s3');
+      _qs3 = new S3Client({ region: process.env.AWS_REGION || 'us-east-1' });
+    }
+    const { PutObjectCommand } = require('@aws-sdk/client-s3');
+    const region = process.env.AWS_REGION || 'us-east-1';
+    const bucket = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${region}`;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const key = `${MONITOR_QUEUE_PREFIX}${stamp}-${urls.length}.txt`;
+    await _qs3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: urls.join('\n') + '\n', ContentType: 'text/plain' }));
+    console.log(`[monitor-queue] ${urls.length} URL(s) -> s3://${bucket}/${key}${label ? ` (${label})` : ''}`);
+  } catch (e) {
+    // Never let queueing break a monitor pass — the inline job (if enabled) is still the safety net.
+    console.error('[monitor-queue] failed:', e.message);
+  }
+}
 const emailVerify = require('./email-verify'); // deliverability check for MODELLED emails (Exhaust API)
 const { importSheet } = require('./sheet-import');
 const { siteSearch, bioRowsToRecords } = require('./serper');
@@ -175,7 +210,10 @@ const monitor = makeMonitor({
   genderMap: GENDER_MAP,
   bioSitemapNames: BIO_SITEMAP_NAMES,
   // delta extraction reuses the normal CC-first webpage pipeline (-> Master DB upsert)
-  extract: (urls, label) => { startJob(urls, '', false, 'webpage', 'Monitor', label || 'Monitor: new bios', null, 'Sitemap Monitor'); },
+  extract: (urls, label) => {
+    queueBioUrls(urls, label || 'Monitor: new bios');                 // nightly bio-ETL (Lambda) drains this
+    if (MONITOR_LIVE_JOBS) startJob(urls, '', false, 'webpage', 'Monitor', label || 'Monitor: new bios', null, 'Sitemap Monitor');
+  },
   log: (m) => console.log(`[monitor] ${m}`),
 });
 
@@ -201,7 +239,10 @@ function getLibMonitor() {   // lazy: sitemapsClient + reader are set in startup
   if (!libMonitor && sitemapsClient && reader && reader.client) {
     libMonitor = makeLibMonitor({
       sitemaps, sitemapsClient, contactsClient: reader.client, contactsIndex: openSearch.INDEX, ccEngine,
-      extract: (urls, label) => startJob(urls, '', false, 'webpage', 'Monitor', label || 'Sitemap Monitor', null, 'Sitemap Monitor'),
+      extract: (urls, label) => {
+        queueBioUrls(urls, label || 'Sitemap Monitor');               // nightly bio-ETL (Lambda) drains this
+        if (MONITOR_LIVE_JOBS) startJob(urls, '', false, 'webpage', 'Monitor', label || 'Sitemap Monitor', null, 'Sitemap Monitor');
+      },
       directoryRules: {}, genderMap: GENDER_MAP, bioSitemapNames: BIO_SITEMAP_NAMES, locationSitemapNames: LOCATION_SITEMAP_NAMES,
       log: (m) => console.log('[sitemap-lib-monitor] ' + m),
     });
