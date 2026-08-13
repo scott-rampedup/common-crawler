@@ -63,19 +63,38 @@ function run(script, args, env) {
   // input with argv.find(a => /\.jsonl?$/i.test(a)), so a ".slice" suffix makes it print usage and exit —
   // which this harness then dutifully reported as 0.0% delivery on every rung.
   const slicePath = PTR.replace(/\.jsonl?$/i, '') + '-slice.jsonl';
+  let sliceCount = 0;
   {
-    const lines = [];
+    const w = fs.createWriteStream(slicePath);
     const rl = require('readline').createInterface({ input: fs.createReadStream(PTR), crlfDelay: Infinity });
-    for await (const l of rl) { if (l.trim()) lines.push(l); if (lines.length >= SLICE) break; }
-    fs.writeFileSync(slicePath, lines.join('\n') + '\n');
-    console.error(`\ncalibrating on ${lines.length.toLocaleString()} pointer(s), target >=${TARGET}% delivery\n`);
+    for await (const l of rl) {
+      if (!l.trim()) continue;
+      if (!w.write(l + '\n')) await new Promise((r) => w.once('drain', r));
+      if (++sliceCount >= SLICE) break;
+    }
+    await new Promise((r) => w.end(r));
+    console.error(`\ncalibrating on ${sliceCount.toLocaleString()} pointer(s), target >=${TARGET}% delivery\n`);
   }
+
+  // A rung can only be exercised if the slice contains enough BATCHes to fill the fleet AND keep it full.
+  // With BATCH=200, a 40,000-pointer slice is 200 batches — so at most 200 Lambdas ever run, and a rung
+  // configured for 2,000 actually measures a tenth of that. The first run of this harness reported
+  // "100% delivery at 20,000 GETs" when it had really tested ~2,000. Skip what we cannot honestly test.
+  const BATCH_N = Number(process.env.BATCH) || 200;
+  const batchesInSlice = Math.floor(sliceCount / BATCH_N);
+  const SUSTAIN = 3;                                    // want the fleet filled ~3x over, not just once
+  console.error(`  slice = ${sliceCount.toLocaleString()} pointers = ${batchesInSlice.toLocaleString()} batches of ${BATCH_N}`);
+  console.error(`  a rung is only testable up to ~${Math.floor(batchesInSlice / SUSTAIN).toLocaleString()} concurrent Lambdas\n`);
 
   console.error('  fleet x fetch =  concurrent |  delivery | fetch/s | ptr-err');
   console.error('  ------------------------------------------------------------');
   const results = [];
   let winner = null;
   for (const step of LADDER) {
+    if (step.conc > Math.floor(batchesInSlice / SUSTAIN)) {
+      console.error(`  ${String(step.conc).padStart(5)} x ${String(step.fetch).padStart(2)} = ${String(step.conc * step.fetch).padStart(8)} | SKIPPED — slice too small to fill this fleet`);
+      continue;
+    }
     const out = run('lambda-drive.js', [slicePath], {
       CONCURRENCY: String(step.conc), LAMBDA_FETCH_CONC: String(step.fetch),
       BATCH: process.env.BATCH || '200', RUN: `calib/${step.conc}x${step.fetch}`,
