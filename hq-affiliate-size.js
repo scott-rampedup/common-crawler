@@ -49,11 +49,12 @@ const N = (n) => Number(n || 0).toLocaleString();
     const src = { domain: { terms: { field: 'domain' } } };
     const comp = { size: PAGE, sources: [src] };
     if (after) comp.after = after;
-    const r = await c.search({
-      index: co.INDEX,
-      body: { size: 0, query: Q, aggs: { byDomain: { composite: comp } } },
-      request_timeout: 300000,
-    });
+    // requestTimeout is a CLIENT option — passing it inside the search params makes OpenSearch reject
+    // the request outright as an unrecognized query-string parameter.
+    const r = await c.search(
+      { index: co.INDEX, body: { size: 0, query: Q, aggs: { byDomain: { composite: comp } } } },
+      { requestTimeout: 300000 },
+    );
     const agg = (r.body || r).aggregations.byDomain;
     const buckets = agg.buckets || [];
     if (!buckets.length) break;
