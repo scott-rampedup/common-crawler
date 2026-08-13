@@ -138,29 +138,60 @@ async function getText(key) {
   }
 
   // ---------------------------------------------------------------- shared: drop pages we already have
-  const ptrLines = fs.existsSync(F.ptr) ? fs.readFileSync(F.ptr, 'utf8').split('\n').filter(Boolean) : [];
-  if (SKIP_KNOWN && ptrLines.length) {
+  // STREAMED, never slurped. A full crawl is ~18.1M pointers ≈ 3.6GB of JSONL: readFileSync would exceed
+  // V8's string limit and OOM the box before a single page was extracted. This reads a window at a time,
+  // asks OpenSearch which of that window it already has, and writes survivors straight back out.
+  if (SKIP_KNOWN && fs.existsSync(F.ptr)) {
     const os_ = require('./opensearch');
     const client = os_.makeClient(process.env.OPENSEARCH_ENDPOINT);
-    const urls = ptrLines.map((l) => { try { return JSON.parse(l).url; } catch (e) { return ''; } });
-    const uniq = [...new Set(urls.filter(Boolean))];
-    console.error(`\n══════ skip pages already in the Master DB (${uniq.length.toLocaleString()} to check) ══════`);
-    const known = new Set();
-    for (let i = 0; i < uniq.length; i += 1024) {
-      const chunk = uniq.slice(i, i + 1024);
-      try {
-        const r = await client.search({ index: os_.INDEX, body: { size: 0, query: { terms: { web_source_url: chunk } },
-          aggs: { u: { terms: { field: 'web_source_url', size: chunk.length } } } } });
-        for (const b of (((r.body || r).aggregations.u.buckets) || [])) known.add(b.key);
-      } catch (e) { /* an unfiltered page costs a fetch, not correctness */ }
+    const tmp = F.ptr + '.filtered';
+    const out = fs.createWriteStream(tmp);
+    const rl = readline.createInterface({ input: fs.createReadStream(F.ptr), crlfDelay: Infinity });
+    let seenN = 0, knownN = 0, keptN = 0;
+    let win = [];                                          // [{line,url}] awaiting a lookup
+    const WINDOW = 1024;                                   // one terms query per window
+    const flushWindow = async () => {
+      if (!win.length) return;
+      const urls = [...new Set(win.map((w) => w.url).filter(Boolean))];
+      const have = new Set();
+      if (urls.length) {
+        try {
+          const r = await client.search({ index: os_.INDEX, body: { size: 0, query: { terms: { web_source_url: urls } },
+            aggs: { u: { terms: { field: 'web_source_url', size: urls.length } } } } });
+          for (const b of (((r.body || r).aggregations.u.buckets) || [])) have.add(b.key);
+        } catch (e) { /* an unfiltered page costs a fetch, not correctness */ }
+      }
+      for (const w of win) {
+        if (w.url && have.has(w.url)) { knownN++; continue; }
+        keptN++;
+        if (!out.write(w.line + '\n')) await new Promise((res) => out.once('drain', res));
+      }
+      win = [];
+    };
+    console.error(`\n══════ skip pages already in the Master DB (streamed) ══════`);
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+      seenN++;
+      let url = ''; try { url = JSON.parse(line).url || ''; } catch (e) { /* keep unparseable, extract will drop it */ }
+      win.push({ line, url });
+      if (win.length >= WINDOW) {
+        await flushWindow();
+        if (seenN % 250000 < WINDOW) console.error(`  checked ${seenN.toLocaleString()} | already have ${knownN.toLocaleString()} | keeping ${keptN.toLocaleString()}`);
+      }
     }
-    const kept = ptrLines.filter((l, i) => urls[i] && !known.has(urls[i]));
-    console.error(`  already have ${known.size.toLocaleString()} | NEW to extract ${kept.length.toLocaleString()}`);
-    fs.writeFileSync(F.ptr, kept.join('\n') + (kept.length ? '\n' : ''));
+    await flushWindow();
+    await new Promise((r) => out.end(r));
+    fs.renameSync(tmp, F.ptr);
+    console.error(`  already have ${knownN.toLocaleString()} | NEW to extract ${keptN.toLocaleString()}`);
   }
 
   // ---------------------------------------------------------------- Lambda fan-out
-  const nPtr = fs.existsSync(F.ptr) ? fs.readFileSync(F.ptr, 'utf8').split('\n').filter(Boolean).length : 0;
+  // Counted by streaming for the same reason.
+  let nPtr = 0;
+  if (fs.existsSync(F.ptr)) {
+    const rl = readline.createInterface({ input: fs.createReadStream(F.ptr), crlfDelay: Infinity });
+    for await (const l of rl) if (l.trim()) nPtr++;
+  }
   summary.extracted = nPtr;
   if (nPtr) {
     step(`extract ${nPtr.toLocaleString()} page(s) across the Lambda fleet`, 'lambda-drive.js', [F.ptr], { RUN });
