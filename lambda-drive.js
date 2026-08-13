@@ -36,19 +36,49 @@ const { LambdaClient, InvokeCommand, GetAccountSettingsCommand } = require('@aws
   const CONC = Math.max(1, Math.min(want, limit - 2));
   console.error(`Lambda concurrency limit ${limit} -> driving at ${CONC} concurrent (raise the quota to go faster)`);
 
+  // Per-Lambda fetch concurrency. This is a MULTIPLIER on Lambda concurrency against one S3 bucket:
+  // 5,000 Lambdas x 64 = 320,000 simultaneous GETs on s3://commoncrawl, far past what it will serve. A
+  // full sweep at those settings fetched 1.08M of 3.3M pointers — the rest failed inside the Lambdas and
+  // were counted nowhere. Let the FLEET provide parallelism and keep each function polite.
+  const FETCH_CONC = Number(process.env.LAMBDA_FETCH_CONC) || 12;
+  const INVOKE_TRIES = Number(process.env.INVOKE_TRIES) || 5;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
   const t0 = Date.now();
-  let sent = 0, records = 0, fetched = 0, empty = 0, invErrs = 0, batchNo = 0;
+  let sent = 0, records = 0, fetched = 0, empty = 0, ptrErrs = 0, invErrs = 0, lost = 0, retried = 0, batchNo = 0;
   const inflight = new Set();
 
   async function fire(batch, n) {
-    const payload = Buffer.from(JSON.stringify({ pointers: batch, outKey: `cc-extracted/${RUN}/b${n}.jsonl`, concurrency: 64 }));
-    try {
-      const res = await lambda.send(new InvokeCommand({ FunctionName: 'cc-extract', Payload: payload }));
-      if (res.FunctionError) { invErrs++; }
-      else { const o = JSON.parse(Buffer.from(res.Payload).toString()); records += o.written || 0; fetched += o.fetched || 0; empty += o.empty || 0; }
-    } catch (e) { invErrs++; }
+    const payload = Buffer.from(JSON.stringify({ pointers: batch, outKey: `cc-extracted/${RUN}/b${n}.jsonl`, concurrency: FETCH_CONC }));
+    // Throttling during ramp is EXPECTED, not exceptional: Lambda scales +1,000 concurrency per 10s, so
+    // driving at 5,000 guarantees TooManyRequestsException early on. Dropping those batches silently is
+    // how a run loses six figures of pages, so retry with backoff and only then count them lost.
+    for (let attempt = 1; attempt <= INVOKE_TRIES; attempt++) {
+      try {
+        const res = await lambda.send(new InvokeCommand({ FunctionName: 'cc-extract', Payload: payload }));
+        if (res.FunctionError) {                       // the function itself threw — a retry won't help
+          invErrs++; lost += batch.length; break;
+        }
+        const o = JSON.parse(Buffer.from(res.Payload).toString());
+        records += o.written || 0; fetched += o.fetched || 0; empty += o.empty || 0;
+        ptrErrs += o.errs || 0;                        // per-pointer fetch failures INSIDE the Lambda
+        break;
+      } catch (e) {
+        const throttled = /TooManyRequests|Throttl|Rate exceeded|ServiceException|502|503/i.test(String(e && (e.name + ' ' + e.message)));
+        if (attempt < INVOKE_TRIES && throttled) {
+          retried++;
+          await sleep(Math.min(8000, 250 * 2 ** attempt) + Math.floor(Math.random() * 250));
+          continue;
+        }
+        invErrs++; lost += batch.length; break;
+      }
+    }
     sent += batch.length;
-    if (n % 50 === 0) { const s = (Date.now() - t0) / 1000; console.error(`  ${sent.toLocaleString()} ptrs | ${records.toLocaleString()} records | ${Math.round(sent / s)} ptr/s | ${invErrs} inv-err`); }
+    if (n % 50 === 0) {
+      const s = (Date.now() - t0) / 1000;
+      console.error(`  ${sent.toLocaleString()} sent | ${fetched.toLocaleString()} fetched | ${records.toLocaleString()} records`
+        + ` | ${Math.round(fetched / s)} fetch/s | inv-err ${invErrs} (${lost.toLocaleString()} lost) | ptr-err ${ptrErrs.toLocaleString()} | retried ${retried}`);
+    }
   }
   async function pump(batch) {
     const n = batchNo++;
@@ -70,6 +100,20 @@ const { LambdaClient, InvokeCommand, GetAccountSettingsCommand } = require('@aws
   await Promise.all(inflight);
 
   const s = (Date.now() - t0) / 1000;
-  console.error(`DONE: ${sent.toLocaleString()} pointers -> ${records.toLocaleString()} records | ${fetched.toLocaleString()} fetched, ${empty} empty | ${invErrs} invoke-err | ${Math.round(s)}s | ${Math.round(sent / s)} ptr/s`);
+  // Report DELIVERY, not dispatch. The old summary printed ptr/s from `sent`, which made a run that
+  // fetched a third of its pointers look like it was flying — 73,296 "ptr/s" against 5,187 pages/s of
+  // real work. Every pointer is now accounted for: fetched, lost to a dead invoke, or failed in-Lambda.
+  const accounted = fetched + empty + ptrErrs + lost;
+  console.error(`\nDONE: ${sent.toLocaleString()} pointers sent in ${Math.round(s)}s`);
+  console.error(`  fetched        ${fetched.toLocaleString()}  (${Math.round(fetched / s).toLocaleString()}/s effective)`);
+  console.error(`  records        ${records.toLocaleString()}`);
+  console.error(`  empty          ${empty.toLocaleString()}`);
+  console.error(`  ptr-err        ${ptrErrs.toLocaleString()}  (fetch failures inside the Lambdas — usually S3 throttling)`);
+  console.error(`  invoke-err     ${invErrs.toLocaleString()}  -> ${lost.toLocaleString()} pointer(s) lost${retried ? `, after ${retried.toLocaleString()} retry(ies)` : ''}`);
+  const unacc = sent - accounted;
+  if (Math.abs(unacc) > BATCH) console.error(`  UNACCOUNTED    ${unacc.toLocaleString()}  <- investigate; every pointer should land in a bucket above`);
+  const pct = sent ? ((fetched / sent) * 100).toFixed(1) : '0';
+  console.error(`  delivery       ${pct}% of pointers actually fetched`);
+  if (Number(pct) < 90) console.error(`  NOTE: below 90% — lower LAMBDA_FETCH_CONC (now ${FETCH_CONC}) or CONCURRENCY (now ${CONC}); S3 is the limit, not Lambda.`);
   console.error(`Next: OPENSEARCH_ENDPOINT=… node load-extracted.js cc-extracted/${RUN}/`);
 })().catch((e) => { console.error('drive error:', e.message); process.exit(1); });
