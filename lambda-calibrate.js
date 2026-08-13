@@ -59,8 +59,10 @@ function run(script, args, env) {
   }
   if (!fs.existsSync(PTR)) { console.error(`no pointer file at ${PTR} — pass --ptr or --discover N`); process.exit(1); }
 
-  // One fixed slice, reused every round.
-  const slicePath = PTR + '.slice';
+  // One fixed slice, reused every round. The name MUST still end in .jsonl: lambda-drive locates its
+  // input with argv.find(a => /\.jsonl?$/i.test(a)), so a ".slice" suffix makes it print usage and exit —
+  // which this harness then dutifully reported as 0.0% delivery on every rung.
+  const slicePath = PTR.replace(/\.jsonl?$/i, '') + '-slice.jsonl';
   {
     const lines = [];
     const rl = require('readline').createInterface({ input: fs.createReadStream(PTR), crlfDelay: Infinity });
@@ -78,7 +80,15 @@ function run(script, args, env) {
       CONCURRENCY: String(step.conc), LAMBDA_FETCH_CONC: String(step.fetch),
       BATCH: process.env.BATCH || '200', RUN: `calib/${step.conc}x${step.fetch}`,
     });
-    const pct = Number((/delivery\s+([\d.]+)%/.exec(out) || [])[1] || 0);
+    const m = /delivery\s+([\d.]+)%/.exec(out);
+    if (!m) {
+      // A round that produced no summary DID NOT deliver 0% — it failed to run. Reporting it as 0%
+      // silently turns a broken harness into a plausible-looking measurement, so say so and stop.
+      console.error(`\n  round ${step.conc}x${step.fetch} produced no summary — lambda-drive did not run.`);
+      console.error('  its output was:\n' + out.split('\n').slice(0, 12).map((l) => '    ' + l).join('\n'));
+      process.exit(1);
+    }
+    const pct = Number(m[1] || 0);
     const rate = Number(((/fetched\s+[\d,]+\s+\(([\d,]+)\/s/.exec(out) || [])[1] || '0').replace(/,/g, ''));
     const perr = Number(((/ptr-err\s+([\d,]+)/.exec(out) || [])[1] || '0').replace(/,/g, ''));
     const gets = step.conc * step.fetch;
