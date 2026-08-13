@@ -105,7 +105,7 @@ const looksLikePerson = (f, l) => {
   console.log(`  extractRecord -> null     ${N(t.noRecord).padStart(9)}  ${pct(t.noRecord)}`);
   console.log(`  KEPT today (name+email)   ${N(t.kept).padStart(9)}  ${pct(t.kept)}`);
   console.log(`  DROPPED, email no name    ${N(t.emailNoName).padStart(9)}  ${pct(t.emailNoName)}   <- HEM inventory`);
-  console.log(`  DROPPED, name no email    ${N(t.nameNoEmail).padStart(9)}  ${pct(t.nameNoEmail)}   <- modellable`);
+  console.log(`  DROPPED, name no email    ${N(t.nameNoEmail).padStart(9)}  ${pct(t.nameNoEmail)}   <- modellable (FLOOR, see below)`);
   console.log(`  DROPPED, neither          ${N(t.neither).padStart(9)}  ${pct(t.neither)}`);
   console.log(`\n  the email-no-name bucket, by type:`);
   for (const k of Object.keys(emailTypes).sort((a, b) => emailTypes[b] - emailTypes[a])) {
@@ -113,5 +113,12 @@ const looksLikePerson = (f, l) => {
   }
   const hem = (emailTypes.Professional || 0) + (emailTypes.Personal || 0);
   console.log(`    -> person-level (Professional+Personal): ${N(hem)}  ${((hem / Math.max(1, t.pages)) * 100).toFixed(1)}% of all pages`);
-  console.log(`\n  the name-no-email bucket: ${N(nameNoEmailGendered.yes)} gendered (modellable) / ${N(nameNoEmailGendered.no)} not`);
+  // Caveat worth stating rather than letting the reader over-read the number: under allowNoEmail,
+  // extractRecord only RETURNS an email-less record when isBio && first && last && gender. An email-less
+  // page whose name carries no gender returns null and lands in the noRecord bucket above, so
+  // name-no-email is a floor, not the true total. The email-no-name bucket has no such gate — a record
+  // with an email always comes back — which is the number this audit exists to produce.
+  console.log(`\n  the name-no-email bucket: ${N(nameNoEmailGendered.yes)} gendered / ${N(nameNoEmailGendered.no)} not.`);
+  console.log(`  This bucket is a FLOOR: extractRecord only returns an email-less record when it already has`);
+  console.log(`  a gendered name, so ungendered ones are counted under "extractRecord -> null" instead.`);
 })().catch((e) => { console.error('ERR', e && e.stack || e); process.exit(1); });
