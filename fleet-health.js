@@ -80,7 +80,11 @@ const prev = new Map();
 
 function pass() {
   const rows = machines();
-  if (!rows.length) { console.log(`no machines matching "${PREFIX}" in ${APP}`); return true; }
+  // An empty list is NOT proof the fleet finished — far more often it is a transient `flyctl machine
+  // list` failure, and treating it as completion ends the watch while the fleet is still running (which
+  // it did, twice). Report it as unknown and keep watching; only a real all-shards-stopped reading may
+  // end the loop.
+  if (!rows.length) { console.log(`\n${new Date().toISOString().slice(11, 19)}  no machines matched "${PREFIX}" — treating as a failed query, not as completion`); return false; }
 
   console.log(`\n${new Date().toISOString().slice(11, 19)}  ${APP} / ${PREFIX}*`);
   console.log('  shard              state    progress                 rate    extracted    err  health');
