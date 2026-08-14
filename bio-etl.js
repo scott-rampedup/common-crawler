@@ -206,8 +206,34 @@ async function getText(key) {
       ['--live', F.miss, '--tag', RUN]);
   }
 
+  // ---------------------------------------------------------------- preserve the un-crawled remainder
+  // The miss list is the URLs Common Crawl does not have — on monitor output that is ~88% of the queue,
+  // and it exists ONLY on this machine's /tmp. Deleting the queue objects while it sits there unprocessed
+  // destroys them permanently: the queue was the only durable copy. That is a live hazard, because --drain
+  // deletes whether or not --live ran, and the live step can also die (the first fleet lost four of eight
+  // shards to heap exhaustion). So the remainder is uploaded BEFORE anything is deleted, and a failure to
+  // upload cancels the drain rather than proceeding.
+  let missSaved = true;
+  const missKey = `bio-resolve/${RUN}/miss.txt`;
+  if (MODE === 'urls' && summary.miss && fs.existsSync(F.miss)) {
+    try {
+      const st = fs.statSync(F.miss);
+      const { PutObjectCommand } = require('@aws-sdk/client-s3');
+      await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: missKey,
+        Body: fs.createReadStream(F.miss), ContentLength: st.size, ContentType: 'text/plain' }));
+      console.error(`\nremainder saved: ${summary.miss.toLocaleString()} URL(s) -> s3://${BUCKET}/${missKey}`);
+      if (!LIVE) {
+        console.error('  (--live was not set, so these are NOT yet crawled — run the fleet over that key:)');
+        console.error(`  node live-fleet-shard.js --in s3://${BUCKET}/${missKey} --shard i/N --tag ${RUN}`);
+      }
+    } catch (e) {
+      missSaved = false;
+      console.error(`\nFAILED to save the remainder (${e.message}) — NOT draining the queue, so nothing is lost.`);
+    }
+  }
+
   // ---------------------------------------------------------------- drain the queue (opt-in)
-  if (DRAIN && consumed.length) {
+  if (DRAIN && consumed.length && missSaved) {
     for (let i = 0; i < consumed.length; i += 1000) {
       const batch = consumed.slice(i, i + 1000).map((Key) => ({ Key }));
       try { await s3.send(new DeleteObjectsCommand({ Bucket: BUCKET, Delete: { Objects: batch } })); }
