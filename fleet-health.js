@@ -54,9 +54,13 @@ function machines() {
 function inspect(id) {
   const log = fly(['logs', '-a', APP, '-i', id, '--no-tail']);
   const s = { done: false, oom: false, at: 0, total: 0, fetched: 0, extracted: 0, err: 0, rate: 0, planned: 0 };
-  // "shard 3/8: 315,613 of 2,563,533 URL(s)" — the shard's own declared workload.
+  // "shard 3/8: 315,613 of 2,563,533 URL(s)" — the shard's own declared workload. When the shard was
+  // resumed the line continues "— skipping first N, M to do", and M is the real workload: reporting the
+  // pre-skip figure would make a resumed shard look permanently behind.
   const plan = /shard \d+\/\d+: ([\d,]+) of ([\d,]+) URL/.exec(log);
   if (plan) s.planned = Number(plan[1].replace(/,/g, ''));
+  const todo = /([\d,]+) to do/.exec(log);
+  if (todo) s.planned = Number(todo[1].replace(/,/g, ''));
   // last progress line
   let m, last = null;
   const re = /\[live\] ([\d,]+)\/([\d,]+) \| fetched ([\d,]+) \| extracted ([\d,]+) \| ([\d,]+) err \| ([\d.]+)\/s/g;
@@ -106,7 +110,10 @@ function pass() {
   }
 
   console.log(`  ---------------------------------------------------------------------------------------`);
-  console.log(`  ${live} live · ${doneN} done · ${dead} dead   |   extracted ${N(totalExtracted)}   |   ${N(remaining)} URL(s) left`);
+  // "extracted" counts only what the CURRENT machine has done. A shard that was restarted lost its
+  // predecessor's tally with the machine, so this figure understates a fleet that has been resumed —
+  // the authoritative count is the contacts index, not this column.
+  console.log(`  ${live} live · ${doneN} done · ${dead} dead   |   extracted ${N(totalExtracted)} (current machines only)   |   ${N(remaining)} URL(s) left`);
   if (aggRate > 0 && remaining > 0) {
     // Deliberately computed off the CURRENT live rate: as shards finish, that rate falls and the estimate
     // rises. An estimate from the peak aggregate would flatter a fleet that has no work-stealing.
