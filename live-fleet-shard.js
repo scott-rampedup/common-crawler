@@ -17,6 +17,15 @@
  * Each shard downloads the full list and keeps only its own slice. That is deliberately simpler than
  * pre-splitting into N objects: the fleet size can change without re-splitting, and a shard that dies can
  * be relaunched by itself with the identical command.
+ *
+ * BALANCING: hashing the domain balances DOMAINS, not URLs, and URLs-per-domain is extremely skewed — the
+ * first run of this split 2,563,533 URLs into shards of 943,397 and 78,853, a 12x spread, because a single
+ * large site lands whole in one shard. Wall-clock is set by the slowest shard, so that is an 11-hour job
+ * masquerading as a 1-hour one. So the default is a greedy longest-processing-time bin-pack: count URLs per
+ * domain in a first pass, then assign domains largest-first to whichever shard is currently least loaded.
+ * Domain affinity is preserved (a site still lands on exactly one machine) and every shard gets a similar
+ * URL count. Every machine runs the same deterministic computation over the same input, so the assignment
+ * agrees across the fleet with no coordination. --hash restores the old behaviour.
  */
 const fs = require('fs');
 const path = require('path');
@@ -45,30 +54,67 @@ const domainOf = (u) => {
   try { return new URL(u).hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { return u; }
 };
 
+const HASH_ONLY = process.argv.includes('--hash');
+
+async function openIn() {
+  if (/^s3:\/\//i.test(IN)) {
+    const m = /^s3:\/\/([^/]+)\/(.+)$/i.exec(IN);
+    return (await new S3Client({ region: REGION }).send(new GetObjectCommand({ Bucket: m[1], Key: m[2] }))).Body;
+  }
+  return fs.createReadStream(IN);
+}
+const urlOf = (t) => {
+  if (!t.startsWith('{')) return t;
+  try { return JSON.parse(t).url || ''; } catch (e) { return ''; }
+};
+
 (async () => {
   if (!IN) { console.error('need --in <s3://… or path>'); process.exit(1); }
   const mine = path.join('/tmp', `${TAG}-shard${SI}of${SN}.txt`);
 
-  let stream;
-  if (/^s3:\/\//i.test(IN)) {
-    const m = /^s3:\/\/([^/]+)\/(.+)$/i.exec(IN);
-    console.error(`reading s3://${m[1]}/${m[2]} …`);
-    stream = (await new S3Client({ region: REGION }).send(new GetObjectCommand({ Bucket: m[1], Key: m[2] }))).Body;
-  } else {
-    stream = fs.createReadStream(IN);
+  // ---- pass 1: URLs per domain (skipped for --hash, which needs no global view) ----
+  let owner = null;
+  if (!HASH_ONLY) {
+    const counts = new Map();
+    let n = 0;
+    const rl0 = readline.createInterface({ input: await openIn(), crlfDelay: Infinity });
+    for await (const line of rl0) {
+      const t = line.trim(); if (!t) continue;
+      const u = urlOf(t); if (!u) continue;
+      const d = domainOf(u);
+      counts.set(d, (counts.get(d) || 0) + 1);
+      n++;
+    }
+    // Greedy LPT: largest domains first into the least-loaded shard. Sorting by count then by name keeps
+    // the order total, so every machine in the fleet derives the identical assignment independently.
+    const domains = [...counts.entries()].sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1));
+    const load = new Array(SN).fill(0);
+    owner = new Map();
+    for (const [d, cnt] of domains) {
+      let best = 0;
+      for (let i = 1; i < SN; i++) if (load[i] < load[best]) best = i;
+      owner.set(d, best);
+      load[best] += cnt;
+    }
+    const min = Math.min(...load), max = Math.max(...load);
+    console.error(`balanced ${n.toLocaleString()} URL(s) over ${counts.size.toLocaleString()} domain(s) into ${SN} shard(s)`);
+    console.error(`  per-shard: ${load.map((x) => x.toLocaleString()).join(' · ')}`);
+    console.error(`  spread ${max ? (((max - min) / max) * 100).toFixed(1) : '0'}%  (this shard: ${load[SI].toLocaleString()})`);
   }
 
+  // ---- pass 2: write only this shard's URLs ----
   const out = fs.createWriteStream(mine);
   let total = 0, kept = 0;
-  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  const rl = readline.createInterface({ input: await openIn(), crlfDelay: Infinity });
   for await (const line of rl) {
     const t = line.trim();
     if (!t) continue;
     total++;
-    let u = t;
-    if (t.startsWith('{')) { try { u = JSON.parse(t).url || ''; } catch (e) { u = ''; } }
+    const u = urlOf(t);
     if (!u) continue;
-    if (fnv1a(domainOf(u)) % SN !== SI) continue;
+    const d = domainOf(u);
+    const shard = owner ? owner.get(d) : (fnv1a(d) % SN);
+    if (shard !== SI) continue;
     kept++;
     if (!out.write(u + '\n')) await new Promise((r) => out.once('drain', r));
   }
