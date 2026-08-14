@@ -206,6 +206,22 @@ async function getText(key) {
       ['--live', F.miss, '--tag', RUN]);
   }
 
+  // ---------------------------------------------------------------- filter the remainder too
+  // The same skip-known filter was applied to the CC pointer list only, which is backwards: a pointer
+  // costs an S3 range read inside a Lambda, while a miss costs a live proxied fetch — the most expensive
+  // operation here — and the miss list is the larger side (82.6% of the 2026-08-14 queue). Unfiltered, a
+  // re-run re-crawls everything already done: 2,563,533 pages and ~13 fleet-hours for nothing.
+  if (SKIP_KNOWN && MODE === 'urls' && summary.miss && fs.existsSync(F.miss)) {
+    console.error(`\n══════ skip remainder URLs already in the Master DB ══════`);
+    try {
+      const { filterList } = require('./skip-known');
+      const filtered = F.miss + '.filtered';
+      const r = await filterList(F.miss, filtered);
+      fs.renameSync(filtered, F.miss);
+      summary.miss = r.kept;
+    } catch (e) { console.error('  remainder filter failed (keeping the full list):', e.message); }
+  }
+
   // ---------------------------------------------------------------- preserve the un-crawled remainder
   // The miss list is the URLs Common Crawl does not have — on monitor output that is ~88% of the queue,
   // and it exists ONLY on this machine's /tmp. Deleting the queue objects while it sits there unprocessed
