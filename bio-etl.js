@@ -16,9 +16,11 @@
  *
  *   discover — the whole crawl is the input, so there is nothing to resolve. 18.1M bio pages exist in one
  *              crawl across the 11 English-speaking TLDs (measured, 468-term directory list).
- *   urls     — a list is mostly ALREADY in the archive: 54.2% of freshly-discovered bio URLs resolved in
- *              Common Crawl (measured on 28,410 from the Google Maps run). So resolve first, Lambda the
- *              hits for free, and spend proxy budget only on the remainder — and only with --live.
+ *   urls     — resolve first, Lambda the hits for free, spend proxy budget only on the remainder. How big
+ *              that remainder is depends entirely on the SOURCE, and the difference is not small:
+ *              Google Maps URLs resolved 54.2% in Common Crawl, but Sitemap-Monitor URLs resolved only
+ *              12.2-17.4%, because monitor URLs are new pages — which is the whole point of monitoring.
+ *              So on monitor output the live remainder is ~83% of the work, not ~46%.
  *
  * Both modes end at the same place: extracted JSONL in S3 -> load-extracted -> the Master DB.
  */
@@ -69,6 +71,61 @@ async function getText(key) {
   return o.Body.transformToString();
 }
 
+// ---- consumed-queue-object ledger -------------------------------------------------------------------
+// The IAM user cannot s3:DeleteObject on the queue prefix, and DeleteObjects reports that per-object
+// rather than throwing — so every drain "succeeded" while the queue only grew, and each run reprocessed
+// the whole history. This records which objects a run has already consumed so the next run skips them,
+// keeping the pipeline correct on read-only credentials. It does not replace the IAM fix: the objects
+// still accumulate, still cost storage, and still slow every LIST.
+const CONSUMED_INDEX = process.env.QUEUE_CONSUMED_INDEX || 'queue_consumed';
+let _osClient = null;
+function osClient() {
+  if (!_osClient) _osClient = require('./opensearch').makeClient(process.env.OPENSEARCH_ENDPOINT);
+  return _osClient;
+}
+async function ensureConsumedIndex() {
+  const c = osClient();
+  try { const ex = await c.indices.exists({ index: CONSUMED_INDEX }); if (ex.body === true || ex === true) return; }
+  catch (e) { /* fall through */ }
+  try { await c.indices.create({ index: CONSUMED_INDEX, body: { settings: { number_of_shards: 1, number_of_replicas: 0 },
+    mappings: { properties: { key: { type: 'keyword' }, consumed_at: { type: 'date' }, run: { type: 'keyword' } } } } }); }
+  catch (e) { if (!/resource_already_exists/i.test(String(e && e.message))) throw e; }
+}
+async function markConsumed(keys) {
+  if (!keys || !keys.length) return 0;
+  await ensureConsumedIndex();
+  const c = osClient();
+  const at = new Date().toISOString();
+  let n = 0;
+  for (let i = 0; i < keys.length; i += 2000) {
+    const body = [];
+    for (const k of keys.slice(i, i + 2000)) {
+      body.push({ index: { _index: CONSUMED_INDEX, _id: k } });
+      body.push({ key: k, consumed_at: at, run: RUN });
+    }
+    const r = await c.bulk({ body, refresh: false });
+    const b = r.body || r;
+    n += ((b.items || []).length);
+    if (b && b.items) for (const it of b.items) if (it.index && it.index.error) n--;
+  }
+  try { await c.indices.refresh({ index: CONSUMED_INDEX }); } catch (e) { /* best-effort */ }
+  return n;
+}
+async function alreadyConsumed(keys) {
+  const done = new Set();
+  if (!keys.length) return done;
+  try {
+    await ensureConsumedIndex();
+    const c = osClient();
+    for (let i = 0; i < keys.length; i += 1000) {
+      const chunk = keys.slice(i, i + 1000);
+      const r = await c.mget({ index: CONSUMED_INDEX, body: { ids: chunk }, _source: false });
+      for (const d of (((r.body || r).docs) || [])) if (d && d.found) done.add(d._id);
+    }
+  } catch (e) { console.error('  (consumed-key ledger unavailable: ' + e.message + ')'); }
+  return done;
+}
+
 (async () => {
   if (!process.env.OPENSEARCH_ENDPOINT) { console.error('need OPENSEARCH_ENDPOINT'); process.exit(1); }
   if (MODE !== 'discover' && MODE !== 'urls') { console.error('need --mode discover|urls'); process.exit(1); }
@@ -105,9 +162,16 @@ async function getText(key) {
     };
     if (/^s3:\/\//i.test(IN) || !fs.existsSync(IN)) {
       const prefix = IN.replace(/^s3:\/\/[^/]+\//i, '');
-      const keys = await listKeys(prefix);
+      let keys = await listKeys(prefix);
       if (!keys.length) { console.error(`nothing under s3://${BUCKET}/${prefix} — nothing to do.`); process.exit(0); }
       console.error(`  ${keys.length} object(s) under ${prefix}`);
+      // Skip objects a previous run already consumed but could not delete.
+      const done = await alreadyConsumed(keys);
+      if (done.size) {
+        keys = keys.filter((k) => !done.has(k));
+        console.error(`  ${done.size} already consumed by an earlier run — ${keys.length} to process`);
+        if (!keys.length) { console.error('  everything under this prefix has been processed; nothing to do.'); process.exit(0); }
+      }
       for (const k of keys) { for (const line of (await getText(k)).split('\n')) addLine(line); }
       consumed = keys;
     } else {
@@ -249,13 +313,42 @@ async function getText(key) {
   }
 
   // ---------------------------------------------------------------- drain the queue (opt-in)
+  //
+  // DeleteObjects does NOT throw when S3 refuses an individual key — it returns a per-object Errors array
+  // alongside Deleted. This code used to ignore that array and print "drained N queue object(s)"
+  // unconditionally. The IAM user (cc-athena) has no s3:DeleteObject, so EVERY drain since the queue was
+  // created reported success while deleting nothing: the queue only ever grew, and each run re-resolved
+  // and re-processed the entire history from 2026-08-13 onwards.
+  //
+  // So: read the response, and when the delete is refused, fall back to a consumed-key ledger so the next
+  // run skips those objects anyway. The ledger keeps the pipeline correct on read-only credentials; it is
+  // not a substitute for the IAM fix, because the objects still accumulate and still cost storage.
   if (DRAIN && consumed.length && missSaved) {
+    let deleted = 0; const failed = [];
     for (let i = 0; i < consumed.length; i += 1000) {
       const batch = consumed.slice(i, i + 1000).map((Key) => ({ Key }));
-      try { await s3.send(new DeleteObjectsCommand({ Bucket: BUCKET, Delete: { Objects: batch } })); }
-      catch (e) { console.error('  queue drain failed:', e.message); }
+      try {
+        const r = await s3.send(new DeleteObjectsCommand({ Bucket: BUCKET, Delete: { Objects: batch } }));
+        const res = r || {};
+        deleted += (res.Deleted || []).length;
+        for (const e of (res.Errors || [])) failed.push({ key: e.Key, code: e.Code, message: e.Message });
+      } catch (e) {
+        for (const b of batch) failed.push({ key: b.Key, code: 'Exception', message: e.message });
+      }
     }
-    console.error(`\ndrained ${consumed.length} queue object(s).`);
+    console.error(`\nqueue: ${deleted.toLocaleString()} object(s) deleted, ${failed.length.toLocaleString()} refused`);
+    if (failed.length) {
+      const f = failed[0];
+      console.error(`  first refusal: ${f.code} — ${String(f.message).slice(0, 200)}`);
+      if (/AccessDenied/i.test(f.code || '')) {
+        console.error('  the IAM user cannot delete from this bucket. Grant s3:DeleteObject on');
+        console.error(`  arn:aws:s3:::${BUCKET}/monitor-queue/pending/* — until then the objects stay and only the ledger prevents reprocessing.`);
+      }
+      try {
+        const n = await markConsumed(failed.map((x) => x.key));
+        console.error(`  recorded ${n.toLocaleString()} key(s) as consumed so the next run skips them.`);
+      } catch (e) { console.error('  AND the consumed-key ledger failed:', e.message, '— the next run WILL reprocess these.'); }
+    }
   }
 
   // ---------------------------------------------------------------- hand the remainder to a fleet
