@@ -1,0 +1,83 @@
+/**
+ * live-fleet-shard.js — run ONE shard of a live-crawl across a fleet of machines.
+ *
+ *   LIVE_CONC=192 node live-fleet-shard.js --in s3://bucket/…/miss.txt --shard 0/8 --tag drain-2026-08-13
+ *
+ * The live path is the pipeline's real constraint. Common Crawl resolves only 12.2% of URLs discovered by
+ * the Sitemap Monitor (the 54.2% figure came from Google Maps URLs and does not transfer — monitor URLs are
+ * new pages, which is the entire point of monitoring). So ~88% must be fetched live, and one machine at the
+ * shipped LIVE_CONC=4 does 2 pages/s: 15 days for 2,563,533 URLs.
+ *
+ * Sharding is BY REGISTRABLE DOMAIN, not round-robin, and that is the important design choice. Round-robin
+ * would spread one site's URLs across every machine in the fleet, so N machines would hit the same server
+ * simultaneously with no shared rate limiting — turning a politeness problem into a blocking problem, and
+ * the 403/429 responses would be indistinguishable from the site being down. Hashing the domain keeps every
+ * URL for a site on one machine, where the existing per-host pacing still applies.
+ *
+ * Each shard downloads the full list and keeps only its own slice. That is deliberately simpler than
+ * pre-splitting into N objects: the fleet size can change without re-splitting, and a shard that dies can
+ * be relaunched by itself with the identical command.
+ */
+const fs = require('fs');
+const path = require('path');
+const readline = require('readline');
+const { spawnSync } = require('child_process');
+const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+
+const arg = (n, d) => { const i = process.argv.indexOf('--' + n); return i > 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : d; };
+const IN = arg('in', '') || process.env.IN || '';
+const SHARD = arg('shard', '') || process.env.SHARD || '0/1';
+const TAG = arg('tag', '') || process.env.TAG || 'live-fleet';
+const REGION = process.env.AWS_REGION || 'us-east-1';
+
+const [SI, SN] = SHARD.split('/').map((x) => Number(x));
+if (!Number.isInteger(SI) || !Number.isInteger(SN) || SN < 1 || SI < 0 || SI >= SN) {
+  console.error(`bad --shard "${SHARD}" — expected i/N with 0 <= i < N`); process.exit(1);
+}
+
+// FNV-1a, the same hash the other sharded jobs in this repo use, so shard membership is comparable.
+function fnv1a(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0; }
+  return h >>> 0;
+}
+const domainOf = (u) => {
+  try { return new URL(u).hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { return u; }
+};
+
+(async () => {
+  if (!IN) { console.error('need --in <s3://… or path>'); process.exit(1); }
+  const mine = path.join('/tmp', `${TAG}-shard${SI}of${SN}.txt`);
+
+  let stream;
+  if (/^s3:\/\//i.test(IN)) {
+    const m = /^s3:\/\/([^/]+)\/(.+)$/i.exec(IN);
+    console.error(`reading s3://${m[1]}/${m[2]} …`);
+    stream = (await new S3Client({ region: REGION }).send(new GetObjectCommand({ Bucket: m[1], Key: m[2] }))).Body;
+  } else {
+    stream = fs.createReadStream(IN);
+  }
+
+  const out = fs.createWriteStream(mine);
+  let total = 0, kept = 0;
+  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  for await (const line of rl) {
+    const t = line.trim();
+    if (!t) continue;
+    total++;
+    let u = t;
+    if (t.startsWith('{')) { try { u = JSON.parse(t).url || ''; } catch (e) { u = ''; } }
+    if (!u) continue;
+    if (fnv1a(domainOf(u)) % SN !== SI) continue;
+    kept++;
+    if (!out.write(u + '\n')) await new Promise((r) => out.once('drain', r));
+  }
+  await new Promise((r) => out.end(r));
+  console.error(`shard ${SI}/${SN}: ${kept.toLocaleString()} of ${total.toLocaleString()} URL(s) -> ${mine}`);
+  if (!kept) { console.error('nothing in this shard — done.'); return; }
+
+  // Hand off to the extractor that already knows how to live-fetch, model emails and write JSONL.
+  const r = spawnSync(process.execPath, [path.join(__dirname, 'extract-from-pointers.js'), '--live', mine, '--tag', `${TAG}-s${SI}`],
+    { stdio: 'inherit', cwd: __dirname, env: process.env });
+  process.exit(r.status || 0);
+})().catch((e) => { console.error('ERR', e && e.stack || e); process.exit(1); });
