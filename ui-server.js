@@ -61,6 +61,62 @@ async function queueBioUrls(urls, label) {
 // share a lifetime with the web server's event loop.
 let bioEtlRunning = false;
 let BIO_ETL_LAST = null;
+
+// The bioEtlRunning flag guards ONE process. This app runs on more than one machine (currently two, one of
+// them 2GB), each with its own scheduler, so without a shared lease both would wake on the same 6h tick,
+// read the same queue objects, run the same Athena resolve and the same Lambda fan-out, and then both
+// delete. The duplicated work is expensive and entirely invisible in the logs of either machine.
+//
+// A lease document in cc_config, taken with optimistic concurrency, makes the tick single-winner: the loser
+// gets a 409 from the if_seq_no/if_primary_term precondition and simply skips. The lease carries an expiry
+// so a machine that dies mid-drain does not block the next tick forever.
+const BIO_ETL_LEASE_ID = 'bio_etl_drain_lease';
+const BIO_ETL_LEASE_MS = Math.max(1, Number(process.env.BIO_ETL_LEASE_HOURS) || 8) * 3600 * 1000;
+async function takeBioEtlLease(client) {
+  const CONFIG_INDEX = process.env.CC_CONFIG_INDEX || 'cc_config';
+  const me = `${process.env.FLY_MACHINE_ID || 'local'}:${process.pid}`;
+  const now = Date.now();
+  let seqNo = null, primaryTerm = null;
+  try {
+    const g = await client.get({ index: CONFIG_INDEX, id: BIO_ETL_LEASE_ID });
+    const b = g.body || g;
+    const exp = Date.parse((b._source && b._source.expires_at) || '') || 0;
+    if (exp > now) { console.log(`[bio-etl] lease held by ${b._source.holder} until ${b._source.expires_at} — skipping`); return false; }
+    seqNo = b._seq_no; primaryTerm = b._primary_term;
+  } catch (e) {
+    if (!/404|not_found|index_not_found/i.test(String(e && e.message))) throw e;   // no lease yet -> create
+  }
+  const body = { holder: me, taken_at: new Date(now).toISOString(), expires_at: new Date(now + BIO_ETL_LEASE_MS).toISOString() };
+  const params = { index: CONFIG_INDEX, id: BIO_ETL_LEASE_ID, body, refresh: true };
+  if (seqNo !== null) { params.if_seq_no = seqNo; params.if_primary_term = primaryTerm; }
+  else { params.op_type = 'create'; }
+  try { await client.index(params); }
+  catch (e) {
+    if (/409|version_conflict|document_already_exists/i.test(String(e && e.message))) { console.log('[bio-etl] another machine took the lease first — skipping'); return false; }
+    throw e;
+  }
+  console.log(`[bio-etl] lease taken by ${me} until ${body.expires_at}`);
+  return true;
+}
+
+async function releaseBioEtlLease() {
+  const client = reader && reader.client;
+  if (!client) return;
+  const CONFIG_INDEX = process.env.CC_CONFIG_INDEX || 'cc_config';
+  await client.index({ index: CONFIG_INDEX, id: BIO_ETL_LEASE_ID, refresh: true,
+    body: { holder: `${process.env.FLY_MACHINE_ID || 'local'}:${process.pid}`, released_at: new Date().toISOString(), expires_at: new Date(0).toISOString() } });
+}
+
+async function runBioEtlDrainGuarded(reason) {
+  if (bioEtlRunning) { console.log('[bio-etl] already running on this machine — skipping this tick'); return; }
+  const client = reader && reader.client;
+  if (!client) { console.log('[bio-etl] no OpenSearch client yet — skipping this tick'); return; }
+  let got = false;
+  try { got = await takeBioEtlLease(client); }
+  catch (e) { console.error('[bio-etl] lease check failed, NOT draining (a duplicate run is worse than a missed one):', e.message); return; }
+  if (got) runBioEtlDrain(reason);
+}
+
 function runBioEtlDrain(reason) {
   if (bioEtlRunning) { console.log('[bio-etl] already running — skipping this tick'); return; }
   const region = process.env.AWS_REGION || 'us-east-1';
@@ -79,6 +135,9 @@ function runBioEtlDrain(reason) {
     bioEtlRunning = false;
     BIO_ETL_LAST = { started, finished: new Date().toISOString(), code };
     console.log(`[bio-etl] drain finished with code ${code}`);
+    // Release the lease. Its expiry (8h) is only a crash backstop; holding it to term would block the
+    // next 6h tick and quietly halve the drain rate.
+    releaseBioEtlLease().catch((e) => console.error('[bio-etl] lease release failed:', e.message));
   });
   child.on('error', (e) => { bioEtlRunning = false; console.error('[bio-etl] spawn failed:', e.message); });
 }
@@ -1743,8 +1802,11 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/backlog/drain' && req.method === 'POST') {
     if (!isAdmin) { jsonErr(res, 403, 'Forbidden'); return; }
     if (bioEtlRunning) { sendJson(res, { started: false, reason: 'already running' }); return; }
-    runBioEtlDrain('manual');
-    sendJson(res, { started: true });
+    // Takes the same lease as the schedule: a manual click on one machine must not collide with a
+    // scheduled drain already running on the other.
+    runBioEtlDrainGuarded('manual')
+      .then(() => sendJson(res, { started: bioEtlRunning, reason: bioEtlRunning ? '' : 'another machine holds the drain lease' }))
+      .catch((e) => jsonErr(res, 500, e.message));
     return;
   }
   // Download the Library (or the current filtered subset) as CSV (analyst+).
@@ -2508,8 +2570,8 @@ pruneOldJobs();
       // at exactly the producer's rate never recovers from a backlog, it only stops adding to one.
       if (process.env.BIO_ETL_DRAIN !== '0') {
         const BD_HOURS = Math.max(1, Number(process.env.BIO_ETL_DRAIN_HOURS) || 6);
-        setTimeout(() => runBioEtlDrain('startup'), 20 * 60 * 1000);   // ~20 min after boot, behind smPass
-        setInterval(() => runBioEtlDrain('schedule'), BD_HOURS * 3600 * 1000);
+        setTimeout(() => runBioEtlDrainGuarded('startup'), 20 * 60 * 1000);   // ~20 min after boot, behind smPass
+        setInterval(() => runBioEtlDrainGuarded('schedule'), BD_HOURS * 3600 * 1000);
         console.log(`Bio-URL queue drain: ON, every ${BD_HOURS}h (s3://…/${MONITOR_QUEUE_PREFIX}).`);
       } else {
         console.log('Bio-URL queue drain: OFF (BIO_ETL_DRAIN=0) — the monitor queue will grow unbounded.');
