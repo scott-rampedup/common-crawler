@@ -10,10 +10,16 @@
  * side by far (82.6% of the 2026-08-14 queue). Re-running a drain therefore re-crawled every URL already
  * done: 2,563,533 pages, ~13 fleet-hours, for nothing.
  *
- * The filter is `web_source_url`, which extract-from-pointers sets on every contact it writes. That means
- * it only recognises URLs that PRODUCED a contact — a page fetched last night that yielded nothing is not
- * in the index and will be fetched again. Closing that gap needs an attempted-URL ledger, which is a
- * different (and much larger) object than this; what this does is remove the provably-redundant work.
+ * It now filters against TWO sources, because one of them cannot see most repeat work:
+ *
+ *   contacts.web_source_url — the page PRODUCED a contact. Catches only the productive minority: on the
+ *                             2026-08-14 list that was 304,831 of 3,730,274 (8.2%).
+ *   crawl_log (crawl-ledger) — the page was ATTEMPTED, whatever came of it. This is the big silent
+ *                             bucket: fetched fine, no person on it, invisible to the contacts index, and
+ *                             therefore re-fetched every cycle forever.
+ *
+ * Either lookup failing yields an empty skip set rather than an exception: an unfiltered URL costs one
+ * fetch, a wrongly-dropped one is lost data, and this filter must never be why a page goes missing.
  *
  * Streamed throughout: the lists run to millions of lines and must never be read into memory at once.
  */
@@ -47,7 +53,19 @@ async function filterList(inPath, outPath, opts = {}) {
   const localOut = outIsS3 ? `/tmp/_skip-known-${Date.now()}.txt` : outPath;
   const out = fs.createWriteStream(localOut);
 
-  let seen = 0, known = 0, kept = 0, win = [];
+  // Two independent sources of "we already did this":
+  //   contacts.web_source_url — the page PRODUCED a contact.
+  //   crawl_log               — the page was ATTEMPTED, whatever came of it. This is the one that catches
+  //                             the big silent bucket: fetched fine, no person on it, invisible to the
+  //                             contacts index, and therefore re-fetched forever without the ledger.
+  const useLedger = !/^(0|false|no|off)$/i.test(process.env.CRAWL_LEDGER || '1');
+  let ledger = null;
+  if (useLedger) {
+    try { ledger = require('./crawl-ledger'); await ledger.ensureIndex(client); }
+    catch (e) { ledger = null; log(`  (crawl ledger unavailable: ${e.message} — filtering on contacts only)`); }
+  }
+
+  let seen = 0, known = 0, knownLedger = 0, kept = 0, win = [];
   const flushWindow = async () => {
     if (!win.length) return;
     const urls = [...new Set(win.map((w) => w.url).filter(Boolean))];
@@ -59,8 +77,14 @@ async function filterList(inPath, outPath, opts = {}) {
         for (const b of (((r.body || r).aggregations.u.buckets) || [])) have.add(b.key);
       } catch (e) { /* an unfiltered URL costs a fetch, not correctness — never drop on error */ }
     }
+    let attempted = new Set();
+    if (ledger && urls.length) {
+      try { attempted = await ledger.skipSet(client, urls); }
+      catch (e) { attempted = new Set(); }
+    }
     for (const w of win) {
       if (w.url && have.has(w.url)) { known++; continue; }
+      if (w.url && attempted.has(w.url)) { knownLedger++; continue; }
       kept++;
       if (!out.write(w.line + '\n')) await new Promise((res) => out.once('drain', res));
     }
@@ -77,7 +101,7 @@ async function filterList(inPath, outPath, opts = {}) {
     win.push({ line: t, url });
     if (win.length >= WINDOW) {
       await flushWindow();
-      if (seen % 250000 < WINDOW) log(`  checked ${seen.toLocaleString()} | already have ${known.toLocaleString()} | keeping ${kept.toLocaleString()}`);
+      if (seen % 250000 < WINDOW) log(`  checked ${seen.toLocaleString()} | have contact ${known.toLocaleString()} | already attempted ${knownLedger.toLocaleString()} | keeping ${kept.toLocaleString()}`);
     }
   }
   await flushWindow();
@@ -89,8 +113,8 @@ async function filterList(inPath, outPath, opts = {}) {
     await s3().send(new PutObjectCommand({ ...p, Body: fs.createReadStream(localOut), ContentLength: st.size, ContentType: 'text/plain' }));
     fs.unlinkSync(localOut);
   }
-  log(`  already have ${known.toLocaleString()} | NEW ${kept.toLocaleString()} of ${seen.toLocaleString()}`);
-  return { seen, known, kept };
+  log(`  have contact ${known.toLocaleString()} | already attempted ${knownLedger.toLocaleString()} | NEW ${kept.toLocaleString()} of ${seen.toLocaleString()}`);
+  return { seen, known, knownLedger, kept };
 }
 
 module.exports = { filterList };

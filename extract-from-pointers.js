@@ -219,6 +219,27 @@ process.on('unhandledRejection', () => {});   // a raced/abandoned fetch rejecti
     }
   }
 
+  // ---- crawl ledger: every URL we ATTEMPTED, with what came of it ----
+  // Without this, a page that was fetched and simply had no contact on it leaves no trace anywhere, so the
+  // next drain treats it as brand new. That cost ~2.1M redundant fetches on the 2026-08-14 cycle alone.
+  // Buffered and flushed in bulk so it never adds a round trip to the fetch path.
+  const LEDGER_ON = !/^(0|false|no|off)$/i.test(process.env.CRAWL_LEDGER || '1');
+  const ledger = LEDGER_ON ? require('./crawl-ledger') : null;
+  if (ledger) { try { await ledger.ensureIndex(client); } catch (e) { console.error('crawl ledger unavailable:', e.message); } }
+  let ledgerBuf = [], ledgerWritten = 0, ledgerErrs = 0;
+  const LEDGER_CHUNK = Number(process.env.LEDGER_CHUNK) || 5000;
+  async function ledgerFlush() {
+    if (!ledger || !ledgerBuf.length) return;
+    const batch = ledgerBuf; ledgerBuf = [];
+    try { const r = await ledger.record(client, batch); ledgerWritten += r.indexed; ledgerErrs += r.errors; }
+    catch (e) { ledgerErrs += batch.length; }
+  }
+  function ledgerNote(url, outcome, source) {
+    if (!ledger || !url) return;
+    ledgerBuf.push({ url, outcome, source: source || '' });
+    if (ledgerBuf.length >= LEDGER_CHUNK) { ledgerFlush(); }   // fire-and-forget; never blocks a fetch
+  }
+
   // ---- generic worker pool over a job list; each job returns {html, url, source} ----
   async function pump(jobs, conc, run, label) {
     let i = 0, fetched = 0, extracted = 0, ferr = 0; const t0 = Date.now();
@@ -235,11 +256,16 @@ process.on('unhandledRejection', () => {});   // a raced/abandoned fetch rejecti
             run(jobs[k]),
             new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('hard-timeout')), HARD_MS); }),
           ]).finally(() => { if (timer) clearTimeout(timer); });
-          if (!html) continue; fetched++;
+          if (!html) { ledgerNote(jobs[k].url || (jobs[k].url = ''), 'empty', label); continue; }
+          fetched++;
           const rec = extractor.extractRecord(html, url, { wireless, genderMap, directoryRules: {}, source, timestamp: jobs[k].ts || '', allowNoEmail: true });
           if (rec && !looksLikePerson(rec['First'], rec['Last'])) { const nm = urlBioName(url, genderMap); if (nm) { rec['First'] = nm.first; rec['Last'] = nm.last; } }   // name from URL slug when the page has none
+          // Recorded HERE, at fetch time, because this is the only point that knows the page was reached
+          // and what it held. Downstream the record may still be dropped for want of a usable email —
+          // a different question from whether the page was worth fetching at all.
+          ledgerNote(url, rec ? 'extracted' : 'no-record', source);
           if (rec) { extracted++; pending.push(rec); if (pending.length >= CHUNK) await flush(); }
-        } catch (e) { ferr++; }
+        } catch (e) { ferr++; ledgerNote(jobs[k] && jobs[k].url, 'error', label); }
         if ((k + 1) % 500 === 0) console.error(`  [${label}] ${k + 1}/${jobs.length} | fetched ${fetched} | extracted ${extracted} | ${ferr} err | ${Math.round((k + 1) / ((Date.now() - t0) / 1000))}/s`);
       }
     }
@@ -268,5 +294,7 @@ process.on('unhandledRejection', () => {});   // a raced/abandoned fetch rejecti
     }
   }
   await flush();
+  await ledgerFlush();
+  if (LEDGER_ON) console.error(`crawl ledger: ${ledgerWritten.toLocaleString()} attempt(s) recorded${ledgerErrs ? `, ${ledgerErrs.toLocaleString()} err` : ''}`);
   console.error(`DONE: ${submitted.toLocaleString()} real contacts upserted (${modelled.toLocaleString()} emails modelled, ${vcardApplied.toLocaleString()} vCards merged, ${liNamed.toLocaleString()} named from LinkedIn) | dropped ${dropJunk.toLocaleString()} non-person + ${dropNoEmail.toLocaleString()} no-usable-email | ${upErrs} upsert-err | ${Math.round((Date.now() - t0) / 1000)}s`);
 })().catch((e) => { console.error('ERR', e.message); process.exit(1); });
