@@ -258,6 +258,31 @@ async function getText(key) {
     console.error(`\ndrained ${consumed.length} queue object(s).`);
   }
 
+  // ---------------------------------------------------------------- hand the remainder to a fleet
+  // The scheduled drain resolves and Lambdas the ~17% Common Crawl already holds, in minutes. The other
+  // ~83% needs live fetching, which is hours of work and must not run inline on a web-server machine (one
+  // of ours has 2GB). Until now that half waited for someone to type eight `flyctl machine run` commands,
+  // which is the last reason this pipeline was not actually unattended.
+  //
+  // Requires FLY_API_TOKEN. Without it the run still succeeds and prints the command, so a missing token
+  // degrades to the manual path rather than silently dropping the work.
+  const FLEET_SHARDS = Number(process.env.FLEET_SHARDS || 0);
+  if (FLEET_SHARDS > 0 && missSaved && summary.miss && process.env.FLY_API_TOKEN) {
+    try {
+      const { launchFleet, reapFleet } = require('./fleet-launch');
+      await reapFleet({ log: (m) => console.error(m) });          // free the names from the previous fleet
+      const started = await launchFleet({
+        in: `s3://${BUCKET}/${missKey}`, shards: FLEET_SHARDS, tag: RUN, log: (m) => console.error(m),
+      });
+      console.error(`\nfleet: ${started.length} shard(s) crawling ${summary.miss.toLocaleString()} URL(s)`);
+      console.error(`  watch: node fleet-health.js --prefix live-fleet --watch 300`);
+    } catch (e) {
+      console.error(`\nfleet launch FAILED (${e.message}) — the remainder is safe at s3://${BUCKET}/${missKey}`);
+    }
+  } else if (FLEET_SHARDS > 0 && summary.miss && !process.env.FLY_API_TOKEN) {
+    console.error('\nFLEET_SHARDS is set but FLY_API_TOKEN is not — not launching; the remainder is saved above.');
+  }
+
   console.error(`\n══════ BIO ETL DONE · ${Math.round((Date.now() - t0) / 1000)}s ══════`);
   console.error(`  mode ${summary.mode} · run ${summary.run}`);
   if (MODE === 'urls') console.error(`  ${summary.urls.toLocaleString()} URL(s) -> ${summary.resolved.toLocaleString()} in CC, ${summary.miss.toLocaleString()} not`);
