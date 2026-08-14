@@ -153,11 +153,21 @@ async function alreadyConsumed(keys) {
     console.error(`\n══════ collect URLs from ${IN} ══════`);
     const seen = new Set();
     const out = fs.createWriteStream(F.urls);
+    // Domain gate, applied HERE rather than at fetch time. This is the earliest point a URL can be
+    // dropped, so a blocked domain costs nothing downstream: no Athena resolve, no Lambda invocation, no
+    // miss-list entry, no fleet time. Measured 2026-08-14, the sub-2%-yield tail was 61.1% of all fetching.
+    let blockedSet = new Set();
+    try { blockedSet = await require('./domain-gate').loadSet(osClient()); }
+    catch (e) { console.error('  (domain gate unavailable: ' + e.message + ' — crawling everything)'); }
+    if (blockedSet.size) console.error(`  domain gate: ${blockedSet.size} domain(s) blocked`);
+    let blockedN = 0;
+    const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { return ''; } };
     const addLine = (line) => {
       const u = String(line || '').trim();
       if (!u || /^(vcards?|url|link|href)$/i.test(u)) return;
       if (!/^https?:\/\//i.test(u)) return;                       // a bio URL list is always absolute
       if (seen.has(u)) return;
+      if (blockedSet.size && blockedSet.has(hostOf(u))) { blockedN++; return; }
       seen.add(u); out.write(u + '\n');
     };
     if (/^s3:\/\//i.test(IN) || !fs.existsSync(IN)) {
@@ -179,6 +189,7 @@ async function alreadyConsumed(keys) {
       for await (const line of rl) addLine(line);
     }
     await new Promise((r) => out.end(r));
+    if (blockedN) console.error(`  domain gate dropped ${blockedN.toLocaleString()} URL(s) before any fetching`);
     summary.urls = seen.size;
     console.error(`  ${seen.size.toLocaleString()} unique URL(s) -> ${F.urls}`);
     if (!seen.size) { console.error('nothing to do.'); process.exit(0); }

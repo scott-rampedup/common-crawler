@@ -78,6 +78,19 @@ const urlOf = (t) => {
   if (!IN) { console.error('need --in <s3://… or path>'); process.exit(1); }
   const mine = path.join('/tmp', `${TAG}-shard${SI}of${SN}.txt`);
 
+  // Domain gate. bio-etl applies this before the resolve, but a fleet is also launched directly against a
+  // saved miss list, and that list predates the blocklist it should be filtered by. Applied BEFORE the
+  // bin-pack so blocked URLs never influence shard balance — filtering after would leave shards sized for
+  // work that is then discarded, which is how a "balanced" fleet ends up lopsided.
+  let blocked = new Set();
+  if (!process.argv.includes('--no-gate')) {
+    try {
+      const osx = require('./opensearch');
+      blocked = await require('./domain-gate').loadSet(osx.makeClient(process.env.OPENSEARCH_ENDPOINT));
+      if (blocked.size) console.error(`domain gate: ${blocked.size} domain(s) blocked`);
+    } catch (e) { console.error('domain gate unavailable (' + e.message + ') — crawling everything'); }
+  }
+
   // ---- pass 1: URLs per domain (skipped for --hash, which needs no global view) ----
   let owner = null;
   if (!HASH_ONLY) {
@@ -88,6 +101,7 @@ const urlOf = (t) => {
       const t = line.trim(); if (!t) continue;
       const u = urlOf(t); if (!u) continue;
       const d = domainOf(u);
+      if (blocked.has(d)) continue;
       counts.set(d, (counts.get(d) || 0) + 1);
       n++;
     }
@@ -110,7 +124,7 @@ const urlOf = (t) => {
 
   // ---- pass 2: write only this shard's URLs ----
   const out = fs.createWriteStream(mine);
-  let total = 0, kept = 0, written = 0;
+  let total = 0, kept = 0, written = 0, blockedN = 0;
   const rl = readline.createInterface({ input: await openIn(), crlfDelay: Infinity });
   for await (const line of rl) {
     const t = line.trim();
@@ -119,14 +133,16 @@ const urlOf = (t) => {
     const u = urlOf(t);
     if (!u) continue;
     const d = domainOf(u);
+    if (blocked.has(d)) { blockedN++; continue; }
     const shard = owner ? owner.get(d) : (fnv1a(d) % SN);
-    if (shard !== SI) continue;
+    if (shard === undefined || shard !== SI) continue;
     kept++;
     if (kept <= SKIP) continue;                 // resume point — counted, not written
     written++;
     if (!out.write(u + '\n')) await new Promise((r) => out.once('drain', r));
   }
   await new Promise((r) => out.end(r));
+  if (blockedN) console.error(`  domain gate dropped ${blockedN.toLocaleString()} URL(s)`);
   console.error(`shard ${SI}/${SN}: ${kept.toLocaleString()} of ${total.toLocaleString()} URL(s)`
     + (SKIP ? ` — skipping first ${SKIP.toLocaleString()}, ${written.toLocaleString()} to do` : '') + ` -> ${mine}`);
   if (!written) { console.error('nothing left in this shard after --skip — done.'); return; }

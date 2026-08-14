@@ -89,6 +89,23 @@ const N = (n) => Number(n || 0).toLocaleString();
   console.log('  worst offenders:');
   for (const r of waste.slice(0, 15)) console.log(`    ${N(r.attempts).padStart(9)} attempts -> ${N(r.contacts).padStart(7)} contacts  ${r.domain}`);
 
+  // --apply turns the measurement into policy. Guarded by BOTH a yield ceiling and a minimum attempt
+  // count, so a domain is never condemned on a small sample — a new site with 40 fetches and no contacts
+  // yet is not the same thing as one with 200,000 and none.
+  if (process.argv.includes('--apply')) {
+    const maxYield = Number(arg('max-yield', '0.02'));
+    const minAtt = Number(arg('apply-min-attempts', String(MIN_ATTEMPTS)));
+    const pick = rows.filter((r) => r.yield < maxYield && r.attempts >= minAtt);
+    const stats = {};
+    for (const r of pick) stats[r.domain] = { attempts: r.attempts, contacts: r.contacts };
+    const gate = require('./domain-gate');
+    const res = await gate.add(c, pick.map((r) => r.domain), `yield <${(maxYield * 100).toFixed(1)}% over >=${N(minAtt)} attempts`, stats);
+    const saved = pick.reduce((s, r) => s + r.attempts, 0);
+    const lost = pick.reduce((s, r) => s + r.contacts, 0);
+    console.log(`\nAPPLIED: +${res.added} domain(s) blocked (blocklist now ${res.total})`);
+    console.log(`  avoids ${N(saved)} fetch(es) per full pass; those domains had returned ${N(lost)} contact(s)`);
+  }
+
   console.log('\n  CAVEAT: the ledger was seeded from completed miss lists with outcome="no-record", so seeded');
   console.log('  attempts are real but their outcomes are not. Contacts counts come from the contacts index');
   console.log('  and are exact; yields for freshly-crawled domains are the trustworthy ones.');
