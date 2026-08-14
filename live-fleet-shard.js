@@ -55,6 +55,12 @@ const domainOf = (u) => {
 };
 
 const HASH_ONLY = process.argv.includes('--hash');
+// --skip N drops the first N URLs of THIS shard. extract-from-pointers walks its input in order and logs
+// "[live] N/total", so N is a precise resume point. This exists because shard throughput varies ~20x by
+// site latency (16/s to 365/s at identical LIVE_CONC), and the only lever on a slow site is more
+// concurrency — which means restarting the shard. Without a resume point, raising concurrency costs all
+// the progress it was meant to accelerate.
+const SKIP = Number(arg('skip', '0')) || 0;
 
 async function openIn() {
   if (/^s3:\/\//i.test(IN)) {
@@ -104,7 +110,7 @@ const urlOf = (t) => {
 
   // ---- pass 2: write only this shard's URLs ----
   const out = fs.createWriteStream(mine);
-  let total = 0, kept = 0;
+  let total = 0, kept = 0, written = 0;
   const rl = readline.createInterface({ input: await openIn(), crlfDelay: Infinity });
   for await (const line of rl) {
     const t = line.trim();
@@ -116,11 +122,14 @@ const urlOf = (t) => {
     const shard = owner ? owner.get(d) : (fnv1a(d) % SN);
     if (shard !== SI) continue;
     kept++;
+    if (kept <= SKIP) continue;                 // resume point — counted, not written
+    written++;
     if (!out.write(u + '\n')) await new Promise((r) => out.once('drain', r));
   }
   await new Promise((r) => out.end(r));
-  console.error(`shard ${SI}/${SN}: ${kept.toLocaleString()} of ${total.toLocaleString()} URL(s) -> ${mine}`);
-  if (!kept) { console.error('nothing in this shard — done.'); return; }
+  console.error(`shard ${SI}/${SN}: ${kept.toLocaleString()} of ${total.toLocaleString()} URL(s)`
+    + (SKIP ? ` — skipping first ${SKIP.toLocaleString()}, ${written.toLocaleString()} to do` : '') + ` -> ${mine}`);
+  if (!written) { console.error('nothing left in this shard after --skip — done.'); return; }
 
   // Hand off to the extractor that already knows how to live-fetch, model emails and write JSONL.
   const r = spawnSync(process.execPath, [path.join(__dirname, 'extract-from-pointers.js'), '--live', mine, '--tag', `${TAG}-s${SI}`],

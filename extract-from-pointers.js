@@ -112,12 +112,24 @@ process.on('unhandledRejection', () => {});   // a raced/abandoned fetch rejecti
 
   // Learn each firm's Professional-email pattern from the central contacts index (cached per domain) so
   // named people with no personal email on the page get firstname.lastname@firm synthesized.
+  // Bounded: each entry holds up to 200 sample CONTACT RECORDS for a domain, and an unbounded Map of those
+  // is a slow heap leak on a long run — the fleet's shards died at ~2GB with "Ineffective mark-compacts
+  // near heap limit". Insertion-order eviction is enough: a evicted domain is simply looked up again,
+  // costing one query, and recently-seen domains are exactly the ones a batch keeps asking about.
+  const PATTERN_CACHE_MAX = Number(process.env.PATTERN_CACHE_MAX) || 20000;
   const patternCache = new Map();
+  function cacheSet(d, rows) {
+    if (patternCache.size >= PATTERN_CACHE_MAX) {
+      const oldest = patternCache.keys().next().value;
+      if (oldest !== undefined) patternCache.delete(oldest);
+    }
+    patternCache.set(d, rows);
+  }
   async function dbQuery(domain) {
     if (patternCache.has(domain)) return patternCache.get(domain);
     let rows = [];
     try { const r = await os.search(client, { domain, emailType: 'Professional', pageSize: 200 }); rows = r.rows || []; } catch (e) { /* best-effort */ }
-    patternCache.set(domain, rows);
+    cacheSet(domain, rows);
     return rows;
   }
 
@@ -158,10 +170,10 @@ process.on('unhandledRejection', () => {});   // a raced/abandoned fetch rejecti
         const responses = ((r.body || r).responses) || [];
         chunk.forEach((d, k) => {
           const hits = (responses[k] && responses[k].hits && responses[k].hits.hits) || [];
-          patternCache.set(d, hits.map((h) => os.docToRecord(h._source)));
+          cacheSet(d, hits.map((h) => os.docToRecord(h._source)));
         });
       } catch (e) {
-        for (const d of chunk) patternCache.set(d, []);   // a failed lookup must not re-serialize later
+        for (const d of chunk) cacheSet(d, []);           // a failed lookup must not re-serialize later
       }
     }
     return need.size;
@@ -215,10 +227,14 @@ process.on('unhandledRejection', () => {});   // a raced/abandoned fetch rejecti
       for (;;) {
         const k = i++; if (k >= jobs.length) return;
         try {
+          // The timer MUST be cleared when the fetch wins the race. Left uncleared, every completed job
+          // leaves a live timer holding its closure for HARD_MS; at fleet concurrency that is thousands of
+          // retained timers at any moment, on a process that was already dying of heap exhaustion.
+          let timer = null;
           const { html, url, source } = await Promise.race([
             run(jobs[k]),
-            new Promise((_, rej) => setTimeout(() => rej(new Error('hard-timeout')), HARD_MS)),
-          ]);
+            new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('hard-timeout')), HARD_MS); }),
+          ]).finally(() => { if (timer) clearTimeout(timer); });
           if (!html) continue; fetched++;
           const rec = extractor.extractRecord(html, url, { wireless, genderMap, directoryRules: {}, source, timestamp: jobs[k].ts || '', allowNoEmail: true });
           if (rec && !looksLikePerson(rec['First'], rec['Last'])) { const nm = urlBioName(url, genderMap); if (nm) { rec['First'] = nm.first; rec['Last'] = nm.last; } }   // name from URL slug when the page has none
