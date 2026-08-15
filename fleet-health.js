@@ -128,7 +128,9 @@ function pass() {
     for (const { m, s } of relaunch) {
       const shard = /(\d+)$/.exec(m.name);
       console.log(`    ${m.name}: lost at ${N(s.at)}/${N(s.total || s.planned)}${s.oom ? '  (heap limit — needs --max-old-space-size)' : ''}`);
-      if (shard) console.log(`      relaunch: --shard ${shard[1]}/8 --skip ${s.at}`);
+      // Shard count comes from the fleet actually present, not a hardcoded 8 — which printed
+      // "--shard 12/8" once the fleet grew to 24.
+      if (shard) console.log(`      relaunch: --shard ${shard[1]}/${rows.length} --skip ${s.at}`);
     }
   }
   return live === 0;

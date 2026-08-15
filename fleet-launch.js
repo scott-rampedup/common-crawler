@@ -36,14 +36,29 @@ async function flyApi(path, method, body, token) {
   return json;
 }
 
-/** The image the app itself is running — a fleet must never lag the deployed code. */
+/**
+ * The image the app itself is running — a fleet must never lag the deployed code.
+ *
+ * Picking the newest machine by created_at is WRONG and shipped that way: a deploy updates an app
+ * machine's image in place while its created_at stays the day it was first created, so any long-running
+ * worker machine started since then looks "newer" while carrying a months-old image. On 2026-08-15 that
+ * chose deployment-01KZMTGWW2 from a stale live-shard machine, and all 24 fleet shards died instantly
+ * with "Cannot find module '/app/live-fleet-shard.js'".
+ *
+ * Two corrections, either of which would have prevented it:
+ *   - prefer machines in the 'app' process group (the deployed web app), not arbitrary workers;
+ *   - rank by the deployment tag itself. Fly deployment IDs are ULIDs, which sort lexicographically in
+ *     time order, so the greatest tag IS the most recent release regardless of machine age.
+ */
 async function currentImage(token, app = APP) {
   const machines = await flyApi(`/apps/${app}/machines`, 'GET', null, token);
-  const running = (machines || []).filter((m) => m.state === 'started' && m.config && m.config.image);
-  if (!running.length) throw new Error('no started machine to take an image from');
-  // Newest by created_at: after a deploy the older app machine may still be on the previous release.
-  running.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
-  return running[0].config.image;
+  const withImage = (machines || []).filter((m) => m.config && m.config.image);
+  if (!withImage.length) throw new Error('no machine to take an image from');
+  const appGroup = withImage.filter((m) => ((m.config.metadata || {}).fly_process_group === 'app'));
+  const pool = appGroup.length ? appGroup : withImage;
+  const tagOf = (m) => String(m.config.image).split(':').pop() || '';
+  pool.sort((a, b) => tagOf(b).localeCompare(tagOf(a)));
+  return pool[0].config.image;
 }
 
 /**
