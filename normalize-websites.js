@@ -15,11 +15,18 @@ const che = require('./cc-home-enrich');
   const DRY = process.argv.includes('--dry-run');
   const client = co.makeClient(process.env.OPENSEARCH_ENDPOINT);
   const altList = await co.getAltWebsites(client);
-  // Cheap exact-match prefilter on the normalized registrable domain (a leading-wildcard on the URL
-  // scans the whole index and times out). Over-inclusive is fine — reclassifyWebsite does the precise check.
+  // Prefilter to candidates. `domain` holds the FULL host, so an exact terms[] match only ever finds
+  // companies sitting on the bare pattern host and silently skips every subdomain of it. That is not a
+  // small gap: 57,842 companies are on <name>.wixsite.com and 0 are on wixsite.com itself, so the whole
+  // largest category was invisible to this backfill while the comment claimed the filter was
+  // "over-inclusive". Each pattern host therefore needs both an exact term and a *.host wildcard.
   const DOMAINS = [...new Set(['facebook.com', 'fb.com', 'instagram.com', 'google.com', 'goo.gl', 'maps.app.goo.gl', 'bing.com', ...altList.map((a) => co.normDomain(a))].filter(Boolean).map((d) => d.toLowerCase()))];
-  const query = { terms: { domain: DOMAINS } };
-  console.error(`prefilter domains: ${DOMAINS.join(', ')}`);
+  const query = { bool: { should: [
+    { terms: { domain: DOMAINS } },
+    ...DOMAINS.map((d) => ({ wildcard: { domain: { value: '*.' + d } } })),
+  ], minimum_should_match: 1 } };
+  console.error(`prefilter: ${DOMAINS.length} host(s), each matched exactly and as a subdomain`);
+  console.error(`  ${DOMAINS.join(', ')}`);
 
   const total = (await client.count({ index: co.INDEX, body: { query } })).body.count;
   console.error(`candidate companies (Website looks like fb/ig/maps/alt): ${total.toLocaleString()}${DRY ? ' [dry-run]' : ''}`);

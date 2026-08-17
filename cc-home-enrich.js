@@ -36,10 +36,42 @@ function hasPath(u) { try { const x = new URL(/^https?:/i.test(u) ? u : 'https:/
 const clean = (u) => String(u || '').split('#')[0].trim();
 const stripQ = (u) => String(u || '').split('?')[0];
 
+// Split a URL (or bare host) into a comparable { host, path }. Handles the forms that actually turn up
+// in this data: leading/trailing whitespace, protocol, www., an explicit :port, query strings, fragments.
+function hostPath(u) {
+  let s = String(u || '').trim().toLowerCase();
+  if (!s) return { host: '', path: '' };
+  s = s.replace(/^https?:\/\//, '').replace(/^www\./, '');
+  s = s.split('#')[0].split('?')[0];
+  const slash = s.indexOf('/');
+  let host = slash === -1 ? s : s.slice(0, slash);
+  const path = slash === -1 ? '' : s.slice(slash).replace(/\/+$/, '');
+  host = host.split('@').pop();        // strip any user:pass@
+  host = host.split(':')[0];           // strip an explicit port
+  return { host, path };
+}
+
 // Does a website URL belong to the alternate-website list?
+//
+// A pattern is a host ("wix.com") or a host with a path prefix ("amazon.com/shop"), one per line.
+// Host patterns match that host and any SUBDOMAIN of it, which is the case that matters most here:
+// 57,842 companies sit on <name>.wixsite.com, not on wixsite.com itself.
+//
+// Host comparison is exact-or-subdomain, never substring. The previous version used
+// host.includes(patternHost) for the host/path branch, so "fakeamazon.com/shop" matched the pattern
+// "amazon.com/shop" -- a false positive that would blank a real company's website and move it to
+// Alternate Websites, which is unrecoverable from the record alone.
 function isAlternate(u, list) {
-  const low = String(u || '').toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '');
-  return (list || ALT_DEFAULT).some((p) => { p = p.toLowerCase(); return p.includes('/') ? low.startsWith(p) || low.includes('/' + p.split('/').slice(1).join('/')) && low.split('/')[0].includes(p.split('/')[0]) : low.split('/')[0] === p || low.split('/')[0].endsWith('.' + p); });
+  const t = hostPath(u);
+  if (!t.host) return false;
+  return (list || ALT_DEFAULT).some((raw) => {
+    const p = hostPath(raw);
+    if (!p.host) return false;
+    const hostOk = t.host === p.host || t.host.endsWith('.' + p.host);
+    if (!hostOk) return false;
+    if (!p.path) return true;                                   // host-only pattern
+    return t.path === p.path || t.path.startsWith(p.path + '/');  // path-prefix pattern, on a segment boundary
+  });
 }
 
 // Resolve the company home page to a CC pointer, trying a few URL forms across recent crawls.
@@ -210,14 +242,35 @@ function enrichFromHtml(company, html, { genderMap = {}, altList, now, crawl } =
   return { updates: up, people, contacts: structured };
 }
 
+// Reclassification is a property of the WEBSITE STRING, not of anything on the fetched page, so it must
+// not depend on the page being fetchable. It used to live only inside enrichFromHtml, which is reached
+// only after a successful CC resolve + WARC read — and the hosts this rule targets are exactly the ones
+// least likely to resolve as a company home page. A linktr.ee or <name>.wixsite.com website therefore
+// returned "not in CC" and kept its Website forever. Returned on every early exit below.
+function reclassifyOnly(company, altList) {
+  const rc = reclassifyWebsite(company.website, altList);
+  if (!('website' in rc)) return null;
+  const updates = { website: '', domain: '' };
+  if (rc.facebook && !String(company.facebook || '').trim()) updates.facebook = rc.facebook;
+  if (rc.instagram && !String(company.instagram || '').trim()) updates.instagram = rc.instagram;
+  if (rc.map && !String(company.map || '').trim()) updates.map = rc.map;
+  if (rc.altMove) {
+    const cur = String(company.alternate_websites || '').split(/[\s;]+/).filter(Boolean);
+    updates.alternate_websites = [...new Set([...cur, rc.altMove])].join('; ');
+  }
+  return updates;
+}
+
 // Full per-company enrichment: resolve its home page in CC (CDX), fetch, then enrichFromHtml.
 async function enrichCompany(company, { genderMap = {}, crawls, fetchWarc, altList, now } = {}) {
+  const reclass = reclassifyOnly(company, altList);
+  const bail = (reason) => (reclass ? { found: false, reason, updates: reclass, reclassified: true } : { found: false, reason });
   const ptr = await resolveHome(company.domain || '', { crawls });
-  if (!ptr) return { found: false, reason: 'not in CC' };
-  let html = ''; try { html = await fetchWarc(ptr); } catch (e) { return { found: false, reason: 's3: ' + e.message }; }
-  if (!html) return { found: false, reason: 'empty' };
+  if (!ptr) return bail('not in CC');
+  let html = ''; try { html = await fetchWarc(ptr); } catch (e) { return bail('s3: ' + e.message); }
+  if (!html) return bail('empty');
   const r = enrichFromHtml(company, html, { genderMap, altList, now: now || new Date().toISOString(), crawl: (crawls && crawls[0]) || '' });
   return { found: true, updates: r.updates, people: r.people, ptr: { url: ptr.url } };
 }
 
-module.exports = { ALT_DEFAULT, resolveHome, parseHome, buildContacts, buildEmployees, reclassifyWebsite, enrichFromHtml, enrichCompany, hasPath, isAlternate, nameFromLinkedin, nameFromEmail, nameFromBio };
+module.exports = { ALT_DEFAULT, hostPath, reclassifyOnly, resolveHome, parseHome, buildContacts, buildEmployees, reclassifyWebsite, enrichFromHtml, enrichCompany, hasPath, isAlternate, nameFromLinkedin, nameFromEmail, nameFromBio };

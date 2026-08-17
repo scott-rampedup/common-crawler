@@ -161,7 +161,11 @@ async function getAltWebsites(client) {
   catch (e) { return DEFAULT_ALT; }
 }
 async function setAltWebsites(client, patterns) {
-  const list = (Array.isArray(patterns) ? patterns : []).map((p) => String(p).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '')).filter(Boolean);
+  // De-duplicated: the saved list already holds "about.me" twice, and a repeated pattern makes the
+  // count reported back to the admin wrong while doing nothing useful.
+  const list = [...new Set((Array.isArray(patterns) ? patterns : [])
+    .map((p) => String(p).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/+$/, ''))
+    .filter(Boolean))];
   await client.index({ index: CONFIG_INDEX, id: 'alt_websites', body: { patterns: list }, refresh: true });
   return { saved: list.length, patterns: list };
 }

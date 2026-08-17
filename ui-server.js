@@ -2153,14 +2153,20 @@ const server = http.createServer(async (req, res) => {
       const fetchWarc = ccEngine.fetchWarc;
       const docs = [];
       for (const id of ids) { try { const g = await companiesClient.get({ index: companies.INDEX, id }); docs.push({ id, s: (g.body || g)._source || {} }); } catch (e) { /* skip */ } }
-      let i = 0, found = 0, updated = 0, contacts = 0, errs = 0;
+      // The admin-editable list, not the built-in seed — see enrich-companies-cc.js for why this matters.
+      let altList; try { altList = await companies.getAltWebsites(companiesClient); } catch (e) { altList = undefined; }
+      let i = 0, found = 0, updated = 0, contacts = 0, errs = 0, reclassed = 0;
       async function worker() {
         for (;;) {
           const k = i++; if (k >= docs.length) return;
           const { id, s } = docs[k];
           try {
-            const r = await ccHome.enrichCompany(s, { genderMap: GENDER_MAP, crawls, fetchWarc });
-            if (!r.found) continue;
+            const r = await ccHome.enrichCompany(s, { genderMap: GENDER_MAP, crawls, fetchWarc, altList });
+            // "not in CC" is the normal outcome for an alternate-host website, so the move must still land.
+            if (!r.found) {
+              if (r.reclassified) { await companies.update(companiesClient, id, r.updates); reclassed++; updated++; }
+              continue;
+            }
             found++;
             await companies.update(companiesClient, id, r.updates); updated++;
             contacts += (r.updates.contacts_count || 0);
@@ -2168,7 +2174,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       await Promise.all(Array.from({ length: Math.min(4, docs.length) }, worker));   // CC/CloudFront is ~10 req/s per IP
-      sendJson(res, { processed: docs.length, found, updated, contacts, errors: errs });
+      sendJson(res, { processed: docs.length, found, updated, reclassified: reclassed, contacts, errors: errs });
     });
     return;
   }
