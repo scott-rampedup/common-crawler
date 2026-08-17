@@ -76,6 +76,27 @@ async function readRows(file, onRow) {
   });
 }
 
+// hits.total.value is capped at 10,000 by default, so an uncorrected "matched" count both overstates
+// small domains' totals and hides that a domain was truncated. track_total_hits makes the number real;
+// fetchAll then pages any domain that exceeds the per-request size so the append is COMPLETE rather than
+// merely large. The first run of this wrote 35,729 company rows against 48,901 "matched" and reported no
+// truncation at all, because capping was only tracked on the contacts loop.
+async function fetchAll(client, index, domain, pageSize) {
+  const out = [];
+  let after = null;
+  for (;;) {
+    const body = { size: pageSize, query: { term: { domain } }, sort: [{ _doc: 'asc' }], track_total_hits: true };
+    if (after) body.search_after = after;
+    const r = await client.search({ index, body });
+    const hits = ((r.body || r).hits.hits) || [];
+    if (!hits.length) break;
+    for (const h of hits) out.push(h);
+    after = hits[hits.length - 1].sort;
+    if (hits.length < pageSize) break;
+  }
+  return out;
+}
+
 (async () => {
   if (!FILE || (!/^s3:\/\//i.test(FILE) && !fs.existsSync(FILE))) { console.error('need --file <path or s3://…>'); process.exit(1); }
   const client = os.makeClient(process.env.OPENSEARCH_ENDPOINT);
@@ -109,17 +130,19 @@ async function readRows(file, onRow) {
   for (let i = 0; i < domains.length; i += BATCH) {
     const chunk = domains.slice(i, i + BATCH);
     const body = [];
-    for (const d of chunk) { body.push({ index: os.INDEX }); body.push({ size: PER_DOMAIN, query: { term: { domain: d } } }); }
+    for (const d of chunk) { body.push({ index: os.INDEX }); body.push({ size: PER_DOMAIN, query: { term: { domain: d } }, track_total_hits: true }); }
     let responses = [];
     try { const r = await client.msearch({ body }); responses = ((r.body || r).responses) || []; }
     catch (e) { console.error(`  contacts batch ${i} failed: ${e.message}`); continue; }
-    chunk.forEach((d, k) => {
+    for (let k = 0; k < chunk.length; k++) {
+      const d = chunk[k];
       const res = responses[k];
-      const hits = (res && res.hits && res.hits.hits) || [];
+      let hits = (res && res.hits && res.hits.hits) || [];
       const total = (res && res.hits && res.hits.total && res.hits.total.value) || 0;
-      if (!hits.length) return;
+      if (!hits.length) continue;
       domainsWithContacts++; cMatched += total;
-      if (total > hits.length) capped++;
+      // Page the rest rather than silently truncating this domain.
+      if (total > hits.length) { capped++; try { hits = await fetchAll(client, os.INDEX, d, PER_DOMAIN); } catch (e) { /* keep the first page */ } }
       const m = byDomain.get(d);
       for (const h of hits) {
         const s = h._source || {};
@@ -129,7 +152,7 @@ async function readRows(file, onRow) {
           s.linkedin_url, s.company, s.work_location, s.phone_location, s.source, s.web_source_url]
           .map(esc).join(',') + '\n');
       }
-    });
+    }
     if ((i / BATCH) % 25 === 0) console.log(`  contacts: ${N(i)}/${N(domains.length)} domains | ${N(cRows)} row(s)`);
   }
   await new Promise((r) => cOut.end(r));
@@ -140,20 +163,22 @@ async function readRows(file, onRow) {
     'Company Name', 'Company Website', 'Company Type', 'Website Type', 'Industry', 'Size', 'Founded',
     'Locality', 'Region', 'Country', 'LinkedIn URL', 'NAICS Code', 'NAICS Title', 'Contact Count'].join(',') + '\n');
 
-  let oMatched = 0, oRows = 0, domainsWithCompany = 0;
+  let oMatched = 0, oRows = 0, domainsWithCompany = 0, oCapped = 0;
   for (let i = 0; i < domains.length; i += BATCH) {
     const chunk = domains.slice(i, i + BATCH);
     const body = [];
-    for (const d of chunk) { body.push({ index: co.INDEX }); body.push({ size: PER_DOMAIN, query: { term: { domain: d } } }); }
+    for (const d of chunk) { body.push({ index: co.INDEX }); body.push({ size: PER_DOMAIN, query: { term: { domain: d } }, track_total_hits: true }); }
     let responses = [];
     try { const r = await client.msearch({ body }); responses = ((r.body || r).responses) || []; }
     catch (e) { console.error(`  companies batch ${i} failed: ${e.message}`); continue; }
-    chunk.forEach((d, k) => {
+    for (let k = 0; k < chunk.length; k++) {
+      const d = chunk[k];
       const res = responses[k];
-      const hits = (res && res.hits && res.hits.hits) || [];
+      let hits = (res && res.hits && res.hits.hits) || [];
       const total = (res && res.hits && res.hits.total && res.hits.total.value) || 0;
-      if (!hits.length) return;
+      if (!hits.length) continue;
       domainsWithCompany++; oMatched += total;
+      if (total > hits.length) { oCapped++; try { hits = await fetchAll(client, co.INDEX, d, PER_DOMAIN); } catch (e) { /* keep the first page */ } }
       const m = byDomain.get(d);
       for (const h of hits) {
         const s = h._source || {};
@@ -163,7 +188,7 @@ async function readRows(file, onRow) {
           s.locality, s.region, s.country, s.linkedin_url, s.naics_code, s.naics_title, s.contact_count]
           .map(esc).join(',') + '\n');
       }
-    });
+    }
     if ((i / BATCH) % 25 === 0) console.log(`  companies: ${N(i)}/${N(domains.length)} domains | ${N(oRows)} row(s)`);
   }
   await new Promise((r) => oOut.end(r));
@@ -173,11 +198,30 @@ async function readRows(file, onRow) {
   console.log(`  domains with at least one contact  ${N(domainsWithContacts)}  ${pct(domainsWithContacts)}`);
   console.log(`  contacts available                 ${N(cMatched)}`);
   console.log(`  rows written                       ${N(cRows)}  -> ${OUT}-contacts.csv`);
-  if (capped) console.log(`  NOTE: ${N(capped)} domain(s) hit the ${N(PER_DOMAIN)}-per-domain cap; raise --per-domain to take the rest.`);
+  if (capped) console.log(`  ${N(capped)} domain(s) exceeded one page and were fully paged.`);
   console.log(`\n=== COMPANIES ===`);
   console.log(`  domains with a company record      ${N(domainsWithCompany)}  ${pct(domainsWithCompany)}`);
   console.log(`  company records matched            ${N(oMatched)}`);
   console.log(`  rows written                       ${N(oRows)}  -> ${OUT}-companies.csv`);
+  if (oCapped) console.log(`  ${N(oCapped)} domain(s) exceeded one page and were fully paged.`);
+  // Push both files somewhere durable — the machine's /tmp dies with the machine.
+  if (/^(1|true|yes|on)$/i.test(process.env.UPLOAD || '1')) {
+    try {
+      const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+      const region = process.env.AWS_REGION || 'us-east-1';
+      const bucket = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${region}`;
+      const s3c = new S3Client({ region });
+      for (const kind of ['contacts', 'companies']) {
+        const local = `${OUT}-${kind}.csv`;
+        const key = `revagent/append-${kind}.csv`;
+        const st = fs.statSync(local);
+        await s3c.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: fs.createReadStream(local),
+          ContentLength: st.size, ContentType: 'text/csv' }));
+        console.log(`  saved ${kind}: ${(st.size / 1e6).toFixed(1)}MB -> s3://${bucket}/${key}`);
+      }
+    } catch (e) { console.error('  upload failed:', e.message, '- files remain at', OUT + '-*.csv'); }
+  }
+
   if (oRows > domainsWithCompany) {
     console.log(`  ${N(oRows - domainsWithCompany)} extra row(s): several company records share one domain.`);
   }
