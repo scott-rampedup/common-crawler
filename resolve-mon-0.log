@@ -1,0 +1,31 @@
+(no --crawl) latest corpus: CC-MAIN-2026-25
+  [create db] ok — scanned 0 MB (~$0.0000)
+  [create table] ok — scanned 0 MB (~$0.0000)
+  [add partition] ok — scanned 0 MB (~$0.0000)
+Resolve mode: mbu-chunk-00 -> cc-warc-mon-0.jsonl; crawls: CC-MAIN-2026-25, CC-MAIN-2026-21, CC-MAIN-2026-17, CC-MAIN-2026-12, CC-MAIN-2026-08, CC-MAIN-2026-04
+  7,000,000 URL(s) read -> 6,957,809 distinct key(s) (0 non-URL skipped)
+  uploading keys (343.6 MB) -> s3://aws-athena-query-results-475987770186-us-east-1/bio-resolve/1782931618763/keys.txt ...
+  [create db] ok — scanned 0 MB (~$0.0000)
+  [create table] ok — scanned 0 MB (~$0.0000)
+  [add partition] ok — scanned 0 MB (~$0.0000)
+  [create db] ok — scanned 0 MB (~$0.0000)
+  [create table] ok — scanned 0 MB (~$0.0000)
+  [add partition] ok — scanned 0 MB (~$0.0000)
+  [create db] ok — scanned 0 MB (~$0.0000)
+  [create table] ok — scanned 0 MB (~$0.0000)
+  [add partition] ok — scanned 0 MB (~$0.0000)
+  [create db] ok — scanned 0 MB (~$0.0000)
+  [create table] ok — scanned 0 MB (~$0.0000)
+  [add partition] ok — scanned 0 MB (~$0.0000)
+  [create db] ok — scanned 0 MB (~$0.0000)
+  [create table] ok — scanned 0 MB (~$0.0000)
+  [add partition] ok — scanned 0 MB (~$0.0000)
+  [create db] ok — scanned 0 MB (~$0.0000)
+  [create table] ok — scanned 0 MB (~$0.0000)
+  [add partition] ok — scanned 0 MB (~$0.0000)
+  [drop keys tbl] ok — scanned 0 MB (~$0.0000)
+  [create keys tbl] ok — scanned 0 MB (~$0.0000)
+  [resolve] ok — scanned 512584 MB (~$2.6874)
+
+Resolved 2,434,712 / 6,957,809 URL(s) in CC (35.0% hit) -> cc-warc-mon-0.jsonl
+Next: DATABASE_URL=… node load-queue.js cc-warc-mon-0.jsonl   (the 12-region fleet then drains it)

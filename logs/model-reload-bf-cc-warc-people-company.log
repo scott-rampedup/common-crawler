@@ -1,0 +1,2 @@
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-people-company/ -> OpenSearch (conc 4) [--model: email modelling ON]
+load error: 

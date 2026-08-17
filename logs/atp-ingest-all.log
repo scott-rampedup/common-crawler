@@ -1,0 +1,106 @@
+=== Phase 1: atp-load (fetch 84 brand GeoJSONs) Sun Aug  2 20:03:00 EDT 2026 ===
+AllThePlaces brands: 84 | out: C:/Users/scott/atp-work
+  [1/84] Audi: 7926 features -> 7315 kept (total 7,315)
+  [2/84] Bmw Group: 14256 features -> 13206 kept (total 20,521)
+  [3/84] Chevrolet: 2858 features -> 2806 kept (total 23,327)
+  [4/84] Ford Dealers: 6457 features -> 6242 kept (total 29,569)
+  [5/84] Honda: 225 features -> 225 kept (total 29,794)
+  [6/84] Hyundai: 2571 features -> 2571 kept (total 32,365)
+  [7/84] Kia: 1582 features -> 1582 kept (total 33,947)
+  [8/84] Maserati: 637 features -> 343 kept (total 34,290)
+  [9/84] Mercedes Benz Group: 15266 features -> 3768 kept (total 38,058)
+  [10/84] Mitsubishi: 55 features -> 55 kept (total 38,113)
+  [11/84] Nissan: 9654 features -> 7984 kept (total 46,097)
+  [12/84] Peugeot: 3151 features -> 3102 kept (total 49,199)
+  [13/84] Porsche: 1818 features -> 1711 kept (total 50,910)
+  [14/84] Renault: 26514 features -> 0 kept (total 50,910)
+  [15/84] Seat: 2783 features -> 2074 kept (total 52,984)
+  [16/84] Skoda: 6796 features -> 711 kept (total 53,695)
+  [17] Tesla: FETCH FAIL bad JSON (0KB)
+  [18/84] Toyota: 2543 features -> 2543 kept (total 56,238)
+  [19/84] Toyota Canada: 574 features -> 574 kept (total 56,812)
+  [20/84] Volkswagen: 22039 features -> 19090 kept (total 75,902)
+  [21/84] Volvo: 843 features -> 829 kept (total 76,731)
+  [22] Goodwill: FETCH FAIL bad JSON (0KB)
+  [23/84] YMCA: 2707 features -> 2707 kept (total 79,438)
+  [24/84] Pick N Pay: 2422 features -> 0 kept (total 79,438)
+  [25/84] Mathnasium: 1309 features -> 1309 kept (total 80,747)
+  [26/84] School of Rock: 89 features -> 89 kept (total 80,836)
+  [27/84] The Learning Experience: 487 features -> 487 kept (total 81,323)
+  [28/84] Abbotts Frozen Custard: 36 features -> 36 kept (total 81,359)
+  [29/84] Crumbl: 1096 features -> 1096 kept (total 82,455)
+  [30/84] Fairmont: 98 features -> 98 kept (total 82,553)
+  [31/84] Ihg Hotels: 6936 features -> 6936 kept (total 89,489)
+  [32/84] UPS Store: 3392 features -> 3392 kept (total 92,881)
+  [33/84] Bluepearl Pet Hospital: 91 features -> 91 kept (total 92,972)
+  [34/84] Pizza Hut: 10065 features -> 10065 kept (total 103,037)
+  [35/84] Hertz: 6204 features -> 6204 kept (total 109,241)
+  [36/84] Chick Fil A: 3431 features -> 3428 kept (total 112,669)
+  [37/84] Dickeys Barbecue Pit: 214 features -> 214 kept (total 112,883)
+  [38/84] Firehouse Subs: 1475 features -> 1475 kept (total 114,358)
+  [39/84] Jaguar Land Rover: 3357 features -> 2324 kept (total 116,682)
+  [40/84] Mcdonalds: 415 features -> 415 kept (total 117,097)
+  [41/84] Nothing Bundt Cake: 782 features -> 782 kept (total 117,879)
+  [42/84] Big O Tires: 473 features -> 473 kept (total 118,352)
+  [43/84] Caliber Collision: 2944 features -> 2944 kept (total 121,296)
+  [44/84] Discount Tire: 1115 features -> 1115 kept (total 122,411)
+  [45/84] Anytime Fitness: 5614 features -> 5614 kept (total 128,025)
+  [46/84] Crunch Fitness: 616 features -> 616 kept (total 128,641)
+  [47/84] Fit Active: 208 features -> 208 kept (total 128,849)
+  [48/84] Fitness Park: 541 features -> 541 kept (total 129,390)
+  [49/84] Plus Fitness: 245 features -> 245 kept (total 129,635)
+  [50/84] Pure Barre: 626 features -> 613 kept (total 130,248)
+  [51/84] Snap Fitness: 1039 features -> 1039 kept (total 131,287)
+  [52/84] Ufc Gym: 46 features -> 46 kept (total 131,333)
+  [53/84] Credit Agricole: 8619 features -> 8619 kept (total 139,952)
+  [54/84] I & G Brokers: 201 features -> 0 kept (total 139,952)
+  [55/84] Insomnia Cookies: 382 features -> 0 kept (total 139,952)
+  [56] Inxpress: FETCH FAIL bad JSON (0KB)
+  [57/84] Kindercare: 1458 features -> 1458 kept (total 141,410)
+  [58/84] Tropical Smoothie Cafe: 1777 features -> 1777 kept (total 143,187)
+  [59/84] Speed Queen Laundry: 1360 features -> 0 kept (total 143,187)
+  [60/84] Moes Southwest Grill: 539 features -> 539 kept (total 143,726)
+  [61/84] True Value: 1118 features -> 1118 kept (total 144,844)
+  [62/84] Liberty Tax: 1614 features -> 1614 kept (total 146,458)
+  [63/84] Erie Insurance: 2588 features -> 0 kept (total 146,458)
+  [64/84] Merrill Lynch - BOA: 5763 features -> 5763 kept (total 152,221)
+  [65/84] Ameriprise: 1882 features -> 0 kept (total 152,221)
+  [66/84] Accenture: 334 features -> 0 kept (total 152,221)
+  [67/84] Ernst Young: 719 features -> 719 kept (total 152,940)
+  [68/84] H R Block: 7767 features -> 7767 kept (total 160,707)
+  [69/84] Jackson Hewitt: 5027 features -> 5027 kept (total 165,734)
+  [70/84] KPMG: 3 features -> 3 kept (total 165,737)
+  [71/84] PWC: 639 features -> 639 kept (total 166,376)
+  [72/84] Allstate Insurance: 6024 features -> 6024 kept (total 172,400)
+  [73/84] Farmers Insurance: 9568 features -> 9568 kept (total 181,968)
+  [74/84] Freeway Insurance Services: 676 features -> 676 kept (total 182,644)
+  [75/84] Edward Jones: 6234 features -> 6234 kept (total 188,878)
+  [76/84] Ray White: 841 features -> 841 kept (total 189,719)
+  [77/84] Jack & Jones: 890 features -> 0 kept (total 189,719)
+  [78/84] Coldwell Banker: 1833 features -> 1833 kept (total 191,552)
+  [79/84] Century 21: 1657 features -> 1657 kept (total 193,209)
+  [80/84] CBRE: 78 features -> 78 kept (total 193,287)
+  [81/84] Jll: 276 features -> 0 kept (total 193,287)
+  [82/84] First National Real Estate: 195 features -> 195 kept (total 193,482)
+  [83/84] Re/Max Italy: 384 features -> 0 kept (total 193,482)
+  [84/84] Re/Max Spain: 174 features -> 174 kept (total 193,656)
+DONE: 84 brands, 257,241 features -> 193,656 Location records | 63,585 no-website | 3 fetch-err | 47s
+=== Phase 2/3/5: gm-build Sun Aug  2 20:03:48 EDT 2026 ===
+keying by root_domain…
+sorting…
+collecting domains…
+24,363 unique domains — batch-resolving existing HQs (msearch)…
+  round 0: 300/24,363 | matched 127 | deferred 0
+  round 0: 15,300/24,363 | matched 8,815 | deferred 0
+resolved 14,120 existing HQs | 10,243 will synthesize
+DONE: 24,363 domains -> 14,120 HQ updates + 10,243 synthesized HQ | 166,539 child Locations | 4,123 contacts | 0 skipped | 4s
+    617K /c/Users/scott/atp-work/gm-contacts.ndjson
+    9.4M /c/Users/scott/atp-work/gm-hq.ndjson
+    109M /c/Users/scott/atp-work/gm-loc.ndjson
+=== Phase 4: gm-upsert Sun Aug  2 20:04:19 EDT 2026 ===
+  HQ: 24,363 applied, 0 err
+    Locations: 100,000 (0 err)
+  Locations: 166,539 applied, 0 err
+  employees: 4,123 upserted to Master DB (Source="Employee")
+DONE in 72s
+=== ATP INGEST DONE Sun Aug  2 20:05:32 EDT 2026 ===

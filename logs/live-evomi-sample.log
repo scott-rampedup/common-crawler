@@ -1,0 +1,7 @@
+Live-crawl proxy (primary): ON via http://***:***@core-residential.evomi.com:1000
+Live-crawl proxy (residential fallback): ON via http://***:***@core-residential.evomi.com:1000
+live bio URLs: 1,000
+  [live] 500/1000 | fetched 491 | extracted 409 | 0 err | 7/s
+  [live] 1000/1000 | fetched 951 | extracted 812 | 0 err | 6/s
+  [live] done: 954 fetched, 814 extracted, 0 fetch-err
+DONE: 310 real contacts upserted (82 emails modelled) | dropped 21 non-person + 483 no-usable-email | 0 upsert-err | 202s

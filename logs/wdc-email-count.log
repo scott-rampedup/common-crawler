@@ -1,0 +1,18 @@
+[15:48:01] fetch LocalBusiness/part_0.gz
+[15:48:27] fetch LocalBusiness/part_58.gz
+[15:48:52] fetch LocalBusiness/part_116.gz
+[15:49:16] fetch LocalBusiness/part_175.gz
+RESULT LocalBusiness | sampled 4/176 files | occ 248163 | distinct(sample) 24844 | ~62040/file -> extrap occurrences ~10919040
+[15:49:27] fetch Person/part_0.gz
+[15:50:04] fetch Person/part_650.gz
+[15:50:32] fetch Person/part_1300.gz
+[15:51:04] fetch Person/part_1952.gz
+RESULT Person | sampled 4/1953 files | occ 16691 | distinct(sample) 543 | ~4172/file -> extrap occurrences ~8147916
+[15:51:08] fetch Organization/part_0.gz
+[15:51:37] fetch Organization/part_1024.gz
+[15:52:13] fetch Organization/part_2048.gz
+[15:52:40] fetch Organization/part_3071.gz
+RESULT Organization | sampled 4/3072 files | occ 38944 | distinct(sample) 509 | ~9736/file -> extrap occurrences ~29908992
+=== COMBINED (all sampled classes) ===
+sample occurrences 303798 | sample distinct 25896 | distinct generic-prefix 12808
+DONE Sat Aug  1 15:52:53 EDT 2026

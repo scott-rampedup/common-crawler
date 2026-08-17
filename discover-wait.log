@@ -1,0 +1,6 @@
+=== DISCOVERY DONE ===
+  [add partition] ok — scanned 0 MB (~$0.0000)
+  [discover] ok — scanned 45760 MB (~$0.2399)
+Wrote 7,172,084 WARC pointers -> cc-warc-people-company.jsonl
+-rw-r--r-- 1 scott 197609 1823821268 Jul  3 18:57 cc-warc-people-company.jsonl
+7172084

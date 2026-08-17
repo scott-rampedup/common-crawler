@@ -1,0 +1,17 @@
+probing 10,000 pointers (conc 20)
+  1000/10000 | schema:Person 100 | email 306 | phone 291
+  2000/10000 | schema:Person 219 | email 618 | phone 596
+  3000/10000 | schema:Person 336 | email 916 | phone 909
+  4000/10000 | schema:Person 454 | email 1243 | phone 1224
+  5000/10000 | schema:Person 551 | email 1536 | phone 1523
+  6000/10000 | schema:Person 666 | email 1864 | phone 1814
+  7000/10000 | schema:Person 775 | email 2144 | phone 2095
+  8000/10000 | schema:Person 904 | email 2472 | phone 2407
+  9000/10000 | schema:Person 1068 | email 2782 | phone 2727
+  10000/10000 | schema:Person 1181 | email 3083 | phone 3034
+
+===== CC-MAIN person-page probe =====
+pointers 10,000 | fetched 10,000 (empty 0, err 0)
+schema.org Person markup: 1,181 (11.8%)  [jsonld 1016, microdata 165]
+  of those -> name 41.8% | real-email 28.5% | phone 37.1%
+ALL fetched pages -> name 37.8% | real-email 30.8% | phone 30.4%

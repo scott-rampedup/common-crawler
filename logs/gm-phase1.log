@@ -1,0 +1,13 @@
+email blocklist loaded
+phone-blocks loaded for line-type classification
+source CSVs: 1 (Google_Maps_Contact_Info_29-07-2026_Part_1.csv) | out: C:/Users/scott/gm-work
+  seen 52,896 | kept 50,000 | 2590/s
+  seen 105,568 | kept 100,000 | 3191/s
+  seen 158,200 | kept 150,000 | 3639/s
+  seen 208,617 | kept 200,000 | 3981/s
+  seen 259,312 | kept 250,000 | 4251/s
+  seen 309,966 | kept 300,000 | 4365/s
+  seen 360,690 | kept 350,000 | 4100/s
+  seen 443,617 | kept 400,000 | 3837/s
+  seen 494,671 | kept 450,000 | 3767/s
+DONE: 501,623 seen -> 456,772 Location records | skipped 18,733 closed + 26,118 no-website | 17,905 bio URLs | 122s

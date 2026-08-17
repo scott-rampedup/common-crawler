@@ -1,0 +1,19 @@
+Lambda concurrency limit 1000 -> driving at 120 concurrent (raise the quota to go faster)
+  7,000 ptrs | 3,382 records | 2029 ptr/s | 0 inv-err
+  10,800 ptrs | 5,428 records | 2723 ptr/s | 0 inv-err
+  12,400 ptrs | 6,568 records | 3011 ptr/s | 0 inv-err
+  23,800 ptrs | 12,603 records | 4239 ptr/s | 0 inv-err
+  32,200 ptrs | 17,379 records | 4509 ptr/s | 0 inv-err
+  33,600 ptrs | 18,163 records | 4468 ptr/s | 0 inv-err
+  51,800 ptrs | 24,627 records | 4706 ptr/s | 0 inv-err
+  72,400 ptrs | 38,065 records | 4658 ptr/s | 0 inv-err
+  83,200 ptrs | 45,064 records | 4543 ptr/s | 0 inv-err
+  84,000 ptrs | 45,492 records | 4542 ptr/s | 0 inv-err
+  103,200 ptrs | 50,848 records | 5046 ptr/s | 0 inv-err
+  108,000 ptrs | 53,100 records | 4957 ptr/s | 0 inv-err
+  115,600 ptrs | 58,144 records | 4949 ptr/s | 0 inv-err
+  127,400 ptrs | 65,851 records | 5084 ptr/s | 0 inv-err
+  143,413 ptrs | 73,627 records | 5078 ptr/s | 0 inv-err
+  148,813 ptrs | 75,557 records | 5030 ptr/s | 0 inv-err
+DONE: 150,413 pointers -> 76,057 records | 150,213 fetched, 0 empty | 1 invoke-err | 78s | 1940 ptr/s
+Next: OPENSEARCH_ENDPOINT=… node load-extracted.js cc-extracted/bf-cc-warc-tld-expand/

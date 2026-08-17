@@ -1,0 +1,59 @@
+CC-NEWS spike — day 20260809 | 131,153 known first names, 6,214 dictionary titles
+24 WARC(s) that day; scanning 24 with conc 4
+
+  [1/24] CC-NEWS-20260809010341-00066.warc.gz — pages 54,746 · hits 166 (+166) · 2.8m
+  [2/24] CC-NEWS-20260809021120-00067.warc.gz — pages 56,415 · hits 174 (+174) · 2.9m
+  [3/24] CC-NEWS-20260809000310-00065.warc.gz — pages 60,841 · hits 191 (+191) · 3.1m
+  [4/24] CC-NEWS-20260809031955-00068.warc.gz — pages 62,736 · hits 193 (+193) · 3.2m
+  [5/24] CC-NEWS-20260809042406-00069.warc.gz — pages 101,020 · hits 234 (+68) · 5.7m
+  [6/24] CC-NEWS-20260809073136-00072.warc.gz — pages 110,764 · hits 240 (+47) · 6.2m
+  [7/24] CC-NEWS-20260809052140-00070.warc.gz — pages 121,395 · hits 255 (+81) · 6.7m
+  [8/24] CC-NEWS-20260809062328-00071.warc.gz — pages 128,419 · hits 268 (+77) · 7.0m
+  [9/24] CC-NEWS-20260809083755-00073.warc.gz — pages 151,547 · hits 293 (+59) · 8.1m
+  [10/24] CC-NEWS-20260809084812-00074.warc.gz — pages 170,938 · hits 306 (+66) · 9.0m
+  [11/24] CC-NEWS-20260809090905-00075.warc.gz — pages 180,571 · hits 322 (+67) · 9.5m
+  [12/24] CC-NEWS-20260809115736-00078.warc.gz — pages 211,106 · hits 370 (+64) · 11.2m
+  [13/24] CC-NEWS-20260809095453-00076.warc.gz — pages 212,947 · hits 372 (+104) · 11.2m
+  [14/24] CC-NEWS-20260809130700-00079.warc.gz — pages 217,165 · hits 377 (+55) · 11.5m
+  [15/24] CC-NEWS-20260809105701-00077.warc.gz — pages 221,907 · hits 388 (+95) · 11.8m
+  [16/24] CC-NEWS-20260809162120-00082.warc.gz — pages 263,833 · hits 470 (+93) · 14.3m
+  [17/24] CC-NEWS-20260809151529-00081.warc.gz — pages 267,965 · hits 479 (+107) · 14.6m
+  [18/24] CC-NEWS-20260809172505-00083.warc.gz — pages 269,202 · hits 482 (+94) · 14.6m
+  [19/24] CC-NEWS-20260809140715-00080.warc.gz — pages 269,322 · hits 482 (+112) · 14.6m
+  [20/24] CC-NEWS-20260809183614-00084.warc.gz — pages 304,838 · hits 540 (+70) · 16.4m
+  [21/24] CC-NEWS-20260809194445-00085.warc.gz — pages 315,539 · hits 569 (+90) · 17.0m
+  [22/24] CC-NEWS-20260809204533-00086.warc.gz — pages 326,911 · hits 617 (+135) · 17.5m
+  [23/24] CC-NEWS-20260809215744-00087.warc.gz — pages 339,595 · hits 640 (+158) · 18.1m
+  [24/24] CC-NEWS-20260809231555-00088.warc.gz — pages 340,756 · hits 640 (+100) · 18.2m
+
+──────── CC-NEWS 20260809 ────────
+WARCs 24/24 · records 343,816 · HTML pages 340,756 · 128.3 GB text · 18.2 min
+Funnel: 102,629 article(s) with a hire verb -> 70,453 candidate sentence(s) -> dropped: no person 56,848, no title 12,465, no company 393
+HITS: 640 unique person+company · 403 senior-title · 399 with a published date · 211 published in the last 30 days
+      = 1.9 hits per 1,000 articles
+
+No-company examples: 
+  Alibaba names Maggie Wu new group CFO .
+  Deutsche appoints new CIO for Asia Pacific .
+  Deutsche appoints new CIO for Asia Pacific .
+
+Top companies: Chief Financial Officer (21), ReleaseWire ReleaseWire (10), Executive Vice President and Chief Financial (5), Senior Vice President and Chief Financial (4), Inc (4), Chief Operating Officer and Chief Financial (3), India (3), Q&A (3), President and CEO (2), Clifford Chance (2), Co-Head of Global Investments (2), Deutsche Bank (2)
+
+Sample:
+  Tom Neiheisel — Vice President @ Distilling Solutions Sales   [fool.com 2026-08-08]
+  David Sanders — Vice President @ Enterprise Financial Planning and Analysis   [fool.com 2026-08-08]
+  Jeff Lorberbaum — Chief Executive Officer @ Chief Financial Officer   [fool.com 2026-08-08]
+  Steve Blanco — Senior Vice President @ President and CEO   [fool.com 2026-08-08]
+  Rick Swartz — Chief Executive Officer @ Senior Vice President and Chief Financial   [fool.com 2026-08-08]
+  Mercedes Tabano — marketing strategist @ Gail   [sbwire.com 2012-09-18]
+  Donal Quaid — Treasurer @ Head of Debt IR   [fool.com 2026-08-08]
+  Alex Bidlake — partner @ Clifford Chance   [financeasia.com]
+  Yan Yuan — equity partner @ Clifford Chance   [financeasia.com]
+  Brian Bird — Chief Executive Officer @ Crystal Dawn Lail   [fool.com 2026-08-08]
+  Joseph Lebel — Chief Financial Officer @ Patrick Barrett   [fool.com 2026-08-08]
+  Jake Dewitte — Chief Executive Officer @ Chief Financial Officer   [fool.com 2026-08-08]
+  Mark Crawford — finance director @ Team17   [ii.co.uk]
+  Howard Orloff — Managing Director @ IPO Village   [sbwire.com 2012-09-06]
+  Montgomery County — Plastic Surgeon @ Reader’s Choice Awards   [sbwire.com 2012-09-06]
+
+Wrote 640 hit(s) -> cc-news-hits-20260809.jsonl

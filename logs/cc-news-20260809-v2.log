@@ -1,0 +1,60 @@
+CC-NEWS spike — day 20260809 | 131,153 known first names, 6,214 dictionary titles
+24 WARC(s) that day; scanning 24 with conc 4
+
+  [1/24] CC-NEWS-20260809010341-00066.warc.gz — pages 46,394 · hits 18 (+18) · 2.3m
+  [2/24] CC-NEWS-20260809000310-00065.warc.gz — pages 47,993 · hits 18 (+18) · 2.4m
+  [3/24] CC-NEWS-20260809031955-00068.warc.gz — pages 58,965 · hits 24 (+24) · 2.9m
+  [4/24] CC-NEWS-20260809021120-00067.warc.gz — pages 79,472 · hits 31 (+31) · 4.1m
+  [5/24] CC-NEWS-20260809042406-00069.warc.gz — pages 98,025 · hits 35 (+17) · 5.1m
+  [6/24] CC-NEWS-20260809052140-00070.warc.gz — pages 99,415 · hits 35 (+17) · 5.1m
+  [7/24] CC-NEWS-20260809062328-00071.warc.gz — pages 119,252 · hits 49 (+25) · 6.1m
+  [8/24] CC-NEWS-20260809083755-00073.warc.gz — pages 148,143 · hits 63 (+28) · 7.4m
+  [9/24] CC-NEWS-20260809084812-00074.warc.gz — pages 158,359 · hits 63 (+28) · 7.9m
+  [10/24] CC-NEWS-20260809073136-00072.warc.gz — pages 159,813 · hits 63 (+32) · 8.0m
+  [11/24] CC-NEWS-20260809090905-00075.warc.gz — pages 179,833 · hits 74 (+25) · 9.1m
+  [12/24] CC-NEWS-20260809105701-00077.warc.gz — pages 202,075 · hits 82 (+19) · 10.4m
+  [13/24] CC-NEWS-20260809095453-00076.warc.gz — pages 206,737 · hits 87 (+24) · 10.6m
+  [14/24] CC-NEWS-20260809115736-00078.warc.gz — pages 217,454 · hits 92 (+29) · 11.2m
+  [15/24] CC-NEWS-20260809130700-00079.warc.gz — pages 239,095 · hits 108 (+34) · 12.3m
+  [16/24] CC-NEWS-20260809140715-00080.warc.gz — pages 250,603 · hits 111 (+29) · 13.0m
+  [17/24] CC-NEWS-20260809151529-00081.warc.gz — pages 269,221 · hits 126 (+39) · 14.1m
+  [18/24] CC-NEWS-20260809162120-00082.warc.gz — pages 272,490 · hits 126 (+34) · 14.3m
+  [19/24] CC-NEWS-20260809183614-00084.warc.gz — pages 290,610 · hits 135 (+24) · 15.2m
+  [20/24] CC-NEWS-20260809172505-00083.warc.gz — pages 291,062 · hits 135 (+27) · 15.3m
+  [21/24] CC-NEWS-20260809204533-00086.warc.gz — pages 319,695 · hits 168 (+42) · 16.7m
+  [22/24] CC-NEWS-20260809215744-00087.warc.gz — pages 337,145 · hits 185 (+50) · 17.6m
+  [23/24] CC-NEWS-20260809194445-00085.warc.gz — pages 340,556 · hits 187 (+61) · 17.8m
+  [24/24] CC-NEWS-20260809231555-00088.warc.gz — pages 340,756 · hits 187 (+52) · 17.8m
+
+──────── CC-NEWS 20260809 ────────
+WARCs 24/24 · records 343,816 · HTML pages 340,756 · 128.3 GB text · 17.8 min
+Skipped 449 earnings-call/transcript page(s).
+Funnel: 102,180 article(s) with a hire verb -> 69,130 candidate sentence(s) -> dropped: no person 55,797, no title 12,332, no company 778
+HITS: 187 unique person+company · 110 senior-title · 96 with a published date · 32 published in the last 30 days
+      = 0.5 hits per 1,000 articles
+
+No-company examples: 
+  Alibaba names Maggie Wu new group CFO .
+  Deutsche appoints new CIO for Asia Pacific .
+  In addition, Gail has hired internet marketing strategist, Mercedes Tabano of http://dynamicdimensionsmarketing.com/ to 
+
+Top companies: Clifford Chance (2), Working Mothers (2), Money Observer (2), TheeDesign Studio (2), Team17 (1), IPO Village (1), Agricole CIB (1), Vikram Chavali (1), Public Transport Owners (1), Sanlam UK (1), VinaCapital Investment Management (1), Deutsche Bank (1)
+
+Sample:
+  Mark Crawford — finance director @ Team17   [ii.co.uk]
+  Howard Orloff — Managing Director @ IPO Village   [sbwire.com 2012-09-06]
+  Alex Bidlake — partner @ Clifford Chance   [financeasia.com]
+  Yan Yuan — equity partner @ Clifford Chance   [financeasia.com]
+  Benjamin Lamberg — officer @ Agricole CIB   [financeasia.com]
+  Deepak Dangayach — managing director @ Vikram Chavali   [financeasia.com]
+  Anwar Nana — President @ Public Transport Owners   [cbc.bb 2026-08-07]
+  Phil Smeaton — chief investment officer @ Sanlam UK   [ii.co.uk]
+  Andy Ho — chief investment officer @ VinaCapital Investment Management   [ii.co.uk]
+  Kee Tan — managing director @ Deutsche Bank   [financeasia.com]
+  Vick Strizheus — Chief Executive Officer @ Global Success Club   [sbwire.com 2012-09-17]
+  Amy Shang — business development @ Greater China   [financeasia.com]
+  Tom Selby — senior analyst @ HMRC   [ii.co.uk]
+  Tim Mak — managing partner @ Freshfields' Hong Kong   [financeasia.com]
+  Audrey Joe — Chief Executive Officer @ Nigeria   [thesun.ng 2026-05-04]
+
+Wrote 187 hit(s) -> cc-news-hits-20260809-v2.jsonl

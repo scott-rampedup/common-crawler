@@ -1,0 +1,6 @@
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-bio-repo/ -> OpenSearch (conc 4) [--model: email modelling ON]
+3,038 file(s) to load
+  1,000/3,038 files, 150,851 docs
+  2,000/3,038 files, 303,129 docs
+  3,000/3,038 files, 450,668 docs
+DONE: 3,038 file(s), 456,076 docs -> OpenSearch, 0 error(s), 369s

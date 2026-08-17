@@ -12,7 +12,9 @@ const DATA_DIR = process.env.DATA_DIR || __dirname;
 const FILE = path.join(DATA_DIR, 'contacts.db');
 const args = process.argv.slice(2);
 const DRY = args.includes('--dry');
-const TO = args.find((a) => a.includes('@')) || 'contact@common-crawler.com';
+// Same recipient the nightly report uses, so a manual send tests the real
+// path rather than a different address. An argument still overrides it.
+const TO = args.find((a) => a.includes('@')) || process.env.MONITOR_REPORT_TO || 'contact@common-crawler.com';
 
 const db = new DatabaseSync(FILE, { readOnly: true });
 const val = (sql, k = 'c') => { try { const r = db.prepare(sql).get(); return (r && r[k] != null) ? r[k] : 0; } catch (e) { return 0; } };

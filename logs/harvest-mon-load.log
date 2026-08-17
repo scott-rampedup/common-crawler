@@ -1,0 +1,36 @@
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/s200k-mon/ -> OpenSearch (conc 8)
+33,947 file(s) to load
+  1,000/33,947 files, 88,173 docs
+  2,000/33,947 files, 175,630 docs
+  3,000/33,947 files, 258,708 docs
+  4,000/33,947 files, 340,971 docs
+  5,000/33,947 files, 420,301 docs
+  6,000/33,947 files, 500,676 docs
+  7,000/33,947 files, 581,373 docs
+  8,000/33,947 files, 661,004 docs
+  9,000/33,947 files, 742,331 docs
+  10,000/33,947 files, 823,205 docs
+  11,000/33,947 files, 904,170 docs
+  12,000/33,947 files, 982,833 docs
+  13,000/33,947 files, 1,060,109 docs
+  14,000/33,947 files, 1,148,583 docs
+  15,000/33,947 files, 1,235,458 docs
+  16,000/33,947 files, 1,323,280 docs
+  17,000/33,947 files, 1,410,919 docs
+  18,000/33,947 files, 1,497,513 docs
+  19,000/33,947 files, 1,583,994 docs
+  20,000/33,947 files, 1,671,788 docs
+  21,000/33,947 files, 1,758,613 docs
+  22,000/33,947 files, 1,846,144 docs
+  23,000/33,947 files, 1,932,735 docs
+  24,000/33,947 files, 2,019,498 docs
+  25,000/33,947 files, 2,106,558 docs
+  26,000/33,947 files, 2,192,256 docs
+  27,000/33,947 files, 2,287,572 docs
+  28,000/33,947 files, 2,378,350 docs
+  29,000/33,947 files, 2,470,394 docs
+  30,000/33,947 files, 2,560,125 docs
+  31,000/33,947 files, 2,651,212 docs
+  32,000/33,947 files, 2,741,723 docs
+  33,000/33,947 files, 2,833,161 docs
+DONE: 33,947 file(s), 2,915,787 docs -> OpenSearch, 78 error(s), 1825s

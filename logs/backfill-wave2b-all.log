@@ -1,0 +1,228 @@
+=== WAVE 2b BEFORE Sat Aug  1 08:42:37 EDT 2026 ===
+  total 12,372,847 | real-phone 2,124,069
+=== drive cc-warc-bio-repo Sat Aug  1 08:42:37 EDT 2026 ===
+Lambda concurrency limit 1000 -> driving at 120 concurrent (raise the quota to go faster)
+  2,000 ptrs | 1,520 records | 399 ptr/s | 0 inv-err
+  3,800 ptrs | 2,988 records | 739 ptr/s | 0 inv-err
+  17,200 ptrs | 14,404 records | 2394 ptr/s | 0 inv-err
+  38,400 ptrs | 33,318 records | 3257 ptr/s | 0 inv-err
+  38,800 ptrs | 33,677 records | 3272 ptr/s | 0 inv-err
+  43,400 ptrs | 37,720 records | 3452 ptr/s | 0 inv-err
+  56,600 ptrs | 49,289 records | 3678 ptr/s | 0 inv-err
+  69,400 ptrs | 60,328 records | 3980 ptr/s | 0 inv-err
+  83,400 ptrs | 72,301 records | 4137 ptr/s | 0 inv-err
+  93,800 ptrs | 81,276 records | 4228 ptr/s | 0 inv-err
+  100,400 ptrs | 87,075 records | 4244 ptr/s | 0 inv-err
+  106,200 ptrs | 92,273 records | 4339 ptr/s | 0 inv-err
+  122,400 ptrs | 106,452 records | 4385 ptr/s | 0 inv-err
+  133,200 ptrs | 115,975 records | 4436 ptr/s | 0 inv-err
+  136,400 ptrs | 118,702 records | 4472 ptr/s | 0 inv-err
+  147,800 ptrs | 128,505 records | 4576 ptr/s | 0 inv-err
+  157,000 ptrs | 136,475 records | 4568 ptr/s | 0 inv-err
+  162,800 ptrs | 141,590 records | 4603 ptr/s | 0 inv-err
+  186,000 ptrs | 162,138 records | 4699 ptr/s | 0 inv-err
+  188,600 ptrs | 164,356 records | 4717 ptr/s | 0 inv-err
+  198,000 ptrs | 172,419 records | 4739 ptr/s | 0 inv-err
+  208,600 ptrs | 181,586 records | 4809 ptr/s | 0 inv-err
+  216,800 ptrs | 188,585 records | 4809 ptr/s | 0 inv-err
+  233,000 ptrs | 202,675 records | 4843 ptr/s | 0 inv-err
+  233,600 ptrs | 203,208 records | 4841 ptr/s | 0 inv-err
+  260,200 ptrs | 226,148 records | 4945 ptr/s | 0 inv-err
+  267,800 ptrs | 232,724 records | 4936 ptr/s | 0 inv-err
+  279,200 ptrs | 242,721 records | 4973 ptr/s | 0 inv-err
+  281,400 ptrs | 244,674 records | 4961 ptr/s | 0 inv-err
+  290,600 ptrs | 252,736 records | 4984 ptr/s | 0 inv-err
+  316,800 ptrs | 275,662 records | 4979 ptr/s | 0 inv-err
+  321,600 ptrs | 279,922 records | 4971 ptr/s | 0 inv-err
+  323,200 ptrs | 281,307 records | 4985 ptr/s | 0 inv-err
+  325,200 ptrs | 283,042 records | 4989 ptr/s | 0 inv-err
+  330,600 ptrs | 287,750 records | 4986 ptr/s | 0 inv-err
+  343,600 ptrs | 299,072 records | 5006 ptr/s | 0 inv-err
+  364,400 ptrs | 317,467 records | 5019 ptr/s | 0 inv-err
+  365,600 ptrs | 318,565 records | 5028 ptr/s | 0 inv-err
+  375,800 ptrs | 327,545 records | 5011 ptr/s | 0 inv-err
+  390,200 ptrs | 340,412 records | 5024 ptr/s | 0 inv-err
+  395,400 ptrs | 345,007 records | 5000 ptr/s | 0 inv-err
+  406,000 ptrs | 354,255 records | 4965 ptr/s | 0 inv-err
+  422,800 ptrs | 368,840 records | 4961 ptr/s | 0 inv-err
+  425,800 ptrs | 371,449 records | 4959 ptr/s | 0 inv-err
+  436,200 ptrs | 380,648 records | 4963 ptr/s | 0 inv-err
+  455,000 ptrs | 397,082 records | 4997 ptr/s | 0 inv-err
+  465,800 ptrs | 406,633 records | 4988 ptr/s | 0 inv-err
+  479,800 ptrs | 419,043 records | 4993 ptr/s | 0 inv-err
+  486,600 ptrs | 425,104 records | 5008 ptr/s | 0 inv-err
+  490,800 ptrs | 428,768 records | 5017 ptr/s | 0 inv-err
+  502,600 ptrs | 438,917 records | 5017 ptr/s | 0 inv-err
+  503,200 ptrs | 439,492 records | 5020 ptr/s | 0 inv-err
+  524,200 ptrs | 458,055 records | 5031 ptr/s | 0 inv-err
+  533,400 ptrs | 466,060 records | 5029 ptr/s | 0 inv-err
+  541,600 ptrs | 473,198 records | 5027 ptr/s | 0 inv-err
+  545,800 ptrs | 476,943 records | 5036 ptr/s | 0 inv-err
+  553,200 ptrs | 483,423 records | 5046 ptr/s | 0 inv-err
+  565,200 ptrs | 493,864 records | 5048 ptr/s | 0 inv-err
+  573,600 ptrs | 501,264 records | 5044 ptr/s | 0 inv-err
+  597,200 ptrs | 522,192 records | 5065 ptr/s | 0 inv-err
+  606,486 ptrs | 530,374 records | 4990 ptr/s | 0 inv-err
+DONE: 607,486 pointers -> 531,264 records | 607,486 fetched, 0 empty | 0 invoke-err | 126s | 4839 ptr/s
+Next: OPENSEARCH_ENDPOINT=… node load-extracted.js cc-extracted/bf-cc-warc-bio-repo/
+=== load cc-warc-bio-repo Sat Aug  1 08:44:43 EDT 2026 ===
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-bio-repo/ -> OpenSearch (conc 6)
+3,038 file(s) to load
+  1,000/3,038 files, 135,212 docs
+  2,000/3,038 files, 271,376 docs
+  3,000/3,038 files, 403,865 docs
+DONE: 3,038 file(s), 408,693 docs -> OpenSearch, 3 error(s), 202s
+=== drive cc-warc-mmiss-all Sat Aug  1 08:48:08 EDT 2026 ===
+Lambda concurrency limit 1000 -> driving at 120 concurrent (raise the quota to go faster)
+  12,800 ptrs | 10,205 records | 2048 ptr/s | 0 inv-err
+  16,600 ptrs | 13,250 records | 2254 ptr/s | 0 inv-err
+  18,400 ptrs | 14,701 records | 2341 ptr/s | 0 inv-err
+  20,000 ptrs | 16,026 records | 2472 ptr/s | 0 inv-err
+  48,200 ptrs | 39,016 records | 3571 ptr/s | 0 inv-err
+  52,800 ptrs | 42,710 records | 3665 ptr/s | 0 inv-err
+  56,600 ptrs | 45,743 records | 3715 ptr/s | 0 inv-err
+  78,800 ptrs | 63,490 records | 4028 ptr/s | 0 inv-err
+  80,000 ptrs | 64,511 records | 4058 ptr/s | 0 inv-err
+  94,000 ptrs | 75,708 records | 4105 ptr/s | 0 inv-err
+  96,800 ptrs | 77,979 records | 4120 ptr/s | 0 inv-err
+  102,000 ptrs | 82,258 records | 4158 ptr/s | 0 inv-err
+  131,000 ptrs | 105,768 records | 4230 ptr/s | 0 inv-err
+  134,600 ptrs | 108,671 records | 4212 ptr/s | 0 inv-err
+  143,400 ptrs | 115,758 records | 4293 ptr/s | 0 inv-err
+  159,600 ptrs | 128,738 records | 4355 ptr/s | 0 inv-err
+  162,800 ptrs | 131,307 records | 4401 ptr/s | 0 inv-err
+  170,200 ptrs | 137,234 records | 4459 ptr/s | 0 inv-err
+  174,800 ptrs | 140,921 records | 4467 ptr/s | 0 inv-err
+  180,200 ptrs | 145,331 records | 4443 ptr/s | 0 inv-err
+  199,400 ptrs | 160,802 records | 4518 ptr/s | 0 inv-err
+  207,200 ptrs | 166,989 records | 4550 ptr/s | 0 inv-err
+  210,000 ptrs | 169,246 records | 4579 ptr/s | 0 inv-err
+  230,400 ptrs | 185,590 records | 4610 ptr/s | 0 inv-err
+  234,400 ptrs | 188,744 records | 4601 ptr/s | 0 inv-err
+  252,800 ptrs | 203,481 records | 4659 ptr/s | 0 inv-err
+  261,400 ptrs | 210,392 records | 4660 ptr/s | 0 inv-err
+  264,200 ptrs | 212,660 records | 4667 ptr/s | 0 inv-err
+  272,200 ptrs | 219,185 records | 4692 ptr/s | 0 inv-err
+  294,200 ptrs | 236,773 records | 4733 ptr/s | 0 inv-err
+  300,200 ptrs | 241,537 records | 4727 ptr/s | 0 inv-err
+  312,000 ptrs | 250,932 records | 4743 ptr/s | 0 inv-err
+  315,200 ptrs | 253,586 records | 4758 ptr/s | 0 inv-err
+  329,600 ptrs | 265,171 records | 4766 ptr/s | 0 inv-err
+  339,400 ptrs | 272,214 records | 4778 ptr/s | 0 inv-err
+  351,200 ptrs | 280,149 records | 4807 ptr/s | 0 inv-err
+  359,400 ptrs | 285,541 records | 4821 ptr/s | 0 inv-err
+  373,400 ptrs | 294,713 records | 4803 ptr/s | 0 inv-err
+  391,800 ptrs | 306,565 records | 4799 ptr/s | 0 inv-err
+  396,800 ptrs | 309,764 records | 4811 ptr/s | 0 inv-err
+  397,200 ptrs | 310,026 records | 4811 ptr/s | 0 inv-err
+  408,000 ptrs | 317,115 records | 4795 ptr/s | 0 inv-err
+  412,200 ptrs | 319,932 records | 4811 ptr/s | 0 inv-err
+  433,800 ptrs | 334,154 records | 4809 ptr/s | 0 inv-err
+  449,000 ptrs | 343,977 records | 4811 ptr/s | 0 inv-err
+  452,800 ptrs | 346,481 records | 4821 ptr/s | 0 inv-err
+  459,000 ptrs | 350,697 records | 4834 ptr/s | 0 inv-err
+  460,800 ptrs | 351,878 records | 4833 ptr/s | 0 inv-err
+  474,000 ptrs | 360,673 records | 4826 ptr/s | 0 inv-err
+  492,600 ptrs | 372,834 records | 4836 ptr/s | 0 inv-err
+  501,200 ptrs | 378,392 records | 4836 ptr/s | 0 inv-err
+  503,400 ptrs | 379,796 records | 4836 ptr/s | 0 inv-err
+  515,400 ptrs | 387,540 records | 4846 ptr/s | 0 inv-err
+  525,400 ptrs | 393,930 records | 4827 ptr/s | 0 inv-err
+  546,400 ptrs | 407,081 records | 4829 ptr/s | 0 inv-err
+  554,600 ptrs | 412,387 records | 4798 ptr/s | 0 inv-err
+  568,600 ptrs | 421,676 records | 4788 ptr/s | 0 inv-err
+  573,800 ptrs | 425,440 records | 4771 ptr/s | 0 inv-err
+  588,400 ptrs | 436,138 records | 4761 ptr/s | 0 inv-err
+  592,400 ptrs | 439,068 records | 4740 ptr/s | 0 inv-err
+  593,600 ptrs | 439,935 records | 4734 ptr/s | 0 inv-err
+  599,800 ptrs | 444,469 records | 4750 ptr/s | 0 inv-err
+  609,000 ptrs | 451,244 records | 4719 ptr/s | 0 inv-err
+  623,000 ptrs | 461,358 records | 4718 ptr/s | 0 inv-err
+  641,000 ptrs | 474,694 records | 4694 ptr/s | 0 inv-err
+  644,600 ptrs | 477,394 records | 4697 ptr/s | 0 inv-err
+  669,600 ptrs | 495,803 records | 4669 ptr/s | 0 inv-err
+  673,400 ptrs | 498,608 records | 4665 ptr/s | 0 inv-err
+  678,400 ptrs | 502,205 records | 4670 ptr/s | 0 inv-err
+  687,400 ptrs | 508,767 records | 4656 ptr/s | 0 inv-err
+  700,800 ptrs | 518,609 records | 4656 ptr/s | 0 inv-err
+  705,600 ptrs | 522,112 records | 4648 ptr/s | 0 inv-err
+  719,000 ptrs | 531,897 records | 4637 ptr/s | 0 inv-err
+  732,200 ptrs | 541,610 records | 4640 ptr/s | 0 inv-err
+  740,800 ptrs | 548,025 records | 4635 ptr/s | 0 inv-err
+  754,400 ptrs | 558,100 records | 4633 ptr/s | 0 inv-err
+  758,852 ptrs | 561,371 records | 4630 ptr/s | 0 inv-err
+  769,852 ptrs | 569,293 records | 4583 ptr/s | 0 inv-err
+DONE: 771,052 pointers -> 570,094 records | 771,048 fetched, 0 empty | 0 invoke-err | 180s | 4291 ptr/s
+Next: OPENSEARCH_ENDPOINT=… node load-extracted.js cc-extracted/bf-cc-warc-mmiss-all/
+=== load cc-warc-mmiss-all Sat Aug  1 08:51:08 EDT 2026 ===
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-mmiss-all/ -> OpenSearch (conc 6)
+3,856 file(s) to load
+  1,000/3,856 files, 85,152 docs
+  2,000/3,856 files, 148,892 docs
+  3,000/3,856 files, 234,056 docs
+DONE: 3,856 file(s), 312,628 docs -> OpenSearch, 32 error(s), 196s
+=== drive cc-warc-tld-expand Sat Aug  1 08:54:25 EDT 2026 ===
+Lambda concurrency limit 1000 -> driving at 120 concurrent (raise the quota to go faster)
+  7,000 ptrs | 3,382 records | 2029 ptr/s | 0 inv-err
+  10,800 ptrs | 5,428 records | 2723 ptr/s | 0 inv-err
+  12,400 ptrs | 6,568 records | 3011 ptr/s | 0 inv-err
+  23,800 ptrs | 12,603 records | 4239 ptr/s | 0 inv-err
+  32,200 ptrs | 17,379 records | 4509 ptr/s | 0 inv-err
+  33,600 ptrs | 18,163 records | 4468 ptr/s | 0 inv-err
+  51,800 ptrs | 24,627 records | 4706 ptr/s | 0 inv-err
+  72,400 ptrs | 38,065 records | 4658 ptr/s | 0 inv-err
+  83,200 ptrs | 45,064 records | 4543 ptr/s | 0 inv-err
+  84,000 ptrs | 45,492 records | 4542 ptr/s | 0 inv-err
+  103,200 ptrs | 50,848 records | 5046 ptr/s | 0 inv-err
+  108,000 ptrs | 53,100 records | 4957 ptr/s | 0 inv-err
+  115,600 ptrs | 58,144 records | 4949 ptr/s | 0 inv-err
+  127,400 ptrs | 65,851 records | 5084 ptr/s | 0 inv-err
+  143,413 ptrs | 73,627 records | 5078 ptr/s | 0 inv-err
+  148,813 ptrs | 75,557 records | 5030 ptr/s | 0 inv-err
+DONE: 150,413 pointers -> 76,057 records | 150,213 fetched, 0 empty | 1 invoke-err | 78s | 1940 ptr/s
+Next: OPENSEARCH_ENDPOINT=… node load-extracted.js cc-extracted/bf-cc-warc-tld-expand/
+=== load cc-warc-tld-expand Sat Aug  1 08:55:43 EDT 2026 ===
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-tld-expand/ -> OpenSearch (conc 6)
+649 file(s) to load
+DONE: 649 file(s), 61,462 docs -> OpenSearch, 58 error(s), 31s
+=== reload people-company (records already in S3) Sat Aug  1 08:56:14 EDT 2026 ===
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-people-company/ -> OpenSearch (conc 6)
+35,857 file(s) to load
+  1,000/35,857 files, 83,816 docs
+  2,000/35,857 files, 167,758 docs
+  3,000/35,857 files, 250,466 docs
+  4,000/35,857 files, 333,165 docs
+  5,000/35,857 files, 417,062 docs
+  6,000/35,857 files, 500,637 docs
+  7,000/35,857 files, 583,420 docs
+  8,000/35,857 files, 668,217 docs
+  9,000/35,857 files, 751,297 docs
+  10,000/35,857 files, 837,414 docs
+  11,000/35,857 files, 922,048 docs
+  12,000/35,857 files, 1,007,310 docs
+  13,000/35,857 files, 1,090,624 docs
+  14,000/35,857 files, 1,176,973 docs
+  15,000/35,857 files, 1,263,659 docs
+  16,000/35,857 files, 1,350,418 docs
+  17,000/35,857 files, 1,437,019 docs
+  18,000/35,857 files, 1,522,733 docs
+  19,000/35,857 files, 1,608,631 docs
+  20,000/35,857 files, 1,694,273 docs
+  21,000/35,857 files, 1,778,965 docs
+  22,000/35,857 files, 1,865,122 docs
+  23,000/35,857 files, 1,950,731 docs
+  24,000/35,857 files, 2,037,025 docs
+  25,000/35,857 files, 2,121,010 docs
+  26,000/35,857 files, 2,206,898 docs
+  27,000/35,857 files, 2,292,744 docs
+  28,000/35,857 files, 2,378,977 docs
+  29,000/35,857 files, 2,465,117 docs
+  30,000/35,857 files, 2,548,409 docs
+  31,000/35,857 files, 2,630,535 docs
+  32,000/35,857 files, 2,714,367 docs
+  33,000/35,857 files, 2,797,813 docs
+  34,000/35,857 files, 2,883,414 docs
+  35,000/35,857 files, 2,966,953 docs
+DONE: 35,857 file(s), 3,038,081 docs -> OpenSearch, 171 error(s), 1686s
+=== WAVE 2b DONE Sat Aug  1 09:24:25 EDT 2026 ===
+  total 12,451,943 | real-phone 2,183,878

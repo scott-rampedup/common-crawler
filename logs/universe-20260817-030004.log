@@ -1,0 +1,4 @@
+﻿[2026-08-17T03:00:04.1405220-04:00] universe-refresh check starting
+scheduler error: Error: connect EACCES 54.237.141.66:443
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2026-08-17T03:00:06.1324385-04:00] finished (exit 1)

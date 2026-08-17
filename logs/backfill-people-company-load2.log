@@ -1,0 +1,38 @@
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-people-company/ -> OpenSearch (conc 6)
+35,857 file(s) to load
+  1,000/35,857 files, 83,816 docs
+  2,000/35,857 files, 167,758 docs
+  3,000/35,857 files, 250,466 docs
+  4,000/35,857 files, 333,165 docs
+  5,000/35,857 files, 417,062 docs
+  6,000/35,857 files, 500,637 docs
+  7,000/35,857 files, 583,420 docs
+  8,000/35,857 files, 668,217 docs
+  9,000/35,857 files, 751,297 docs
+  10,000/35,857 files, 837,414 docs
+  11,000/35,857 files, 922,048 docs
+  12,000/35,857 files, 1,007,310 docs
+  13,000/35,857 files, 1,090,624 docs
+  14,000/35,857 files, 1,176,973 docs
+  15,000/35,857 files, 1,263,659 docs
+  16,000/35,857 files, 1,350,418 docs
+  17,000/35,857 files, 1,437,019 docs
+  18,000/35,857 files, 1,522,733 docs
+  19,000/35,857 files, 1,608,631 docs
+  20,000/35,857 files, 1,694,273 docs
+  21,000/35,857 files, 1,778,965 docs
+  22,000/35,857 files, 1,865,122 docs
+  23,000/35,857 files, 1,950,731 docs
+  24,000/35,857 files, 2,037,025 docs
+  25,000/35,857 files, 2,121,010 docs
+  26,000/35,857 files, 2,206,898 docs
+  27,000/35,857 files, 2,292,744 docs
+  28,000/35,857 files, 2,378,977 docs
+  29,000/35,857 files, 2,465,117 docs
+  30,000/35,857 files, 2,548,409 docs
+  31,000/35,857 files, 2,630,535 docs
+  32,000/35,857 files, 2,714,367 docs
+  33,000/35,857 files, 2,797,813 docs
+  34,000/35,857 files, 2,883,414 docs
+  35,000/35,857 files, 2,966,953 docs
+DONE: 35,857 file(s), 3,038,081 docs -> OpenSearch, 171 error(s), 1686s

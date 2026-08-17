@@ -1,0 +1,10 @@
+(no --crawl) latest corpus: CC-MAIN-2026-25
+bio terms: 362 from bio-terms-harvest.txt (vs 27 default)
+  [create db] ok — scanned 0 MB (~$0.0000)
+  [create table] ok — scanned 0 MB (~$0.0000)
+  [add partition] ok — scanned 0 MB (~$0.0000)
+
+Discovering pointers -> cc-warc-people-company.jsonl (per-domain<=30) ...
+  [discover] ok — scanned 45760 MB (~$0.2399)
+Wrote 7,172,084 WARC pointers -> cc-warc-people-company.jsonl
+Next: DATABASE_URL=… node load-queue.js cc-warc-people-company.jsonl

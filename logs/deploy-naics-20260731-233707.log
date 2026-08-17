@@ -1,0 +1,192 @@
+==> Verifying app config
+Validating C:\Users\scott\OneDrive\Desktop\Common Crawler Code\rampedup-phase1\fly.toml
+[32m✓[0m Configuration is valid
+--> Verified app config
+==> Building image
+
+WARN Build context is 4.7 GB across 1,028 files. It is uploaded to the builder on
+     every deploy, and a large context can make builds noticeably slower.
+     Largest paths in the context:
+       monitor-bio-urls.txt  1.4 GB
+       monitor-misses.txt    929 MB
+       mbu-chunk-01          457 MB
+       mbu-chunk-02          455 MB
+       mbu-chunk-00          427 MB
+     If some of these don't need to be in the image, add them to .dockerignore:
+     https://docs.docker.com/build/concepts/context/#dockerignore-files
+     (disable with --build-context-warn-size 0)
+Waiting for depot builder...
+
+==> Building image with Depot
+--> build:  (​)
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 649B 0.1s done
+#1 DONE 0.2s
+
+#2 [internal] load metadata for docker.io/library/node:24-slim
+#2 DONE 1.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 923B 0.1s done
+#3 DONE 0.1s
+
+#4 [1/5] FROM docker.io/library/node:24-slim@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7
+#4 resolve docker.io/library/node:24-slim@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7 done
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 ...
+
+#4 [1/5] FROM docker.io/library/node:24-slim@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7
+#4 sha256:1d181098da529ef6c6e6a49d45da2325da55ad3be30892a6272cf0d30698183c 449B / 449B 0.1s done
+#4 sha256:d7bdba9c7a54a6b6a931b53f4e3f8fc24bad7e802983b1db728fb0a803642501 1.71MB / 1.71MB 0.1s done
+#4 sha256:ff5baed88c10730240ca91916740bdc69fc2271095b7a2e408057b3a923dfc13 3.31kB / 3.31kB 0.1s done
+#4 extracting sha256:ff5baed88c10730240ca91916740bdc69fc2271095b7a2e408057b3a923dfc13 done
+#4 sha256:0de42ac9f47c16bf3f06398c5a7355d619b3a80ba6cdf5dfc81fca8b7376fa1e 50.34MB / 50.34MB 0.7s done
+#4 extracting sha256:0de42ac9f47c16bf3f06398c5a7355d619b3a80ba6cdf5dfc81fca8b7376fa1e 1.1s done
+#4 DONE 1.8s
+
+#4 [1/5] FROM docker.io/library/node:24-slim@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7
+#4 extracting sha256:d7bdba9c7a54a6b6a931b53f4e3f8fc24bad7e802983b1db728fb0a803642501 0.0s done
+#4 extracting sha256:1d181098da529ef6c6e6a49d45da2325da55ad3be30892a6272cf0d30698183c done
+#4 DONE 1.8s
+
+#5 [internal] load build context
+#5 ...
+
+#6 [2/5] WORKDIR /app
+#6 DONE 0.5s
+
+#5 [internal] load build context
+#5 transferring context: 14.06MB 5.1s
+#5 transferring context: 46.91MB 10.1s
+#5 transferring context: 147.44MB 15.2s
+#5 transferring context: 290.31MB 20.2s
+#5 transferring context: 437.21MB 25.3s
+#5 transferring context: 578.74MB 30.4s
+#5 transferring context: 682.09MB 35.4s
+#5 transferring context: 824.37MB 40.4s
+#5 transferring context: 964.07MB 45.5s
+#5 transferring context: 1.11GB 50.5s
+#5 transferring context: 1.24GB 55.5s
+#5 transferring context: 1.39GB 60.6s
+#5 transferring context: 1.53GB 65.7s
+#5 transferring context: 1.65GB 70.7s
+#5 transferring context: 1.77GB 75.7s
+#5 transferring context: 1.86GB 80.9s
+#5 transferring context: 1.99GB 86.1s
+#5 transferring context: 2.10GB 91.1s
+#5 transferring context: 2.22GB 96.2s
+#5 transferring context: 2.34GB 101.4s
+#5 transferring context: 2.46GB 106.4s
+#5 transferring context: 2.53GB 111.5s
+#5 transferring context: 2.63GB 116.5s
+#5 transferring context: 2.77GB 121.7s
+#5 transferring context: 2.88GB 126.8s
+#5 transferring context: 3.00GB 131.9s
+#5 transferring context: 3.15GB 137.1s
+#5 transferring context: 3.28GB 142.2s
+#5 transferring context: 3.41GB 147.3s
+#5 transferring context: 3.55GB 152.3s
+#5 transferring context: 3.72GB 157.3s
+#5 transferring context: 3.88GB 162.4s
+#5 transferring context: 4.03GB 167.6s
+#5 transferring context: 4.17GB 172.7s
+#5 transferring context: 4.31GB 177.8s
+#5 transferring context: 4.40GB 183.0s
+#5 transferring context: 4.54GB 188.1s
+#5 transferring context: 4.67GB 193.1s
+#5 transferring context: 4.73GB 195.3s done
+#5 DONE 195.4s
+
+#7 [3/5] COPY package*.json ./
+#7 DONE 5.8s
+
+#8 [4/5] RUN npm install --omit=dev
+#8 3.324 
+#8 3.324 added 78 packages, and audited 79 packages in 3s
+#8 3.328 
+#8 3.328 1 high severity vulnerability
+#8 3.328 
+#8 3.328 To address all issues, run:
+#8 3.328   npm audit fix
+#8 3.328 
+#8 3.328 Run `npm audit` for details.
+#8 3.330 npm notice
+#8 3.330 npm notice New major version of npm available! 11.16.0 -> 12.0.2
+#8 3.330 npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.0.2
+#8 3.330 npm notice To update run: npm install -g npm@12.0.2
+#8 3.330 npm notice
+#8 DONE 3.7s
+
+#9 [5/5] COPY . .
+#9 DONE 48.1s
+
+#10 exporting to image
+#10 exporting layers
+#10 exporting layers 68.7s done
+#10 exporting manifest sha256:248009cd0d14e7ed4902c24d56a850d28e8546e22b73c2a81746aa8fc5146c4b done
+#10 exporting config sha256:7fa0bcd477b7036e6db99c074571fd7c6e477ddb6154e53e547ca9fdf16ea485 done
+#10 pushing layers for registry.fly.io/common-crawler:deployment-01KYXPBXR5SXK68W2CETTNBX34@sha256:248009cd0d14e7ed4902c24d56a850d28e8546e22b73c2a81746aa8fc5146c4b
+#10 pushing layer sha256:7fa0bcd477b7036e6db99c074571fd7c6e477ddb6154e53e547ca9fdf16ea485
+#10 pushing layer sha256:2623b3b33e9ee9aae2cca032676cce4583f2a9b4a535b18218d39c0e1b9cc7a2
+#10 pushing layer sha256:d6d03fb333561d9ba687cb34fbbdc0378bbd9e2d9048b60adab530a84b5a2b45
+#10 pushing layer sha256:e4f8d2b7c7c38d99f9a222e7c1e944621c0b6f1be900ecc40856625e816d6a2f
+#10 pushing layer sha256:78a51f678ac527c5bc822f60e2f7dbe9cf96c37c92efda9f04c3d3821144a21e
+#10 pushing layer sha256:9a42b0f9adc6b7b6100a8865fbc4152778f3336c645cd7c117f77cfe7062252b
+#10 pushing layer sha256:e45c94031ca71f9eba208832c1b43e1fabb0e55173b38694f715a5ca1f02aee8
+#10 pushing layer sha256:15c8ecab6b46672920a13b66a4bbce07da1be08ba9fe7ef7822e1adfa18b93cd
+#10 pushing layer sha256:4b43586f13c432da7def4a6cb4a723b79e2093b31d2b66a3f8cc6652c6ce7aee
+#10 pushing layer sha256:5b183551555dc4dfe5d330d57b191377e684653688aac9eaf519bb7201e1ea86
+#10 pushing layer sha256:2623b3b33e9ee9aae2cca032676cce4583f2a9b4a535b18218d39c0e1b9cc7a2 0.2s done
+#10 pushing layer sha256:d6d03fb333561d9ba687cb34fbbdc0378bbd9e2d9048b60adab530a84b5a2b45 0.3s done
+#10 pushing layer sha256:78a51f678ac527c5bc822f60e2f7dbe9cf96c37c92efda9f04c3d3821144a21e 0.3s done
+#10 pushing layer sha256:9a42b0f9adc6b7b6100a8865fbc4152778f3336c645cd7c117f77cfe7062252b 0.2s done
+#10 pushing layer sha256:5b183551555dc4dfe5d330d57b191377e684653688aac9eaf519bb7201e1ea86 0.2s done
+#10 pushing layer sha256:7fa0bcd477b7036e6db99c074571fd7c6e477ddb6154e53e547ca9fdf16ea485 0.4s done
+#10 pushing layer sha256:e45c94031ca71f9eba208832c1b43e1fabb0e55173b38694f715a5ca1f02aee8 0.4s done
+#10 pushing layer sha256:15c8ecab6b46672920a13b66a4bbce07da1be08ba9fe7ef7822e1adfa18b93cd 0.5s done
+#10 pushing layer sha256:4b43586f13c432da7def4a6cb4a723b79e2093b31d2b66a3f8cc6652c6ce7aee 0.7s done
+#10 pushing layers for registry.fly.io/common-crawler:deployment-01KYXPBXR5SXK68W2CETTNBX34@sha256:248009cd0d14e7ed4902c24d56a850d28e8546e22b73c2a81746aa8fc5146c4b 8.3s done
+#10 pushing layer sha256:e4f8d2b7c7c38d99f9a222e7c1e944621c0b6f1be900ecc40856625e816d6a2f 8.3s done
+#10 pushing manifest for registry.fly.io/common-crawler:deployment-01KYXPBXR5SXK68W2CETTNBX34@sha256:248009cd0d14e7ed4902c24d56a850d28e8546e22b73c2a81746aa8fc5146c4b 0.1s done
+#10 DONE 77.1s
+--> Build Summary:  (​)
+2026/07/31 23:43:23 error releasing builder: deadline_exceeded: context deadline exceeded
+[38;5;252m--> Building image done[0m
+image: registry.fly.io/common-crawler:deployment-01KYXPBXR5SXK68W2CETTNBX34
+image size: 777 MB
+
+Watch your deployment at https://fly.io/apps/common-crawler/monitoring
+
+Updating existing machines in 'common-crawler' with rolling strategy
+> Acquiring lease for 48ee626c3164d8
+> Acquired lease for 48ee626c3164d8
+> Updating machine config for 48ee626c3164d8
+> Updating 48ee626c3164d8 [app]
+> Updated machine config for 48ee626c3164d8
+> Waiting for machine 48ee626c3164d8 to reach a good state
+> Machine 48ee626c3164d8 reached started state
+
+WARNING The app is not listening on the expected address and will not be reachable by fly-proxy.
+You can fix this by configuring your app to listen on the following addresses:
+  - 0.0.0.0:3000
+Found these processes inside the machine with open listening sockets:
+ PROCESS        │ ADDRESSES                            
+────────────────┼──────────────────────────────────────
+ /.fly/hallpass │ [fdaa:7c:48d0:a7b:49:39af:afff:2]:22 
+
+> Running smoke checks on machine 48ee626c3164d8
+> Running machine checks on machine 48ee626c3164d8
+> Checking health of machine 48ee626c3164d8
+✔ Machine 48ee626c3164d8 is now in a good state
+> Clearing lease for 48ee626c3164d8
+✔ Cleared lease for 48ee626c3164d8
+Checking DNS configuration for common-crawler.fly.dev
+WARNING: DNS verification failed: read udp 100.64.100.6:64235->8.8.8.8:53: i/o timeout
+Your app is deployed but DNS may take a few minutes to propagate globally
+[33mWARN[0m DNS checks failed: read udp 100.64.100.6:64235->8.8.8.8:53: i/o timeout
+
+
+Visit your newly deployed app at https://common-crawler.fly.dev/
+

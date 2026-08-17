@@ -1,0 +1,4 @@
+chunk-00: Resolved 332,849 / 5,000,000 URL(s) in CC (6.7% hit) -> cc-warc-mmiss-00.jsonl
+chunk-01: Resolved 231,103 / 5,000,000 URL(s) in CC (4.6% hit) -> cc-warc-mmiss-01.jsonl
+chunk-02: Resolved 207,100 / 4,365,340 URL(s) in CC (4.7% hit) -> cc-warc-mmiss-02.jsonl
+ALL DONE — combined pointers: 771052

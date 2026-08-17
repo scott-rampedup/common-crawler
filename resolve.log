@@ -1,0 +1,19 @@
+(no --crawl) latest corpus: CC-MAIN-2026-25
+  [create db] ok — scanned 0 MB (~$0.0000)
+  [create table] ok — scanned 0 MB (~$0.0000)
+  [add partition] ok — scanned 0 MB (~$0.0000)
+Resolve mode: BIO URL Repository.txt -> cc-warc-bio-repo.jsonl; crawls: CC-MAIN-2026-25, CC-MAIN-2026-21, CC-MAIN-2026-17
+  1,594,794 URL(s) read -> 1,535,654 distinct key(s) (118 non-URL skipped)
+  uploading keys (69.2 MB) -> s3://aws-athena-query-results-475987770186-us-east-1/bio-resolve/1782860427572/keys.txt ...
+  [create db] ok — scanned 0 MB (~$0.0000)
+  [create table] ok — scanned 0 MB (~$0.0000)
+  [add partition] ok — scanned 0 MB (~$0.0000)
+  [create db] ok — scanned 0 MB (~$0.0000)
+  [create table] ok — scanned 0 MB (~$0.0000)
+  [add partition] ok — scanned 0 MB (~$0.0000)
+  [create db] ok — scanned 0 MB (~$0.0000)
+  [create table] ok — scanned 0 MB (~$0.0000)
+  [add partition] ok — scanned 0 MB (~$0.0000)
+  [drop keys tbl] ok — scanned 0 MB (~$0.0000)
+  [create keys tbl] ok — scanned 0 MB (~$0.0000)
+ERROR: 

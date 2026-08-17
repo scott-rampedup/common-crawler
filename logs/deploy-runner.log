@@ -1,0 +1,118 @@
+==> Verifying app config
+Validating C:\Users\scott\OneDrive\Desktop\Common Crawler Code\rampedup-phase1\fly.toml
+[32m✓[0m Configuration is valid
+--> Verified app config
+==> Building image
+
+WARN Build context is 4.8 GB across 1,035 files. It is uploaded to the builder on
+     every deploy, and a large context can make builds noticeably slower.
+     Largest paths in the context:
+       monitor-bio-urls.txt  1.4 GB
+       monitor-misses.txt    929 MB
+       mbu-chunk-01          457 MB
+       mbu-chunk-02          455 MB
+       mbu-chunk-00          427 MB
+     If some of these don't need to be in the image, add them to .dockerignore:
+     https://docs.docker.com/build/concepts/context/#dockerignore-files
+     (disable with --build-context-warn-size 0)
+Waiting for depot builder...
+
+==> Building image with Depot
+--> build:  (​)
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 649B 0.1s done
+#1 DONE 0.1s
+
+#2 [internal] load metadata for docker.io/library/node:24-slim
+#2 DONE 0.5s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 923B 0.1s done
+#3 DONE 0.1s
+
+#4 [1/5] FROM docker.io/library/node:24-slim@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7
+#4 resolve docker.io/library/node:24-slim@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7 done
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 68.38MB 3.3s done
+#5 DONE 3.3s
+
+#6 [2/5] WORKDIR /app
+#6 CACHED
+
+#7 [3/5] COPY package*.json ./
+#7 CACHED
+
+#8 [4/5] RUN npm install --omit=dev
+#8 CACHED
+
+#9 [5/5] COPY . .
+#9 DONE 94.1s
+
+#10 exporting to image
+#10 exporting layers
+#10 exporting layers 68.2s done
+#10 exporting manifest sha256:daf175c2dc9ac89c1db46558b9e5246595742097e477de25a9b8340f77598f15 done
+#10 exporting config sha256:5e6822d4a2e7c23ee2dd0fdb1940b4e716e1e34d192105a618b3f2f2cc8247f3 done
+#10 pushing layers for registry.fly.io/common-crawler:deployment-01KYXTX5J9X02RMHK2V9Z5WXEW@sha256:daf175c2dc9ac89c1db46558b9e5246595742097e477de25a9b8340f77598f15
+#10 pushing layer sha256:5e6822d4a2e7c23ee2dd0fdb1940b4e716e1e34d192105a618b3f2f2cc8247f3
+#10 pushing layer sha256:7d842443e7c5d77fc3f0f5fb44304a16507acf5cbf09f3f43ad0be1971b8ae6f
+#10 pushing layer sha256:e45c94031ca71f9eba208832c1b43e1fabb0e55173b38694f715a5ca1f02aee8
+#10 pushing layer sha256:d6d03fb333561d9ba687cb34fbbdc0378bbd9e2d9048b60adab530a84b5a2b45
+#10 pushing layer sha256:78a51f678ac527c5bc822f60e2f7dbe9cf96c37c92efda9f04c3d3821144a21e
+#10 pushing layer sha256:15c8ecab6b46672920a13b66a4bbce07da1be08ba9fe7ef7822e1adfa18b93cd
+#10 pushing layer sha256:4b43586f13c432da7def4a6cb4a723b79e2093b31d2b66a3f8cc6652c6ce7aee 0.1s done
+#10 pushing layer sha256:2623b3b33e9ee9aae2cca032676cce4583f2a9b4a535b18218d39c0e1b9cc7a2
+#10 pushing layer sha256:9a42b0f9adc6b7b6100a8865fbc4152778f3336c645cd7c117f77cfe7062252b
+#10 pushing layer sha256:5b183551555dc4dfe5d330d57b191377e684653688aac9eaf519bb7201e1ea86
+#10 pushing layer sha256:e45c94031ca71f9eba208832c1b43e1fabb0e55173b38694f715a5ca1f02aee8 0.3s done
+#10 pushing layer sha256:5e6822d4a2e7c23ee2dd0fdb1940b4e716e1e34d192105a618b3f2f2cc8247f3 0.5s done
+#10 pushing layer sha256:d6d03fb333561d9ba687cb34fbbdc0378bbd9e2d9048b60adab530a84b5a2b45 0.3s done
+#10 pushing layer sha256:78a51f678ac527c5bc822f60e2f7dbe9cf96c37c92efda9f04c3d3821144a21e 0.3s done
+#10 pushing layer sha256:15c8ecab6b46672920a13b66a4bbce07da1be08ba9fe7ef7822e1adfa18b93cd 0.3s done
+#10 pushing layer sha256:2623b3b33e9ee9aae2cca032676cce4583f2a9b4a535b18218d39c0e1b9cc7a2 0.3s done
+#10 pushing layer sha256:9a42b0f9adc6b7b6100a8865fbc4152778f3336c645cd7c117f77cfe7062252b 0.3s done
+#10 pushing layer sha256:5b183551555dc4dfe5d330d57b191377e684653688aac9eaf519bb7201e1ea86 0.3s done
+#10 pushing layers for registry.fly.io/common-crawler:deployment-01KYXTX5J9X02RMHK2V9Z5WXEW@sha256:daf175c2dc9ac89c1db46558b9e5246595742097e477de25a9b8340f77598f15 8.3s done
+#10 pushing layer sha256:7d842443e7c5d77fc3f0f5fb44304a16507acf5cbf09f3f43ad0be1971b8ae6f 8.2s done
+#10 pushing manifest for registry.fly.io/common-crawler:deployment-01KYXTX5J9X02RMHK2V9Z5WXEW@sha256:daf175c2dc9ac89c1db46558b9e5246595742097e477de25a9b8340f77598f15 0.2s done
+#10 DONE 76.7s
+--> Build Summary:  (​)
+[38;5;252m--> Building image done[0m
+image: registry.fly.io/common-crawler:deployment-01KYXTX5J9X02RMHK2V9Z5WXEW
+image size: 789 MB
+
+Watch your deployment at https://fly.io/apps/common-crawler/monitoring
+
+Updating existing machines in 'common-crawler' with rolling strategy
+> Acquiring lease for 48ee626c3164d8
+> Acquired lease for 48ee626c3164d8
+> Updating machine config for 48ee626c3164d8
+> Updating 48ee626c3164d8 [app]
+> Updated machine config for 48ee626c3164d8
+> Waiting for machine 48ee626c3164d8 to reach a good state
+> Machine 48ee626c3164d8 reached started state
+
+WARNING The app is not listening on the expected address and will not be reachable by fly-proxy.
+You can fix this by configuring your app to listen on the following addresses:
+  - 0.0.0.0:3000
+Found these processes inside the machine with open listening sockets:
+ PROCESS        │ ADDRESSES                            
+────────────────┼──────────────────────────────────────
+ /.fly/hallpass │ [fdaa:7c:48d0:a7b:49:39af:afff:2]:22 
+
+> Running smoke checks on machine 48ee626c3164d8
+> Running machine checks on machine 48ee626c3164d8
+> Checking health of machine 48ee626c3164d8
+✔ Machine 48ee626c3164d8 is now in a good state
+> Clearing lease for 48ee626c3164d8
+✔ Cleared lease for 48ee626c3164d8
+Checking DNS configuration for common-crawler.fly.dev
+WARNING: DNS verification failed: read udp 100.64.100.6:52532->8.8.8.8:53: i/o timeout
+Your app is deployed but DNS may take a few minutes to propagate globally
+[33mWARN[0m DNS checks failed: read udp 100.64.100.6:52532->8.8.8.8:53: i/o timeout
+
+
+Visit your newly deployed app at https://common-crawler.fly.dev/
+

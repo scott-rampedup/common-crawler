@@ -1,0 +1,42 @@
+keying by root_domain…
+sorting…
+collecting domains…
+411,723 unique domains — batch-resolving existing HQs (msearch)…
+  round 0: 300/411,723 | matched 191 | deferred 0
+  round 0: 15,300/411,723 | matched 10,588 | deferred 0
+  round 0: 30,300/411,723 | matched 20,958 | deferred 0
+  round 0: 45,300/411,723 | matched 31,247 | deferred 0
+  round 0: 60,300/411,723 | matched 41,219 | deferred 0
+  round 0: 75,300/411,723 | matched 52,026 | deferred 0
+  round 0: 90,300/411,723 | matched 62,653 | deferred 0
+  round 0: 105,300/411,723 | matched 72,991 | deferred 0
+  round 0: 120,300/411,723 | matched 82,965 | deferred 0
+  round 0: 135,300/411,723 | matched 93,037 | deferred 0
+  round 0: 150,300/411,723 | matched 103,235 | deferred 0
+  round 0: 165,300/411,723 | matched 113,362 | deferred 0
+  round 0: 180,300/411,723 | matched 123,847 | deferred 0
+  round 0: 195,300/411,723 | matched 133,558 | deferred 0
+  round 0: 210,300/411,723 | matched 143,566 | deferred 0
+  round 0: 225,300/411,723 | matched 153,601 | deferred 0
+  round 0: 240,300/411,723 | matched 163,749 | deferred 0
+  round 0: 255,300/411,723 | matched 173,612 | deferred 0
+  round 0: 270,300/411,723 | matched 183,969 | deferred 0
+  round 0: 285,300/411,723 | matched 194,332 | deferred 0
+  round 0: 300,300/411,723 | matched 204,466 | deferred 0
+  round 0: 315,300/411,723 | matched 214,609 | deferred 0
+  round 0: 330,300/411,723 | matched 224,679 | deferred 0
+  round 0: 345,300/411,723 | matched 235,100 | deferred 0
+  round 0: 360,300/411,723 | matched 245,351 | deferred 0
+  round 0: 375,300/411,723 | matched 254,994 | deferred 0
+  round 0: 390,300/411,723 | matched 265,360 | deferred 0
+  round 0: 405,300/411,723 | matched 275,834 | deferred 0
+resolved 280,175 existing HQs | 131,548 will synthesize
+  50,000 domains | 34331 upd + 15669 new HQ | 21025 loc | 3354 contacts | 0 failed | 23730/s
+  100,000 domains | 69397 upd + 30603 new HQ | 43438 loc | 7737 contacts | 0 failed | 25452/s
+  150,000 domains | 103007 upd + 46993 new HQ | 65977 loc | 11398 contacts | 0 failed | 27650/s
+  200,000 domains | 136681 upd + 63319 new HQ | 86642 loc | 14640 contacts | 0 failed | 29125/s
+  250,000 domains | 170169 upd + 79831 new HQ | 109894 loc | 18293 contacts | 0 failed | 29901/s
+  300,000 domains | 204268 upd + 95732 new HQ | 130868 loc | 22325 contacts | 0 failed | 30105/s
+  350,000 domains | 238325 upd + 111675 new HQ | 152196 loc | 26017 contacts | 0 failed | 30214/s
+  400,000 domains | 272128 upd + 127872 new HQ | 172614 loc | 29541 contacts | 0 failed | 30152/s
+DONE: 411,723 domains -> 280,175 HQ updates + 131,548 synthesized HQ | 177,790 child Locations | 30,587 contacts | 0 skipped | 14s

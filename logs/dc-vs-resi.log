@@ -1,0 +1,14 @@
+probing 1167 URLs (conc 20)
+  200/1167 | dc 155 | resi-rescue 7 | fail 31
+  400/1167 | dc 298 | resi-rescue 10 | fail 95
+  600/1167 | dc 434 | resi-rescue 19 | fail 144
+  800/1167 | dc 539 | resi-rescue 32 | fail 226
+  1000/1167 | dc 665 | resi-rescue 38 | fail 294
+
+===== DC vs Residential (two-tier) =====
+URLs 1167
+DC handled (real page):   718 (61.5%)  | avg DC 1997ms
+Residential rescued:      109 (9.3%)  [DC miss: 403 115, block/short 37, err 297]
+Both failed (404/dead):   340 (29.1%)
+
+Overall fetch success:    70.9%  | residential share of successes: 13.2%

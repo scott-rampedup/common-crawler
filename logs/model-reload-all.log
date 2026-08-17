@@ -1,0 +1,174 @@
+=== MODEL-RELOAD BEFORE Sat Aug  1 11:45:52 EDT 2026 ===
+  total 12,454,150 | real-phone 2,186,169
+=== reload+model cc-extracted/bf-cc-warc-bio-repo/ Sat Aug  1 11:46:07 EDT 2026 ===
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-bio-repo/ -> OpenSearch (conc 4) [--model: email modelling ON]
+3,038 file(s) to load
+  1,000/3,038 files, 150,851 docs
+  2,000/3,038 files, 303,129 docs
+  3,000/3,038 files, 450,668 docs
+DONE: 3,038 file(s), 456,076 docs -> OpenSearch, 0 error(s), 369s
+=== reload+model cc-extracted/bf-cc-warc-mmiss-all/ Sat Aug  1 11:52:17 EDT 2026 ===
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-mmiss-all/ -> OpenSearch (conc 4) [--model: email modelling ON]
+3,856 file(s) to load
+  1,000/3,856 files, 106,605 docs
+  2,000/3,856 files, 194,735 docs
+  3,000/3,856 files, 308,883 docs
+DONE: 3,856 file(s), 406,854 docs -> OpenSearch, 51 error(s), 381s
+=== reload+model cc-extracted/bf-cc-warc-tld-expand/ Sat Aug  1 11:58:40 EDT 2026 ===
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-tld-expand/ -> OpenSearch (conc 4) [--model: email modelling ON]
+649 file(s) to load
+DONE: 649 file(s), 61,605 docs -> OpenSearch, 116 error(s), 59s
+=== reload+model cc-extracted/backfill-mon/ Sat Aug  1 11:59:39 EDT 2026 ===
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/backfill-mon/ -> OpenSearch (conc 4) [--model: email modelling ON]
+33,947 file(s) to load
+  1,000/33,947 files, 127,241 docs
+  2,000/33,947 files, 254,760 docs
+  3,000/33,947 files, 372,753 docs
+  4,000/33,947 files, 486,592 docs
+  5,000/33,947 files, 598,093 docs
+  6,000/33,947 files, 709,764 docs
+  7,000/33,947 files, 822,859 docs
+  8,000/33,947 files, 934,427 docs
+  9,000/33,947 files, 1,046,825 docs
+  10,000/33,947 files, 1,158,929 docs
+  11,000/33,947 files, 1,271,458 docs
+  12,000/33,947 files, 1,383,755 docs
+  13,000/33,947 files, 1,495,878 docs
+  14,000/33,947 files, 1,616,076 docs
+  15,000/33,947 files, 1,733,707 docs
+  16,000/33,947 files, 1,852,396 docs
+  17,000/33,947 files, 1,970,961 docs
+  18,000/33,947 files, 2,089,309 docs
+  19,000/33,947 files, 2,206,898 docs
+  20,000/33,947 files, 2,325,475 docs
+  21,000/33,947 files, 2,443,298 docs
+  22,000/33,947 files, 2,562,182 docs
+  23,000/33,947 files, 2,679,839 docs
+  24,000/33,947 files, 2,797,705 docs
+  25,000/33,947 files, 2,915,762 docs
+  26,000/33,947 files, 3,033,083 docs
+  27,000/33,947 files, 3,159,757 docs
+  28,000/33,947 files, 3,288,363 docs
+  29,000/33,947 files, 3,418,796 docs
+  30,000/33,947 files, 3,548,119 docs
+  31,000/33,947 files, 3,677,819 docs
+  32,000/33,947 files, 3,807,894 docs
+  33,000/33,947 files, 3,936,803 docs
+DONE: 33,947 file(s), 4,057,377 docs -> OpenSearch, 145 error(s), 3474s
+=== reload+model cc-extracted/bf-cc-warc-full/ Sat Aug  1 12:57:38 EDT 2026 ===
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-full/ -> OpenSearch (conc 4) [--model: email modelling ON]
+17,798 file(s) to load
+  1,000/17,798 files, 101,094 docs
+  2,000/17,798 files, 189,338 docs
+  3,000/17,798 files, 304,815 docs
+  4,000/17,798 files, 421,513 docs
+  5,000/17,798 files, 436,144 docs
+  6,000/17,798 files, 532,283 docs
+  7,000/17,798 files, 647,931 docs
+  8,000/17,798 files, 760,255 docs
+  9,000/17,798 files, 871,791 docs
+  10,000/17,798 files, 982,049 docs
+  11,000/17,798 files, 1,095,446 docs
+  12,000/17,798 files, 1,214,555 docs
+  13,000/17,798 files, 1,277,656 docs
+  14,000/17,798 files, 1,277,656 docs
+  15,000/17,798 files, 1,277,656 docs
+  16,000/17,798 files, 1,277,656 docs
+  17,000/17,798 files, 1,277,656 docs
+DONE: 17,798 file(s), 1,277,656 docs -> OpenSearch, 6825 error(s), 1451s
+=== reload+model cc-extracted/bf-cc-warc-people-company/ Sat Aug  1 13:21:52 EDT 2026 ===
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-people-company/ -> OpenSearch (conc 4) [--model: email modelling ON]
+load error: 
+bf-cc-warc-people-company FAILED
+=== MODEL-RELOAD DONE Sat Aug  1 13:21:53 EDT 2026 ===
+C:\Users\scott\OneDrive\Desktop\Common Crawler Code\rampedup-phase1\node_modules\@opensearch-project\opensearch\lib\Connection.js:131
+      callback(new ConnectionError(err.message), null);
+               ^
+
+ConnectionError: Connection Error
+    at ClientRequest.onError (C:\Users\scott\OneDrive\Desktop\Common Crawler Code\rampedup-phase1\node_modules\@opensearch-project\opensearch\lib\Connection.js:131:16)
+    at ClientRequest.emit (node:events:509:20)
+    at emitErrorEvent (node:_http_client:109:11)
+    at TLSSocket.socketErrorListener (node:_http_client:593:5)
+    at TLSSocket.emit (node:events:509:20)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  meta: {
+    body: null,
+    statusCode: null,
+    headers: null,
+    meta: {
+      context: null,
+      request: {
+        params: {
+          method: 'GET',
+          path: '/contacts/_count',
+          querystring: '',
+          body: '',
+          headers: {
+            'user-agent': 'opensearch-js/3.6.0 (win32 10.0.22621-x64; Node.js v26.2.0)'
+          },
+          timeout: 30000
+        },
+        options: {},
+        id: 2
+      },
+      name: 'opensearch-js',
+      connection: AwsSigv4SignerConnection {
+        url: https://search-contacts-prod-3wdhiegssjafz4v3hmtdbkgmmu.us-east-1.es.amazonaws.com/,
+        ssl: null,
+        id: 'https://search-contacts-prod-3wdhiegssjafz4v3hmtdbkgmmu.us-east-1.es.amazonaws.com/',
+        headers: {},
+        deadCount: 8,
+        resurrectTimeout: 1785606833823,
+        _openRequests: 0,
+        _status: 'dead',
+        roles: { data: true, ingest: true },
+        agent: Agent {
+          _events: [Object: null prototype] {
+            free: [Function (anonymous)],
+            newListener: [Function: maybeEnableKeylog]
+          },
+          _eventsCount: 2,
+          _maxListeners: undefined,
+          options: [Object: null prototype] {
+            keepAlive: true,
+            keepAliveMsecs: 1000,
+            maxSockets: 256,
+            maxFreeSockets: 256,
+            scheduling: 'lifo',
+            defaultPort: 443,
+            protocol: 'https:',
+            noDelay: true,
+            path: null
+          },
+          defaultPort: 443,
+          protocol: 'https:',
+          requests: [Object: null prototype] {},
+          sockets: [Object: null prototype] {
+            'search-contacts-prod-3wdhiegssjafz4v3hmtdbkgmmu.us-east-1.es.amazonaws.com:443:::::::::::::::::::::': [Array]
+          },
+          freeSockets: [Object: null prototype] {},
+          keepAliveMsecs: 1000,
+          keepAlive: true,
+          maxSockets: 256,
+          maxFreeSockets: 256,
+          scheduling: 'lifo',
+          maxTotalSockets: Infinity,
+          totalSocketCount: 1,
+          agentKeepAliveTimeoutBuffer: 1000,
+          maxCachedSessions: 100,
+          _sessionCache: { map: {}, list: [] },
+          Symbol(shapeMode): false,
+          Symbol(kCapture): false
+        },
+        makeRequest: [Function: request]
+      },
+      attempts: 3,
+      aborted: false
+    }
+  }
+}
+
+Node.js v26.2.0

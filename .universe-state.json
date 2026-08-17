@@ -1,0 +1,5 @@
+{
+  "lastCrawl": "CC-MAIN-2026-25",
+  "history": [],
+  "note": "Seeded to the current crawl so the scheduled task waits for the NEXT Common Crawl release before running (avoids an unattended 23.5M kickoff). To run the first full pass now against the current corpus: node universe-scheduler.js --force"
+}

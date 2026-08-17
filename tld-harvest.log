@@ -1,0 +1,9 @@
+(no --crawl) latest corpus: CC-MAIN-2026-25
+  [create db] ok — scanned 0 MB (~$0.0000)
+  [create table] ok — scanned 0 MB (~$0.0000)
+  [add partition] ok — scanned 0 MB (~$0.0000)
+
+Discovering pointers -> cc-warc-tld-expand.jsonl (per-domain<=∞) ...
+  [discover] ok — scanned 2384 MB (~$0.0125)
+Wrote 150,413 WARC pointers -> cc-warc-tld-expand.jsonl
+Next: DATABASE_URL=… node load-queue.js cc-warc-tld-expand.jsonl

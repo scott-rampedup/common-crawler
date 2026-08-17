@@ -1,0 +1,6 @@
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/s200k-mmiss/ -> OpenSearch (conc 8)
+3,856 file(s) to load
+  1,000/3,856 files, 70,707 docs
+  2,000/3,856 files, 126,578 docs
+  3,000/3,856 files, 198,437 docs
+DONE: 3,856 file(s), 261,279 docs -> OpenSearch, 36 error(s), 148s

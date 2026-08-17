@@ -1,0 +1,20 @@
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-full/ -> OpenSearch (conc 4) [--model: email modelling ON]
+17,798 file(s) to load
+  1,000/17,798 files, 101,094 docs
+  2,000/17,798 files, 189,338 docs
+  3,000/17,798 files, 304,815 docs
+  4,000/17,798 files, 421,513 docs
+  5,000/17,798 files, 436,144 docs
+  6,000/17,798 files, 532,283 docs
+  7,000/17,798 files, 647,931 docs
+  8,000/17,798 files, 760,255 docs
+  9,000/17,798 files, 871,791 docs
+  10,000/17,798 files, 982,049 docs
+  11,000/17,798 files, 1,095,446 docs
+  12,000/17,798 files, 1,214,555 docs
+  13,000/17,798 files, 1,277,656 docs
+  14,000/17,798 files, 1,277,656 docs
+  15,000/17,798 files, 1,277,656 docs
+  16,000/17,798 files, 1,277,656 docs
+  17,000/17,798 files, 1,277,656 docs
+DONE: 17,798 file(s), 1,277,656 docs -> OpenSearch, 6825 error(s), 1451s

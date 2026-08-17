@@ -1,0 +1,3 @@
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-tld-expand/ -> OpenSearch (conc 6)
+649 file(s) to load
+DONE: 649 file(s), 61,462 docs -> OpenSearch, 58 error(s), 31s

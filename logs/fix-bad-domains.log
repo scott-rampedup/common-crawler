@@ -1,0 +1,20 @@
+bad-domain company records: 201,943 | mode: APPLY
+  scanned 20,000 | fixed 20,000 (geo-filled 7,876)
+  scanned 40,000 | fixed 40,000 (geo-filled 22,131)
+  scanned 60,000 | fixed 60,000 (geo-filled 27,440)
+  scanned 80,000 | fixed 80,000 (geo-filled 34,121)
+  scanned 100,000 | fixed 100,000 (geo-filled 44,102)
+  scanned 120,000 | fixed 120,000 (geo-filled 62,460)
+  scanned 140,000 | fixed 140,000 (geo-filled 70,045)
+  scanned 160,000 | fixed 160,000 (geo-filled 72,749)
+  scanned 180,000 | fixed 180,000 (geo-filled 86,935)
+  scanned 200,000 | fixed 200,000 (geo-filled 105,332)
+
+sample changes:
+   {"name":"modern gardeners primary co-operative limited","type":"HQ","was":"ymail.com","geo":""}
+   {"name":"schoolofjs","type":"HQ","was":"netlify.app","geo":""}
+   {"name":"gmx gmbh","type":"HQ","was":"gmx.net","geo":""}
+   {"name":"jimdo","type":"HQ","was":"jimdo.com","geo":""}
+   {"name":"washington county school district foundation","type":"HQ","was":"mac.com","geo":""}
+
+DONE: scanned 201,943 | fixed 201,943 records (domain/website cleared, geo-filled 107,051) | kept all; 30 mass-merge shell(s) flagged

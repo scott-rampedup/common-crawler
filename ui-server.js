@@ -2647,7 +2647,6 @@ server.listen(PORT, async () => {
     // only when a pass is genuinely due AND we're in the off-peak window (so the heavy 200k-sitemap pass
     // doesn't compete with daytime traffic). After each pass we email the new-hire report so new contacts
     // are visible daily.
-    const dueMs = MONITOR_INTERVAL_HOURS * 3600 * 1000;
     const OP_START = Number(process.env.MONITOR_OFFPEAK_UTC_START || 6);    // UTC off-peak window (default ~1-6am US-east)
     const OP_END = Number(process.env.MONITOR_OFFPEAK_UTC_END || 11);
     const REPORT_TO = process.env.MONITOR_REPORT_TO || 'contact@common-crawler.com';
@@ -2680,15 +2679,29 @@ server.listen(PORT, async () => {
     async function monitorTick() {
       try {
         if (monitorRunning) return;
+        // Due once per UTC day, not once per 24 hours.
+        //
+        // The elapsed-time test drifts and then skips. A pass that finishes at
+        // 11:37 is only 23.4h old at 11:00 the next day — the last hour of the
+        // off-peak window — so it is not yet "due", the window closes, and the
+        // run slips to the following morning. Each pass lands an hour later
+        // than the last (06:00, 07:00, 08:00 …) until it falls off the end and
+        // a whole day is missed: six passes in eight days, and no report on the
+        // days it skips.
+        //
+        // "Nightly" means once a night. Comparing calendar days says exactly
+        // that and cannot drift, whatever time the previous pass finished or
+        // how long it took.
         const lp = monitorDb.monitorStats().lastPass;
-        const overdue = !lp || (Date.now() - new Date(lp).getTime()) >= dueMs;
-        if (!overdue || !inOffPeak()) return;
+        const today = new Date().toISOString().slice(0, 10);
+        const ranToday = lp && new Date(lp).toISOString().slice(0, 10) === today;
+        if (ranToday || !inOffPeak()) return;
         console.log('[monitor] pass due + off-peak -> running');
         const summary = await runMonitorPassGuarded().catch((e) => { console.error('[monitor] pass crashed:', e.message); return null; });
         if (summary && !summary.skipped) await emailMonitorReport(summary);
       } catch (e) { console.error('[monitor] tick error:', e.message); }
     }
-    console.log(`Sitemap monitor: ON, hourly check; runs when due (>${MONITOR_INTERVAL_HOURS}h) during off-peak UTC ${OP_START}-${OP_END}h; report -> ${REPORT_TO}.`);
+    console.log(`Sitemap monitor: ON, hourly check; runs once per UTC day during off-peak UTC ${OP_START}-${OP_END}h; report -> ${REPORT_TO}.`);
     setInterval(monitorTick, 60 * 60 * 1000);      // resilient: re-checks persisted lastPass each hour, survives restarts
     setTimeout(monitorTick, 5 * 60 * 1000);        // and shortly after startup (fires only if due + off-peak)
   } else {

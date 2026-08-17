@@ -1,0 +1,1541 @@
+=== WAVE 2 BEFORE Sat Aug  1 02:29:44 EDT 2026 ===
+  total 12,197,019 | real-phone 2,015,334
+=== drive cc-warc-full Sat Aug  1 02:29:45 EDT 2026 ===
+Lambda concurrency limit 1000 -> driving at 250 concurrent (raise the quota to go faster)
+  7,600 ptrs | 1,748 records | 1686 ptr/s | 0 inv-err
+  9,600 ptrs | 3,104 records | 1969 ptr/s | 0 inv-err
+  25,400 ptrs | 11,429 records | 3592 ptr/s | 0 inv-err
+  28,600 ptrs | 12,286 records | 4000 ptr/s | 0 inv-err
+  41,400 ptrs | 13,043 records | 5561 ptr/s | 0 inv-err
+  42,400 ptrs | 13,046 records | 5677 ptr/s | 0 inv-err
+  45,200 ptrs | 13,646 records | 5962 ptr/s | 0 inv-err
+  80,600 ptrs | 37,402 records | 7262 ptr/s | 0 inv-err
+  88,600 ptrs | 43,171 records | 7482 ptr/s | 0 inv-err
+  92,000 ptrs | 45,278 records | 7689 ptr/s | 0 inv-err
+  93,800 ptrs | 46,678 records | 7736 ptr/s | 0 inv-err
+  120,400 ptrs | 62,808 records | 8313 ptr/s | 0 inv-err
+  121,800 ptrs | 63,616 records | 8337 ptr/s | 0 inv-err
+  131,200 ptrs | 66,855 records | 8588 ptr/s | 0 inv-err
+  141,200 ptrs | 72,294 records | 8650 ptr/s | 0 inv-err
+  153,400 ptrs | 75,970 records | 8868 ptr/s | 0 inv-err
+  162,800 ptrs | 82,175 records | 8790 ptr/s | 0 inv-err
+  164,600 ptrs | 83,599 records | 8814 ptr/s | 0 inv-err
+  167,800 ptrs | 85,798 records | 8868 ptr/s | 0 inv-err
+  178,600 ptrs | 92,596 records | 9077 ptr/s | 0 inv-err
+  180,800 ptrs | 94,376 records | 9150 ptr/s | 0 inv-err
+  188,800 ptrs | 100,153 records | 9167 ptr/s | 0 inv-err
+  206,800 ptrs | 110,176 records | 9212 ptr/s | 0 inv-err
+  218,800 ptrs | 115,637 records | 9294 ptr/s | 0 inv-err
+  240,200 ptrs | 126,007 records | 9420 ptr/s | 0 inv-err
+  242,200 ptrs | 127,057 records | 9436 ptr/s | 0 inv-err
+  259,000 ptrs | 136,956 records | 9729 ptr/s | 0 inv-err
+  260,400 ptrs | 137,678 records | 9762 ptr/s | 0 inv-err
+  264,000 ptrs | 139,564 records | 9809 ptr/s | 0 inv-err
+  266,600 ptrs | 141,383 records | 9791 ptr/s | 0 inv-err
+  303,800 ptrs | 169,162 records | 9717 ptr/s | 0 inv-err
+  314,200 ptrs | 175,532 records | 9755 ptr/s | 0 inv-err
+  320,600 ptrs | 179,664 records | 9870 ptr/s | 0 inv-err
+  342,000 ptrs | 191,870 records | 10077 ptr/s | 0 inv-err
+  349,000 ptrs | 196,559 records | 10107 ptr/s | 0 inv-err
+  361,000 ptrs | 205,327 records | 10230 ptr/s | 0 inv-err
+  361,400 ptrs | 205,592 records | 10232 ptr/s | 0 inv-err
+  368,400 ptrs | 211,234 records | 10198 ptr/s | 0 inv-err
+  374,600 ptrs | 215,683 records | 10154 ptr/s | 0 inv-err
+  405,800 ptrs | 232,526 records | 10327 ptr/s | 0 inv-err
+  408,400 ptrs | 234,216 records | 10356 ptr/s | 0 inv-err
+  420,800 ptrs | 242,163 records | 10462 ptr/s | 0 inv-err
+  425,200 ptrs | 245,675 records | 10457 ptr/s | 0 inv-err
+  457,400 ptrs | 261,264 records | 10539 ptr/s | 0 inv-err
+  459,400 ptrs | 262,526 records | 10568 ptr/s | 0 inv-err
+  461,400 ptrs | 263,924 records | 10585 ptr/s | 0 inv-err
+  461,600 ptrs | 264,100 records | 10589 ptr/s | 0 inv-err
+  471,400 ptrs | 271,094 records | 10620 ptr/s | 0 inv-err
+  489,400 ptrs | 283,826 records | 10588 ptr/s | 0 inv-err
+  498,800 ptrs | 292,078 records | 10682 ptr/s | 0 inv-err
+  537,400 ptrs | 319,888 records | 10756 ptr/s | 0 inv-err
+  544,200 ptrs | 325,878 records | 10826 ptr/s | 0 inv-err
+  546,200 ptrs | 327,423 records | 10821 ptr/s | 0 inv-err
+  549,000 ptrs | 329,390 records | 10820 ptr/s | 0 inv-err
+  549,800 ptrs | 329,897 records | 10806 ptr/s | 0 inv-err
+  565,400 ptrs | 340,534 records | 10900 ptr/s | 0 inv-err
+  570,000 ptrs | 341,864 records | 10911 ptr/s | 0 inv-err
+  584,000 ptrs | 348,412 records | 10907 ptr/s | 0 inv-err
+  587,800 ptrs | 351,072 records | 10908 ptr/s | 0 inv-err
+  593,400 ptrs | 355,029 records | 10926 ptr/s | 0 inv-err
+  616,000 ptrs | 366,700 records | 11033 ptr/s | 0 inv-err
+  629,400 ptrs | 372,021 records | 11066 ptr/s | 0 inv-err
+  631,200 ptrs | 372,660 records | 11066 ptr/s | 0 inv-err
+  635,200 ptrs | 375,581 records | 11061 ptr/s | 0 inv-err
+  663,000 ptrs | 394,660 records | 11007 ptr/s | 0 inv-err
+  672,800 ptrs | 402,620 records | 10972 ptr/s | 0 inv-err
+  678,000 ptrs | 405,348 records | 10947 ptr/s | 0 inv-err
+  685,400 ptrs | 409,599 records | 10912 ptr/s | 0 inv-err
+  687,800 ptrs | 411,244 records | 10875 ptr/s | 0 inv-err
+  698,200 ptrs | 418,397 records | 10838 ptr/s | 0 inv-err
+  709,600 ptrs | 425,573 records | 10813 ptr/s | 0 inv-err
+  738,800 ptrs | 445,247 records | 10688 ptr/s | 0 inv-err
+  739,400 ptrs | 445,538 records | 10666 ptr/s | 0 inv-err
+  741,200 ptrs | 446,514 records | 10623 ptr/s | 0 inv-err
+  741,600 ptrs | 446,812 records | 10621 ptr/s | 0 inv-err
+  741,800 ptrs | 446,933 records | 10622 ptr/s | 0 inv-err
+  746,800 ptrs | 450,455 records | 10626 ptr/s | 0 inv-err
+  771,600 ptrs | 466,638 records | 10512 ptr/s | 0 inv-err
+  774,600 ptrs | 469,189 records | 10525 ptr/s | 0 inv-err
+  786,400 ptrs | 475,140 records | 10486 ptr/s | 0 inv-err
+  787,000 ptrs | 475,301 records | 10481 ptr/s | 0 inv-err
+  795,200 ptrs | 478,285 records | 10458 ptr/s | 0 inv-err
+  809,200 ptrs | 481,904 records | 10526 ptr/s | 0 inv-err
+  837,800 ptrs | 498,564 records | 10619 ptr/s | 0 inv-err
+  846,200 ptrs | 503,503 records | 10669 ptr/s | 0 inv-err
+  853,200 ptrs | 507,942 records | 10666 ptr/s | 0 inv-err
+  863,800 ptrs | 515,361 records | 10698 ptr/s | 0 inv-err
+  867,600 ptrs | 517,407 records | 10706 ptr/s | 0 inv-err
+  883,200 ptrs | 524,421 records | 10772 ptr/s | 0 inv-err
+  884,800 ptrs | 525,484 records | 10771 ptr/s | 0 inv-err
+  888,800 ptrs | 528,004 records | 10763 ptr/s | 0 inv-err
+  895,200 ptrs | 532,802 records | 10797 ptr/s | 0 inv-err
+  901,000 ptrs | 537,173 records | 10836 ptr/s | 0 inv-err
+  936,600 ptrs | 560,628 records | 10940 ptr/s | 0 inv-err
+  954,600 ptrs | 568,041 records | 10957 ptr/s | 0 inv-err
+  962,400 ptrs | 573,149 records | 11002 ptr/s | 0 inv-err
+  974,200 ptrs | 580,755 records | 11032 ptr/s | 0 inv-err
+  992,800 ptrs | 592,904 records | 11044 ptr/s | 0 inv-err
+  995,000 ptrs | 594,335 records | 11044 ptr/s | 0 inv-err
+  999,200 ptrs | 597,294 records | 11058 ptr/s | 0 inv-err
+  1,001,000 ptrs | 598,507 records | 11043 ptr/s | 0 inv-err
+  1,019,000 ptrs | 610,250 records | 11069 ptr/s | 0 inv-err
+  1,024,800 ptrs | 613,502 records | 11075 ptr/s | 0 inv-err
+  1,028,200 ptrs | 615,273 records | 11084 ptr/s | 0 inv-err
+  1,032,400 ptrs | 617,795 records | 11084 ptr/s | 0 inv-err
+  1,033,200 ptrs | 618,185 records | 11088 ptr/s | 0 inv-err
+  1,043,200 ptrs | 623,306 records | 11128 ptr/s | 0 inv-err
+  1,054,400 ptrs | 630,352 records | 11115 ptr/s | 0 inv-err
+  1,064,600 ptrs | 637,336 records | 11096 ptr/s | 0 inv-err
+  1,081,000 ptrs | 646,923 records | 11123 ptr/s | 0 inv-err
+  1,085,400 ptrs | 649,287 records | 11122 ptr/s | 0 inv-err
+  1,114,000 ptrs | 668,832 records | 11143 ptr/s | 0 inv-err
+  1,118,200 ptrs | 671,300 records | 11125 ptr/s | 0 inv-err
+  1,120,800 ptrs | 673,334 records | 11138 ptr/s | 0 inv-err
+  1,135,000 ptrs | 681,609 records | 11160 ptr/s | 0 inv-err
+  1,141,000 ptrs | 685,057 records | 11166 ptr/s | 0 inv-err
+  1,157,000 ptrs | 693,989 records | 11204 ptr/s | 0 inv-err
+  1,159,200 ptrs | 695,853 records | 11208 ptr/s | 0 inv-err
+  1,167,400 ptrs | 701,098 records | 11234 ptr/s | 0 inv-err
+  1,183,800 ptrs | 711,055 records | 11286 ptr/s | 0 inv-err
+  1,189,600 ptrs | 714,655 records | 11247 ptr/s | 0 inv-err
+  1,191,000 ptrs | 715,439 records | 11255 ptr/s | 0 inv-err
+  1,215,000 ptrs | 728,821 records | 11272 ptr/s | 0 inv-err
+  1,233,600 ptrs | 737,759 records | 11329 ptr/s | 0 inv-err
+  1,247,800 ptrs | 747,172 records | 11344 ptr/s | 0 inv-err
+  1,252,000 ptrs | 749,938 records | 11319 ptr/s | 0 inv-err
+  1,277,800 ptrs | 767,733 records | 11287 ptr/s | 0 inv-err
+  1,292,200 ptrs | 776,502 records | 11346 ptr/s | 0 inv-err
+  1,292,400 ptrs | 776,538 records | 11344 ptr/s | 0 inv-err
+  1,294,400 ptrs | 777,705 records | 11347 ptr/s | 0 inv-err
+  1,295,800 ptrs | 778,507 records | 11348 ptr/s | 0 inv-err
+  1,297,200 ptrs | 779,216 records | 11350 ptr/s | 0 inv-err
+  1,316,600 ptrs | 790,617 records | 11350 ptr/s | 0 inv-err
+  1,336,200 ptrs | 805,581 records | 11395 ptr/s | 0 inv-err
+  1,345,400 ptrs | 811,574 records | 11401 ptr/s | 0 inv-err
+  1,352,400 ptrs | 816,174 records | 11409 ptr/s | 0 inv-err
+  1,366,200 ptrs | 826,525 records | 11433 ptr/s | 0 inv-err
+  1,367,400 ptrs | 827,277 records | 11435 ptr/s | 0 inv-err
+  1,381,000 ptrs | 836,899 records | 11454 ptr/s | 0 inv-err
+  1,389,400 ptrs | 842,867 records | 11460 ptr/s | 0 inv-err
+  1,406,400 ptrs | 852,745 records | 11465 ptr/s | 0 inv-err
+  1,407,400 ptrs | 853,448 records | 11466 ptr/s | 0 inv-err
+  1,413,400 ptrs | 857,322 records | 11459 ptr/s | 0 inv-err
+  1,447,000 ptrs | 878,535 records | 11494 ptr/s | 0 inv-err
+  1,447,600 ptrs | 878,868 records | 11492 ptr/s | 0 inv-err
+  1,456,400 ptrs | 884,781 records | 11486 ptr/s | 0 inv-err
+  1,471,000 ptrs | 894,408 records | 11465 ptr/s | 0 inv-err
+  1,477,200 ptrs | 897,731 records | 11474 ptr/s | 0 inv-err
+  1,493,600 ptrs | 907,560 records | 11495 ptr/s | 0 inv-err
+  1,512,600 ptrs | 921,075 records | 11550 ptr/s | 0 inv-err
+  1,514,600 ptrs | 922,250 records | 11546 ptr/s | 0 inv-err
+  1,519,200 ptrs | 925,382 records | 11535 ptr/s | 0 inv-err
+  1,519,800 ptrs | 925,839 records | 11527 ptr/s | 0 inv-err
+  1,522,600 ptrs | 927,537 records | 11509 ptr/s | 0 inv-err
+  1,525,400 ptrs | 929,252 records | 11499 ptr/s | 0 inv-err
+  1,530,200 ptrs | 932,983 records | 11505 ptr/s | 0 inv-err
+  1,548,200 ptrs | 945,575 records | 11505 ptr/s | 0 inv-err
+  1,555,800 ptrs | 949,645 records | 11495 ptr/s | 0 inv-err
+  1,580,600 ptrs | 962,280 records | 11522 ptr/s | 0 inv-err
+  1,582,600 ptrs | 963,698 records | 11517 ptr/s | 0 inv-err
+  1,594,200 ptrs | 971,660 records | 11523 ptr/s | 0 inv-err
+  1,602,800 ptrs | 976,735 records | 11536 ptr/s | 0 inv-err
+  1,610,400 ptrs | 980,994 records | 11554 ptr/s | 0 inv-err
+  1,627,200 ptrs | 991,017 records | 11562 ptr/s | 0 inv-err
+  1,632,200 ptrs | 994,298 records | 11549 ptr/s | 0 inv-err
+  1,639,400 ptrs | 998,785 records | 11544 ptr/s | 0 inv-err
+  1,642,800 ptrs | 1,001,297 records | 11544 ptr/s | 0 inv-err
+  1,657,200 ptrs | 1,010,994 records | 11538 ptr/s | 0 inv-err
+  1,674,400 ptrs | 1,020,972 records | 11534 ptr/s | 0 inv-err
+  1,681,000 ptrs | 1,025,148 records | 11540 ptr/s | 0 inv-err
+  1,688,800 ptrs | 1,030,502 records | 11531 ptr/s | 0 inv-err
+  1,690,800 ptrs | 1,032,022 records | 11529 ptr/s | 0 inv-err
+  1,698,000 ptrs | 1,036,595 records | 11527 ptr/s | 0 inv-err
+  1,700,600 ptrs | 1,038,332 records | 11526 ptr/s | 0 inv-err
+  1,710,600 ptrs | 1,043,459 records | 11511 ptr/s | 0 inv-err
+  1,735,000 ptrs | 1,058,334 records | 11491 ptr/s | 0 inv-err
+  1,735,800 ptrs | 1,058,567 records | 11491 ptr/s | 0 inv-err
+  1,768,000 ptrs | 1,076,303 records | 11465 ptr/s | 0 inv-err
+  1,768,400 ptrs | 1,076,641 records | 11465 ptr/s | 0 inv-err
+  1,787,800 ptrs | 1,087,406 records | 11456 ptr/s | 0 inv-err
+  1,809,000 ptrs | 1,100,412 records | 11448 ptr/s | 0 inv-err
+  1,813,800 ptrs | 1,104,025 records | 11437 ptr/s | 0 inv-err
+  1,815,800 ptrs | 1,105,283 records | 11436 ptr/s | 0 inv-err
+  1,824,200 ptrs | 1,111,394 records | 11448 ptr/s | 0 inv-err
+  1,824,400 ptrs | 1,111,521 records | 11449 ptr/s | 0 inv-err
+  1,832,600 ptrs | 1,116,782 records | 11460 ptr/s | 0 inv-err
+  1,843,600 ptrs | 1,123,294 records | 11466 ptr/s | 0 inv-err
+  1,851,800 ptrs | 1,126,654 records | 11479 ptr/s | 0 inv-err
+  1,866,800 ptrs | 1,134,201 records | 11495 ptr/s | 0 inv-err
+  1,887,800 ptrs | 1,148,592 records | 11484 ptr/s | 0 inv-err
+  1,893,400 ptrs | 1,152,206 records | 11489 ptr/s | 0 inv-err
+  1,902,800 ptrs | 1,158,506 records | 11498 ptr/s | 0 inv-err
+  1,916,800 ptrs | 1,167,815 records | 11472 ptr/s | 0 inv-err
+  1,951,400 ptrs | 1,189,754 records | 11498 ptr/s | 0 inv-err
+  1,967,600 ptrs | 1,197,434 records | 11522 ptr/s | 0 inv-err
+  1,973,200 ptrs | 1,201,828 records | 11527 ptr/s | 0 inv-err
+  1,995,200 ptrs | 1,215,456 records | 11510 ptr/s | 0 inv-err
+  2,000,200 ptrs | 1,219,739 records | 11518 ptr/s | 0 inv-err
+  2,000,400 ptrs | 1,219,894 records | 11519 ptr/s | 0 inv-err
+  2,002,000 ptrs | 1,221,104 records | 11521 ptr/s | 0 inv-err
+  2,011,400 ptrs | 1,228,900 records | 11537 ptr/s | 0 inv-err
+  2,034,400 ptrs | 1,245,148 records | 11522 ptr/s | 0 inv-err
+  2,034,800 ptrs | 1,245,445 records | 11523 ptr/s | 0 inv-err
+  2,039,000 ptrs | 1,248,407 records | 11523 ptr/s | 0 inv-err
+  2,050,600 ptrs | 1,256,333 records | 11528 ptr/s | 0 inv-err
+  2,053,000 ptrs | 1,258,010 records | 11530 ptr/s | 0 inv-err
+  2,069,400 ptrs | 1,268,816 records | 11526 ptr/s | 0 inv-err
+  2,077,400 ptrs | 1,273,859 records | 11523 ptr/s | 0 inv-err
+  2,081,000 ptrs | 1,276,508 records | 11523 ptr/s | 0 inv-err
+  2,085,400 ptrs | 1,279,350 records | 11512 ptr/s | 0 inv-err
+  2,102,000 ptrs | 1,289,647 records | 11507 ptr/s | 0 inv-err
+  2,107,400 ptrs | 1,293,350 records | 11512 ptr/s | 0 inv-err
+  2,136,400 ptrs | 1,310,037 records | 11518 ptr/s | 0 inv-err
+  2,137,600 ptrs | 1,310,560 records | 11519 ptr/s | 0 inv-err
+  2,148,000 ptrs | 1,316,432 records | 11510 ptr/s | 0 inv-err
+  2,154,600 ptrs | 1,320,866 records | 11505 ptr/s | 0 inv-err
+  2,157,400 ptrs | 1,323,132 records | 11498 ptr/s | 0 inv-err
+  2,180,600 ptrs | 1,337,820 records | 11505 ptr/s | 0 inv-err
+  2,182,000 ptrs | 1,338,739 records | 11507 ptr/s | 0 inv-err
+  2,186,000 ptrs | 1,340,913 records | 11503 ptr/s | 0 inv-err
+  2,189,800 ptrs | 1,343,381 records | 11490 ptr/s | 1 inv-err
+  2,193,600 ptrs | 1,346,035 records | 11488 ptr/s | 1 inv-err
+  2,217,400 ptrs | 1,361,520 records | 11514 ptr/s | 2 inv-err
+  2,220,200 ptrs | 1,363,564 records | 11514 ptr/s | 2 inv-err
+  2,254,200 ptrs | 1,385,345 records | 11524 ptr/s | 6 inv-err
+  2,258,600 ptrs | 1,388,020 records | 11521 ptr/s | 6 inv-err
+  2,266,200 ptrs | 1,392,614 records | 11496 ptr/s | 6 inv-err
+  2,274,800 ptrs | 1,398,107 records | 11503 ptr/s | 6 inv-err
+  2,283,200 ptrs | 1,403,687 records | 11520 ptr/s | 6 inv-err
+  2,298,600 ptrs | 1,411,960 records | 11524 ptr/s | 6 inv-err
+  2,305,800 ptrs | 1,416,024 records | 11526 ptr/s | 6 inv-err
+  2,308,800 ptrs | 1,418,061 records | 11536 ptr/s | 6 inv-err
+  2,323,200 ptrs | 1,426,731 records | 11536 ptr/s | 6 inv-err
+  2,329,400 ptrs | 1,431,200 records | 11550 ptr/s | 6 inv-err
+  2,331,600 ptrs | 1,432,660 records | 11553 ptr/s | 6 inv-err
+  2,352,000 ptrs | 1,445,605 records | 11567 ptr/s | 6 inv-err
+  2,366,200 ptrs | 1,455,213 records | 11557 ptr/s | 6 inv-err
+  2,373,800 ptrs | 1,460,844 records | 11543 ptr/s | 6 inv-err
+  2,396,000 ptrs | 1,477,461 records | 11576 ptr/s | 6 inv-err
+  2,406,800 ptrs | 1,483,982 records | 11577 ptr/s | 6 inv-err
+  2,420,800 ptrs | 1,494,890 records | 11581 ptr/s | 6 inv-err
+  2,429,400 ptrs | 1,500,990 records | 11581 ptr/s | 6 inv-err
+  2,441,200 ptrs | 1,508,859 records | 11584 ptr/s | 6 inv-err
+  2,442,400 ptrs | 1,509,632 records | 11586 ptr/s | 6 inv-err
+  2,460,800 ptrs | 1,522,422 records | 11582 ptr/s | 6 inv-err
+  2,467,200 ptrs | 1,526,865 records | 11581 ptr/s | 6 inv-err
+  2,487,800 ptrs | 1,536,900 records | 11610 ptr/s | 6 inv-err
+  2,489,400 ptrs | 1,537,221 records | 11615 ptr/s | 6 inv-err
+  2,502,600 ptrs | 1,544,280 records | 11621 ptr/s | 6 inv-err
+  2,509,600 ptrs | 1,546,608 records | 11641 ptr/s | 6 inv-err
+  2,511,200 ptrs | 1,547,055 records | 11642 ptr/s | 6 inv-err
+  2,515,200 ptrs | 1,549,803 records | 11638 ptr/s | 6 inv-err
+  2,536,800 ptrs | 1,560,908 records | 11646 ptr/s | 6 inv-err
+  2,542,400 ptrs | 1,563,686 records | 11647 ptr/s | 6 inv-err
+  2,544,600 ptrs | 1,565,044 records | 11648 ptr/s | 6 inv-err
+  2,545,600 ptrs | 1,565,517 records | 11647 ptr/s | 6 inv-err
+  2,555,800 ptrs | 1,572,008 records | 11638 ptr/s | 6 inv-err
+  2,569,000 ptrs | 1,581,548 records | 11647 ptr/s | 6 inv-err
+  2,571,800 ptrs | 1,583,637 records | 11653 ptr/s | 6 inv-err
+  2,578,400 ptrs | 1,588,013 records | 11662 ptr/s | 6 inv-err
+  2,585,200 ptrs | 1,592,484 records | 11669 ptr/s | 6 inv-err
+  2,604,400 ptrs | 1,604,786 records | 11670 ptr/s | 6 inv-err
+  2,613,000 ptrs | 1,609,572 records | 11682 ptr/s | 6 inv-err
+  2,634,800 ptrs | 1,622,904 records | 11701 ptr/s | 6 inv-err
+  2,638,800 ptrs | 1,625,651 records | 11701 ptr/s | 6 inv-err
+  2,641,400 ptrs | 1,627,267 records | 11700 ptr/s | 6 inv-err
+  2,662,800 ptrs | 1,641,012 records | 11709 ptr/s | 6 inv-err
+  2,668,600 ptrs | 1,645,098 records | 11720 ptr/s | 6 inv-err
+  2,669,600 ptrs | 1,645,661 records | 11722 ptr/s | 6 inv-err
+  2,679,400 ptrs | 1,651,650 records | 11724 ptr/s | 6 inv-err
+  2,699,800 ptrs | 1,665,023 records | 11730 ptr/s | 6 inv-err
+  2,702,800 ptrs | 1,666,906 records | 11734 ptr/s | 6 inv-err
+  2,703,600 ptrs | 1,667,262 records | 11737 ptr/s | 6 inv-err
+  2,704,400 ptrs | 1,667,576 records | 11738 ptr/s | 6 inv-err
+  2,730,200 ptrs | 1,685,504 records | 11758 ptr/s | 6 inv-err
+  2,742,200 ptrs | 1,693,368 records | 11759 ptr/s | 6 inv-err
+  2,748,800 ptrs | 1,697,513 records | 11759 ptr/s | 6 inv-err
+  2,755,400 ptrs | 1,701,825 records | 11758 ptr/s | 6 inv-err
+  2,762,600 ptrs | 1,706,679 records | 11758 ptr/s | 6 inv-err
+  2,780,400 ptrs | 1,719,283 records | 11769 ptr/s | 6 inv-err
+  2,800,600 ptrs | 1,732,163 records | 11776 ptr/s | 6 inv-err
+  2,814,000 ptrs | 1,739,914 records | 11784 ptr/s | 6 inv-err
+  2,817,400 ptrs | 1,741,884 records | 11787 ptr/s | 6 inv-err
+  2,841,000 ptrs | 1,756,988 records | 11777 ptr/s | 6 inv-err
+  2,842,000 ptrs | 1,757,569 records | 11776 ptr/s | 6 inv-err
+  2,845,000 ptrs | 1,759,108 records | 11776 ptr/s | 6 inv-err
+  2,854,600 ptrs | 1,765,588 records | 11790 ptr/s | 6 inv-err
+  2,861,800 ptrs | 1,770,831 records | 11787 ptr/s | 6 inv-err
+  2,881,400 ptrs | 1,782,675 records | 11758 ptr/s | 6 inv-err
+  2,907,600 ptrs | 1,796,826 records | 11743 ptr/s | 6 inv-err
+  2,910,600 ptrs | 1,797,935 records | 11743 ptr/s | 6 inv-err
+  2,919,600 ptrs | 1,800,238 records | 11744 ptr/s | 6 inv-err
+  2,930,000 ptrs | 1,802,585 records | 11757 ptr/s | 6 inv-err
+  2,937,400 ptrs | 1,806,088 records | 11752 ptr/s | 6 inv-err
+  2,950,600 ptrs | 1,809,709 records | 11764 ptr/s | 6 inv-err
+  2,960,200 ptrs | 1,815,251 records | 11763 ptr/s | 6 inv-err
+  2,964,200 ptrs | 1,817,298 records | 11751 ptr/s | 6 inv-err
+  2,964,600 ptrs | 1,817,563 records | 11749 ptr/s | 6 inv-err
+  2,970,800 ptrs | 1,822,033 records | 11754 ptr/s | 6 inv-err
+  2,975,600 ptrs | 1,825,025 records | 11759 ptr/s | 6 inv-err
+  2,980,200 ptrs | 1,827,151 records | 11759 ptr/s | 6 inv-err
+  2,993,200 ptrs | 1,832,572 records | 11760 ptr/s | 6 inv-err
+  3,020,200 ptrs | 1,840,588 records | 11763 ptr/s | 6 inv-err
+  3,020,600 ptrs | 1,840,830 records | 11763 ptr/s | 6 inv-err
+  3,053,400 ptrs | 1,860,230 records | 11756 ptr/s | 6 inv-err
+  3,057,600 ptrs | 1,861,425 records | 11765 ptr/s | 6 inv-err
+  3,061,600 ptrs | 1,862,569 records | 11771 ptr/s | 6 inv-err
+  3,087,800 ptrs | 1,874,768 records | 11785 ptr/s | 6 inv-err
+  3,089,400 ptrs | 1,875,461 records | 11789 ptr/s | 6 inv-err
+  3,090,600 ptrs | 1,875,854 records | 11788 ptr/s | 6 inv-err
+  3,101,600 ptrs | 1,881,047 records | 11792 ptr/s | 6 inv-err
+  3,109,800 ptrs | 1,885,984 records | 11777 ptr/s | 6 inv-err
+  3,117,000 ptrs | 1,890,944 records | 11773 ptr/s | 6 inv-err
+  3,130,400 ptrs | 1,896,814 records | 11779 ptr/s | 6 inv-err
+  3,144,000 ptrs | 1,902,950 records | 11780 ptr/s | 6 inv-err
+  3,149,800 ptrs | 1,906,383 records | 11780 ptr/s | 6 inv-err
+  3,156,200 ptrs | 1,910,223 records | 11771 ptr/s | 6 inv-err
+  3,175,400 ptrs | 1,921,981 records | 11761 ptr/s | 6 inv-err
+  3,199,600 ptrs | 1,934,796 records | 11767 ptr/s | 6 inv-err
+  3,205,200 ptrs | 1,937,528 records | 11771 ptr/s | 6 inv-err
+  3,223,000 ptrs | 1,944,931 records | 11784 ptr/s | 6 inv-err
+  3,228,200 ptrs | 1,947,554 records | 11789 ptr/s | 6 inv-err
+  3,233,000 ptrs | 1,950,234 records | 11783 ptr/s | 6 inv-err
+  3,237,600 ptrs | 1,951,813 records | 11786 ptr/s | 6 inv-err
+  3,238,600 ptrs | 1,952,001 records | 11786 ptr/s | 6 inv-err
+  3,255,600 ptrs | 1,960,367 records | 11791 ptr/s | 6 inv-err
+  3,274,400 ptrs | 1,971,466 records | 11789 ptr/s | 6 inv-err
+  3,290,000 ptrs | 1,982,489 records | 11795 ptr/s | 6 inv-err
+  3,302,200 ptrs | 1,991,454 records | 11803 ptr/s | 6 inv-err
+  3,313,800 ptrs | 1,999,828 records | 11794 ptr/s | 6 inv-err
+  3,319,400 ptrs | 2,004,083 records | 11801 ptr/s | 6 inv-err
+  3,325,000 ptrs | 2,007,878 records | 11804 ptr/s | 6 inv-err
+  3,326,000 ptrs | 2,008,528 records | 11802 ptr/s | 6 inv-err
+  3,346,600 ptrs | 2,023,461 records | 11822 ptr/s | 6 inv-err
+  3,348,000 ptrs | 2,024,441 records | 11823 ptr/s | 6 inv-err
+  3,357,200 ptrs | 2,029,929 records | 11807 ptr/s | 6 inv-err
+  3,368,600 ptrs | 2,037,381 records | 11808 ptr/s | 6 inv-err
+  3,375,400 ptrs | 2,042,078 records | 11810 ptr/s | 6 inv-err
+  3,376,600 ptrs | 2,042,826 records | 11812 ptr/s | 6 inv-err
+  3,378,200 ptrs | 2,043,931 records | 11812 ptr/s | 6 inv-err
+  3,390,400 ptrs | 2,052,156 records | 11819 ptr/s | 6 inv-err
+  3,420,200 ptrs | 2,073,197 records | 11816 ptr/s | 6 inv-err
+  3,431,400 ptrs | 2,081,573 records | 11820 ptr/s | 6 inv-err
+  3,435,400 ptrs | 2,084,341 records | 11820 ptr/s | 6 inv-err
+  3,446,800 ptrs | 2,092,644 records | 11831 ptr/s | 6 inv-err
+  3,454,000 ptrs | 2,097,999 records | 11833 ptr/s | 6 inv-err
+  3,462,200 ptrs | 2,103,819 records | 11827 ptr/s | 6 inv-err
+  3,479,400 ptrs | 2,114,962 records | 11833 ptr/s | 6 inv-err
+  3,485,000 ptrs | 2,119,038 records | 11840 ptr/s | 6 inv-err
+  3,489,400 ptrs | 2,122,346 records | 11840 ptr/s | 6 inv-err
+  3,506,800 ptrs | 2,134,436 records | 11847 ptr/s | 6 inv-err
+  3,511,600 ptrs | 2,137,486 records | 11848 ptr/s | 6 inv-err
+  3,530,200 ptrs | 2,150,584 records | 11848 ptr/s | 6 inv-err
+  3,530,800 ptrs | 2,150,867 records | 11848 ptr/s | 6 inv-err
+  3,533,400 ptrs | 2,152,397 records | 11850 ptr/s | 6 inv-err
+  3,551,400 ptrs | 2,163,791 records | 11854 ptr/s | 6 inv-err
+  3,558,000 ptrs | 2,167,513 records | 11857 ptr/s | 6 inv-err
+  3,567,200 ptrs | 2,173,810 records | 11856 ptr/s | 6 inv-err
+  3,570,600 ptrs | 2,176,266 records | 11860 ptr/s | 6 inv-err
+  3,572,400 ptrs | 2,177,484 records | 11860 ptr/s | 6 inv-err
+  3,585,800 ptrs | 2,187,029 records | 11861 ptr/s | 6 inv-err
+  3,586,600 ptrs | 2,187,668 records | 11860 ptr/s | 6 inv-err
+  3,597,800 ptrs | 2,195,473 records | 11859 ptr/s | 6 inv-err
+  3,633,400 ptrs | 2,218,572 records | 11871 ptr/s | 6 inv-err
+  3,633,600 ptrs | 2,218,751 records | 11870 ptr/s | 6 inv-err
+  3,647,800 ptrs | 2,229,597 records | 11874 ptr/s | 6 inv-err
+  3,650,200 ptrs | 2,231,472 records | 11877 ptr/s | 6 inv-err
+  3,657,200 ptrs | 2,236,276 records | 11874 ptr/s | 6 inv-err
+  3,671,600 ptrs | 2,246,683 records | 11872 ptr/s | 6 inv-err
+  3,687,000 ptrs | 2,257,571 records | 11874 ptr/s | 6 inv-err
+  3,692,600 ptrs | 2,261,207 records | 11875 ptr/s | 6 inv-err
+  3,699,400 ptrs | 2,265,651 records | 11874 ptr/s | 6 inv-err
+  3,713,800 ptrs | 2,275,703 records | 11873 ptr/s | 6 inv-err
+  3,725,800 ptrs | 2,283,908 records | 11876 ptr/s | 6 inv-err
+  3,734,800 ptrs | 2,289,702 records | 11873 ptr/s | 6 inv-err
+  3,756,800 ptrs | 2,305,959 records | 11872 ptr/s | 6 inv-err
+  3,762,600 ptrs | 2,310,771 records | 11880 ptr/s | 6 inv-err
+  3,764,000 ptrs | 2,311,827 records | 11881 ptr/s | 6 inv-err
+  3,765,400 ptrs | 2,312,770 records | 11879 ptr/s | 6 inv-err
+  3,792,600 ptrs | 2,329,793 records | 11894 ptr/s | 6 inv-err
+  3,793,400 ptrs | 2,330,127 records | 11894 ptr/s | 6 inv-err
+  3,799,400 ptrs | 2,334,169 records | 11894 ptr/s | 6 inv-err
+  3,799,600 ptrs | 2,334,295 records | 11894 ptr/s | 6 inv-err
+  3,805,400 ptrs | 2,338,490 records | 11897 ptr/s | 6 inv-err
+  3,817,200 ptrs | 2,347,060 records | 11901 ptr/s | 6 inv-err
+  3,840,612 ptrs | 2,363,663 records | 11906 ptr/s | 6 inv-err
+  3,843,812 ptrs | 2,365,451 records | 11908 ptr/s | 6 inv-err
+  3,850,012 ptrs | 2,369,141 records | 11904 ptr/s | 6 inv-err
+DONE: 3,871,212 pointers -> 2,383,661 records | 3,869,556 fetched, 0 empty | 8 invoke-err | 374s | 10345 ptr/s
+Next: OPENSEARCH_ENDPOINT=… node load-extracted.js cc-extracted/bf-cc-warc-full/
+=== load cc-warc-full Sat Aug  1 02:36:00 EDT 2026 ===
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-full/ -> OpenSearch (conc 8)
+17,798 file(s) to load
+  1,000/17,798 files, 93,536 docs
+  2,000/17,798 files, 177,872 docs
+  3,000/17,798 files, 281,870 docs
+  4,000/17,798 files, 393,526 docs
+  5,000/17,798 files, 485,913 docs
+  6,000/17,798 files, 579,349 docs
+  7,000/17,798 files, 682,900 docs
+  8,000/17,798 files, 790,967 docs
+  9,000/17,798 files, 892,945 docs
+  10,000/17,798 files, 994,711 docs
+  11,000/17,798 files, 1,098,532 docs
+  12,000/17,798 files, 1,206,109 docs
+  13,000/17,798 files, 1,306,213 docs
+  14,000/17,798 files, 1,400,066 docs
+  15,000/17,798 files, 1,512,049 docs
+  16,000/17,798 files, 1,605,390 docs
+  17,000/17,798 files, 1,701,510 docs
+DONE: 17,798 file(s), 1,779,098 docs -> OpenSearch, 654 error(s), 2089s
+--- after cc-warc-full ---
+  total 12,263,935 | real-phone 2,057,657
+=== drive cc-warc-people-company Sat Aug  1 03:10:54 EDT 2026 ===
+Lambda concurrency limit 1000 -> driving at 250 concurrent (raise the quota to go faster)
+  2,000 ptrs | 1,188 records | 254 ptr/s | 0 inv-err
+  11,000 ptrs | 6,003 records | 1104 ptr/s | 0 inv-err
+  11,400 ptrs | 6,207 records | 1136 ptr/s | 0 inv-err
+  34,000 ptrs | 17,975 records | 2815 ptr/s | 0 inv-err
+  35,400 ptrs | 18,786 records | 2910 ptr/s | 0 inv-err
+  44,200 ptrs | 23,669 records | 3438 ptr/s | 0 inv-err
+  52,200 ptrs | 27,909 records | 3767 ptr/s | 0 inv-err
+  77,200 ptrs | 41,098 records | 4544 ptr/s | 0 inv-err
+  80,600 ptrs | 42,947 records | 4585 ptr/s | 0 inv-err
+  100,000 ptrs | 53,181 records | 4908 ptr/s | 0 inv-err
+  100,800 ptrs | 53,532 records | 4945 ptr/s | 0 inv-err
+  118,200 ptrs | 62,661 records | 5058 ptr/s | 0 inv-err
+  120,200 ptrs | 63,740 records | 5079 ptr/s | 0 inv-err
+  128,800 ptrs | 68,487 records | 5035 ptr/s | 0 inv-err
+  130,400 ptrs | 69,331 records | 5002 ptr/s | 0 inv-err
+  143,200 ptrs | 75,860 records | 4962 ptr/s | 0 inv-err
+  143,800 ptrs | 76,168 records | 4922 ptr/s | 0 inv-err
+  159,800 ptrs | 84,411 records | 4817 ptr/s | 0 inv-err
+  176,800 ptrs | 93,211 records | 4794 ptr/s | 0 inv-err
+  180,800 ptrs | 95,390 records | 4865 ptr/s | 0 inv-err
+  190,200 ptrs | 100,282 records | 5010 ptr/s | 0 inv-err
+  195,000 ptrs | 102,847 records | 5082 ptr/s | 0 inv-err
+  209,400 ptrs | 110,286 records | 5292 ptr/s | 0 inv-err
+  254,600 ptrs | 133,518 records | 5410 ptr/s | 0 inv-err
+  264,800 ptrs | 138,733 records | 5475 ptr/s | 0 inv-err
+  266,400 ptrs | 139,419 records | 5461 ptr/s | 0 inv-err
+  279,400 ptrs | 146,193 records | 5406 ptr/s | 0 inv-err
+  296,600 ptrs | 155,416 records | 5506 ptr/s | 0 inv-err
+  298,400 ptrs | 156,357 records | 5509 ptr/s | 0 inv-err
+  300,200 ptrs | 157,283 records | 5521 ptr/s | 0 inv-err
+  301,600 ptrs | 158,026 records | 5528 ptr/s | 0 inv-err
+  303,800 ptrs | 159,073 records | 5527 ptr/s | 0 inv-err
+  320,000 ptrs | 167,200 records | 5637 ptr/s | 0 inv-err
+  325,600 ptrs | 170,243 records | 5677 ptr/s | 0 inv-err
+  331,400 ptrs | 173,142 records | 5718 ptr/s | 0 inv-err
+  335,200 ptrs | 175,069 records | 5753 ptr/s | 0 inv-err
+  356,800 ptrs | 186,106 records | 5910 ptr/s | 0 inv-err
+  361,400 ptrs | 188,290 records | 5937 ptr/s | 0 inv-err
+  371,600 ptrs | 193,378 records | 6007 ptr/s | 0 inv-err
+  407,200 ptrs | 211,874 records | 6238 ptr/s | 0 inv-err
+  407,600 ptrs | 212,050 records | 6236 ptr/s | 0 inv-err
+  407,800 ptrs | 212,116 records | 6239 ptr/s | 0 inv-err
+  428,800 ptrs | 222,532 records | 6375 ptr/s | 0 inv-err
+  431,800 ptrs | 224,125 records | 6391 ptr/s | 0 inv-err
+  439,200 ptrs | 227,705 records | 6412 ptr/s | 0 inv-err
+  464,400 ptrs | 240,954 records | 6527 ptr/s | 0 inv-err
+  472,000 ptrs | 244,882 records | 6567 ptr/s | 0 inv-err
+  474,200 ptrs | 246,125 records | 6580 ptr/s | 0 inv-err
+  478,200 ptrs | 248,000 records | 6599 ptr/s | 0 inv-err
+  494,800 ptrs | 256,813 records | 6688 ptr/s | 0 inv-err
+  499,600 ptrs | 259,413 records | 6717 ptr/s | 0 inv-err
+  509,400 ptrs | 264,278 records | 6733 ptr/s | 0 inv-err
+  516,800 ptrs | 267,985 records | 6784 ptr/s | 0 inv-err
+  519,600 ptrs | 269,336 records | 6785 ptr/s | 0 inv-err
+  525,000 ptrs | 272,147 records | 6811 ptr/s | 0 inv-err
+  552,600 ptrs | 285,711 records | 6928 ptr/s | 0 inv-err
+  560,800 ptrs | 290,147 records | 6950 ptr/s | 0 inv-err
+  562,000 ptrs | 290,751 records | 6950 ptr/s | 0 inv-err
+  578,000 ptrs | 298,989 records | 7017 ptr/s | 0 inv-err
+  584,400 ptrs | 302,317 records | 7043 ptr/s | 0 inv-err
+  589,400 ptrs | 304,903 records | 7061 ptr/s | 0 inv-err
+  606,000 ptrs | 313,236 records | 7133 ptr/s | 0 inv-err
+  612,200 ptrs | 316,530 records | 7155 ptr/s | 0 inv-err
+  621,600 ptrs | 321,185 records | 7198 ptr/s | 0 inv-err
+  627,400 ptrs | 324,269 records | 7215 ptr/s | 0 inv-err
+  660,000 ptrs | 340,422 records | 7286 ptr/s | 0 inv-err
+  670,600 ptrs | 345,810 records | 7300 ptr/s | 0 inv-err
+  673,800 ptrs | 347,568 records | 7279 ptr/s | 0 inv-err
+  679,000 ptrs | 350,226 records | 7288 ptr/s | 0 inv-err
+  694,400 ptrs | 358,619 records | 7273 ptr/s | 0 inv-err
+  694,600 ptrs | 358,729 records | 7275 ptr/s | 0 inv-err
+  725,400 ptrs | 374,252 records | 7114 ptr/s | 0 inv-err
+  727,800 ptrs | 375,432 records | 7094 ptr/s | 0 inv-err
+  728,400 ptrs | 375,748 records | 7081 ptr/s | 0 inv-err
+  744,800 ptrs | 384,015 records | 6970 ptr/s | 0 inv-err
+  754,600 ptrs | 389,023 records | 7027 ptr/s | 0 inv-err
+  766,800 ptrs | 395,021 records | 7095 ptr/s | 0 inv-err
+  768,000 ptrs | 395,517 records | 7099 ptr/s | 0 inv-err
+  781,000 ptrs | 401,901 records | 7142 ptr/s | 0 inv-err
+  781,800 ptrs | 402,244 records | 7142 ptr/s | 0 inv-err
+  799,000 ptrs | 410,872 records | 7137 ptr/s | 0 inv-err
+  799,400 ptrs | 411,178 records | 7140 ptr/s | 0 inv-err
+  811,400 ptrs | 417,091 records | 7170 ptr/s | 0 inv-err
+  828,400 ptrs | 425,582 records | 7181 ptr/s | 0 inv-err
+  839,800 ptrs | 431,609 records | 7211 ptr/s | 0 inv-err
+  852,400 ptrs | 437,974 records | 7238 ptr/s | 0 inv-err
+  863,000 ptrs | 443,231 records | 7266 ptr/s | 0 inv-err
+  866,600 ptrs | 445,091 records | 7281 ptr/s | 0 inv-err
+  868,600 ptrs | 446,057 records | 7288 ptr/s | 0 inv-err
+  881,000 ptrs | 452,049 records | 7313 ptr/s | 0 inv-err
+  891,000 ptrs | 456,825 records | 7341 ptr/s | 0 inv-err
+  909,200 ptrs | 466,433 records | 7356 ptr/s | 0 inv-err
+  926,400 ptrs | 475,053 records | 7425 ptr/s | 0 inv-err
+  926,800 ptrs | 475,239 records | 7422 ptr/s | 0 inv-err
+  928,600 ptrs | 476,108 records | 7430 ptr/s | 0 inv-err
+  952,200 ptrs | 487,907 records | 7348 ptr/s | 0 inv-err
+  965,800 ptrs | 494,702 records | 7363 ptr/s | 0 inv-err
+  970,000 ptrs | 496,871 records | 7362 ptr/s | 0 inv-err
+  974,800 ptrs | 499,464 records | 7351 ptr/s | 0 inv-err
+  977,600 ptrs | 500,803 records | 7340 ptr/s | 0 inv-err
+  1,002,000 ptrs | 512,686 records | 7129 ptr/s | 0 inv-err
+  1,005,000 ptrs | 514,286 records | 7135 ptr/s | 0 inv-err
+  1,025,200 ptrs | 524,585 records | 7210 ptr/s | 0 inv-err
+  1,036,400 ptrs | 530,483 records | 7235 ptr/s | 0 inv-err
+  1,041,600 ptrs | 533,020 records | 7246 ptr/s | 0 inv-err
+  1,048,800 ptrs | 536,676 records | 7239 ptr/s | 0 inv-err
+  1,051,000 ptrs | 537,781 records | 7244 ptr/s | 0 inv-err
+  1,080,200 ptrs | 552,497 records | 7305 ptr/s | 0 inv-err
+  1,081,000 ptrs | 552,902 records | 7306 ptr/s | 0 inv-err
+  1,082,200 ptrs | 553,403 records | 7304 ptr/s | 0 inv-err
+  1,098,600 ptrs | 561,018 records | 7345 ptr/s | 0 inv-err
+  1,116,000 ptrs | 569,978 records | 7363 ptr/s | 0 inv-err
+  1,127,400 ptrs | 575,407 records | 7385 ptr/s | 0 inv-err
+  1,129,200 ptrs | 576,325 records | 7387 ptr/s | 0 inv-err
+  1,131,600 ptrs | 577,755 records | 7393 ptr/s | 0 inv-err
+  1,132,800 ptrs | 578,442 records | 7396 ptr/s | 0 inv-err
+  1,164,200 ptrs | 594,456 records | 7455 ptr/s | 0 inv-err
+  1,167,800 ptrs | 596,383 records | 7464 ptr/s | 0 inv-err
+  1,174,800 ptrs | 599,858 records | 7484 ptr/s | 0 inv-err
+  1,195,600 ptrs | 610,387 records | 7517 ptr/s | 0 inv-err
+  1,205,800 ptrs | 615,605 records | 7538 ptr/s | 0 inv-err
+  1,219,200 ptrs | 622,542 records | 7556 ptr/s | 0 inv-err
+  1,221,200 ptrs | 623,581 records | 7568 ptr/s | 0 inv-err
+  1,232,000 ptrs | 629,050 records | 7583 ptr/s | 0 inv-err
+  1,240,200 ptrs | 633,122 records | 7601 ptr/s | 0 inv-err
+  1,257,000 ptrs | 641,336 records | 7634 ptr/s | 0 inv-err
+  1,267,800 ptrs | 646,847 records | 7639 ptr/s | 0 inv-err
+  1,273,200 ptrs | 649,621 records | 7653 ptr/s | 0 inv-err
+  1,276,800 ptrs | 651,573 records | 7660 ptr/s | 0 inv-err
+  1,283,800 ptrs | 655,100 records | 7671 ptr/s | 0 inv-err
+  1,294,800 ptrs | 660,378 records | 7695 ptr/s | 0 inv-err
+  1,306,600 ptrs | 666,644 records | 7710 ptr/s | 0 inv-err
+  1,315,600 ptrs | 671,060 records | 7718 ptr/s | 0 inv-err
+  1,321,200 ptrs | 673,833 records | 7733 ptr/s | 0 inv-err
+  1,322,800 ptrs | 674,671 records | 7742 ptr/s | 0 inv-err
+  1,336,600 ptrs | 681,823 records | 7767 ptr/s | 0 inv-err
+  1,344,200 ptrs | 685,850 records | 7780 ptr/s | 0 inv-err
+  1,351,000 ptrs | 689,432 records | 7793 ptr/s | 0 inv-err
+  1,376,600 ptrs | 702,096 records | 7836 ptr/s | 0 inv-err
+  1,380,600 ptrs | 704,143 records | 7837 ptr/s | 0 inv-err
+  1,402,800 ptrs | 715,474 records | 7865 ptr/s | 0 inv-err
+  1,418,800 ptrs | 723,760 records | 7888 ptr/s | 0 inv-err
+  1,422,800 ptrs | 725,829 records | 7897 ptr/s | 0 inv-err
+  1,427,800 ptrs | 728,256 records | 7903 ptr/s | 0 inv-err
+  1,434,200 ptrs | 731,688 records | 7912 ptr/s | 0 inv-err
+  1,447,200 ptrs | 738,028 records | 7926 ptr/s | 0 inv-err
+  1,461,800 ptrs | 745,205 records | 7946 ptr/s | 0 inv-err
+  1,462,200 ptrs | 745,434 records | 7948 ptr/s | 0 inv-err
+  1,495,400 ptrs | 761,889 records | 7981 ptr/s | 0 inv-err
+  1,496,600 ptrs | 762,513 records | 7984 ptr/s | 0 inv-err
+  1,507,200 ptrs | 767,650 records | 7980 ptr/s | 0 inv-err
+  1,507,800 ptrs | 767,977 records | 7983 ptr/s | 0 inv-err
+  1,523,400 ptrs | 776,155 records | 8015 ptr/s | 0 inv-err
+  1,536,800 ptrs | 783,154 records | 8022 ptr/s | 0 inv-err
+  1,544,200 ptrs | 787,000 records | 8023 ptr/s | 0 inv-err
+  1,556,800 ptrs | 793,569 records | 8038 ptr/s | 0 inv-err
+  1,558,200 ptrs | 794,207 records | 8041 ptr/s | 0 inv-err
+  1,561,000 ptrs | 795,623 records | 8048 ptr/s | 0 inv-err
+  1,572,000 ptrs | 801,450 records | 8059 ptr/s | 0 inv-err
+  1,579,600 ptrs | 805,580 records | 8069 ptr/s | 0 inv-err
+  1,586,600 ptrs | 809,103 records | 8076 ptr/s | 0 inv-err
+  1,590,800 ptrs | 811,245 records | 8080 ptr/s | 0 inv-err
+  1,610,400 ptrs | 821,295 records | 8106 ptr/s | 0 inv-err
+  1,624,000 ptrs | 828,366 records | 8125 ptr/s | 0 inv-err
+  1,629,000 ptrs | 830,951 records | 8126 ptr/s | 0 inv-err
+  1,645,600 ptrs | 839,056 records | 8148 ptr/s | 0 inv-err
+  1,647,000 ptrs | 839,706 records | 8147 ptr/s | 0 inv-err
+  1,653,800 ptrs | 843,293 records | 8156 ptr/s | 0 inv-err
+  1,668,000 ptrs | 850,192 records | 8178 ptr/s | 0 inv-err
+  1,676,600 ptrs | 854,427 records | 8183 ptr/s | 0 inv-err
+  1,697,600 ptrs | 864,817 records | 8198 ptr/s | 0 inv-err
+  1,700,200 ptrs | 866,002 records | 8206 ptr/s | 0 inv-err
+  1,728,400 ptrs | 879,992 records | 8236 ptr/s | 0 inv-err
+  1,728,800 ptrs | 880,170 records | 8238 ptr/s | 0 inv-err
+  1,731,000 ptrs | 881,162 records | 8240 ptr/s | 0 inv-err
+  1,740,000 ptrs | 885,891 records | 8243 ptr/s | 0 inv-err
+  1,767,000 ptrs | 899,324 records | 8266 ptr/s | 0 inv-err
+  1,769,200 ptrs | 900,416 records | 8272 ptr/s | 0 inv-err
+  1,774,600 ptrs | 903,156 records | 8274 ptr/s | 0 inv-err
+  1,776,600 ptrs | 904,288 records | 8278 ptr/s | 0 inv-err
+  1,803,200 ptrs | 918,085 records | 8296 ptr/s | 0 inv-err
+  1,804,400 ptrs | 918,701 records | 8301 ptr/s | 0 inv-err
+  1,817,800 ptrs | 925,417 records | 8313 ptr/s | 0 inv-err
+  1,824,400 ptrs | 928,817 records | 8324 ptr/s | 0 inv-err
+  1,856,400 ptrs | 945,312 records | 8352 ptr/s | 0 inv-err
+  1,857,000 ptrs | 945,610 records | 8350 ptr/s | 0 inv-err
+  1,859,200 ptrs | 946,660 records | 8357 ptr/s | 0 inv-err
+  1,867,200 ptrs | 950,773 records | 8362 ptr/s | 0 inv-err
+  1,877,200 ptrs | 955,827 records | 8381 ptr/s | 0 inv-err
+  1,881,200 ptrs | 957,805 records | 8373 ptr/s | 0 inv-err
+  1,887,600 ptrs | 961,024 records | 8376 ptr/s | 0 inv-err
+  1,905,800 ptrs | 970,575 records | 8393 ptr/s | 0 inv-err
+  1,912,200 ptrs | 973,772 records | 8406 ptr/s | 0 inv-err
+  1,926,600 ptrs | 981,465 records | 8418 ptr/s | 0 inv-err
+  1,938,800 ptrs | 987,725 records | 8423 ptr/s | 0 inv-err
+  1,950,200 ptrs | 993,346 records | 8432 ptr/s | 0 inv-err
+  1,964,200 ptrs | 1,000,184 records | 8450 ptr/s | 0 inv-err
+  1,977,600 ptrs | 1,006,552 records | 8456 ptr/s | 1 inv-err
+  1,979,400 ptrs | 1,007,476 records | 8460 ptr/s | 1 inv-err
+  1,983,600 ptrs | 1,009,403 records | 8464 ptr/s | 1 inv-err
+  1,986,000 ptrs | 1,010,589 records | 8467 ptr/s | 1 inv-err
+  2,018,000 ptrs | 1,026,550 records | 8487 ptr/s | 1 inv-err
+  2,019,800 ptrs | 1,027,530 records | 8491 ptr/s | 1 inv-err
+  2,023,200 ptrs | 1,029,270 records | 8494 ptr/s | 1 inv-err
+  2,023,600 ptrs | 1,029,491 records | 8493 ptr/s | 1 inv-err
+  2,032,000 ptrs | 1,033,846 records | 8496 ptr/s | 1 inv-err
+  2,037,000 ptrs | 1,036,255 records | 8506 ptr/s | 1 inv-err
+  2,061,600 ptrs | 1,048,854 records | 8527 ptr/s | 1 inv-err
+  2,077,400 ptrs | 1,057,285 records | 8536 ptr/s | 1 inv-err
+  2,078,600 ptrs | 1,057,864 records | 8537 ptr/s | 1 inv-err
+  2,103,600 ptrs | 1,070,140 records | 8552 ptr/s | 1 inv-err
+  2,110,000 ptrs | 1,073,135 records | 8561 ptr/s | 1 inv-err
+  2,138,000 ptrs | 1,087,725 records | 8577 ptr/s | 1 inv-err
+  2,140,600 ptrs | 1,089,029 records | 8581 ptr/s | 1 inv-err
+  2,141,000 ptrs | 1,089,207 records | 8582 ptr/s | 1 inv-err
+  2,148,200 ptrs | 1,092,881 records | 8584 ptr/s | 1 inv-err
+  2,155,400 ptrs | 1,096,835 records | 8588 ptr/s | 1 inv-err
+  2,179,800 ptrs | 1,109,179 records | 8607 ptr/s | 1 inv-err
+  2,181,800 ptrs | 1,110,343 records | 8611 ptr/s | 1 inv-err
+  2,184,200 ptrs | 1,111,541 records | 8611 ptr/s | 1 inv-err
+  2,203,800 ptrs | 1,121,998 records | 8623 ptr/s | 1 inv-err
+  2,208,400 ptrs | 1,124,256 records | 8624 ptr/s | 1 inv-err
+  2,214,800 ptrs | 1,127,332 records | 8629 ptr/s | 1 inv-err
+  2,220,800 ptrs | 1,130,435 records | 8632 ptr/s | 1 inv-err
+  2,240,800 ptrs | 1,140,678 records | 8646 ptr/s | 1 inv-err
+  2,245,400 ptrs | 1,143,053 records | 8650 ptr/s | 1 inv-err
+  2,248,600 ptrs | 1,144,768 records | 8650 ptr/s | 1 inv-err
+  2,254,200 ptrs | 1,147,683 records | 8654 ptr/s | 1 inv-err
+  2,287,000 ptrs | 1,164,403 records | 8677 ptr/s | 1 inv-err
+  2,289,000 ptrs | 1,165,479 records | 8678 ptr/s | 1 inv-err
+  2,300,600 ptrs | 1,171,378 records | 8679 ptr/s | 1 inv-err
+  2,303,600 ptrs | 1,172,871 records | 8678 ptr/s | 1 inv-err
+  2,306,400 ptrs | 1,174,449 records | 8681 ptr/s | 1 inv-err
+  2,342,400 ptrs | 1,192,515 records | 8650 ptr/s | 1 inv-err
+  2,344,400 ptrs | 1,193,587 records | 8642 ptr/s | 1 inv-err
+  2,353,600 ptrs | 1,198,260 records | 8632 ptr/s | 1 inv-err
+  2,355,200 ptrs | 1,199,099 records | 8628 ptr/s | 1 inv-err
+  2,368,200 ptrs | 1,205,604 records | 8603 ptr/s | 1 inv-err
+  2,380,000 ptrs | 1,211,692 records | 8562 ptr/s | 1 inv-err
+  2,380,600 ptrs | 1,212,034 records | 8555 ptr/s | 1 inv-err
+  2,390,600 ptrs | 1,217,048 records | 8463 ptr/s | 1 inv-err
+  2,404,200 ptrs | 1,223,754 records | 8431 ptr/s | 1 inv-err
+  2,411,800 ptrs | 1,227,342 records | 8441 ptr/s | 1 inv-err
+  2,413,600 ptrs | 1,228,194 records | 8443 ptr/s | 1 inv-err
+  2,420,400 ptrs | 1,231,665 records | 8458 ptr/s | 1 inv-err
+  2,442,800 ptrs | 1,243,225 records | 8471 ptr/s | 1 inv-err
+  2,470,800 ptrs | 1,257,573 records | 8457 ptr/s | 1 inv-err
+  2,471,800 ptrs | 1,258,111 records | 8458 ptr/s | 1 inv-err
+  2,477,400 ptrs | 1,260,840 records | 8448 ptr/s | 1 inv-err
+  2,485,400 ptrs | 1,264,914 records | 8455 ptr/s | 1 inv-err
+  2,499,400 ptrs | 1,272,182 records | 8464 ptr/s | 1 inv-err
+  2,500,600 ptrs | 1,272,663 records | 8466 ptr/s | 1 inv-err
+  2,506,000 ptrs | 1,275,373 records | 8466 ptr/s | 1 inv-err
+  2,524,400 ptrs | 1,284,374 records | 8478 ptr/s | 1 inv-err
+  2,543,800 ptrs | 1,293,890 records | 8471 ptr/s | 2 inv-err
+  2,546,200 ptrs | 1,295,205 records | 8466 ptr/s | 2 inv-err
+  2,555,600 ptrs | 1,299,682 records | 8477 ptr/s | 2 inv-err
+  2,584,200 ptrs | 1,314,418 records | 8424 ptr/s | 2 inv-err
+  2,588,400 ptrs | 1,316,676 records | 8416 ptr/s | 2 inv-err
+  2,599,200 ptrs | 1,322,038 records | 8377 ptr/s | 2 inv-err
+  2,600,000 ptrs | 1,322,440 records | 8372 ptr/s | 2 inv-err
+  2,619,600 ptrs | 1,332,010 records | 8336 ptr/s | 2 inv-err
+  2,621,400 ptrs | 1,332,979 records | 8336 ptr/s | 2 inv-err
+  2,631,200 ptrs | 1,338,179 records | 8330 ptr/s | 2 inv-err
+  2,640,000 ptrs | 1,342,580 records | 8338 ptr/s | 2 inv-err
+  2,648,600 ptrs | 1,346,981 records | 8348 ptr/s | 2 inv-err
+  2,648,800 ptrs | 1,347,094 records | 8349 ptr/s | 2 inv-err
+  2,662,200 ptrs | 1,353,930 records | 8360 ptr/s | 2 inv-err
+  2,696,200 ptrs | 1,371,281 records | 8364 ptr/s | 2 inv-err
+  2,697,000 ptrs | 1,371,722 records | 8366 ptr/s | 2 inv-err
+  2,704,000 ptrs | 1,375,385 records | 8370 ptr/s | 2 inv-err
+  2,706,200 ptrs | 1,376,449 records | 8364 ptr/s | 2 inv-err
+  2,714,000 ptrs | 1,380,630 records | 8367 ptr/s | 2 inv-err
+  2,746,000 ptrs | 1,397,141 records | 8352 ptr/s | 2 inv-err
+  2,752,000 ptrs | 1,400,162 records | 8350 ptr/s | 2 inv-err
+  2,768,400 ptrs | 1,408,310 records | 8354 ptr/s | 2 inv-err
+  2,783,000 ptrs | 1,416,135 records | 8355 ptr/s | 2 inv-err
+  2,803,200 ptrs | 1,426,506 records | 8366 ptr/s | 2 inv-err
+  2,804,400 ptrs | 1,427,161 records | 8367 ptr/s | 2 inv-err
+  2,807,400 ptrs | 1,428,637 records | 8371 ptr/s | 2 inv-err
+  2,808,000 ptrs | 1,428,916 records | 8370 ptr/s | 2 inv-err
+  2,814,800 ptrs | 1,432,368 records | 8373 ptr/s | 2 inv-err
+  2,829,400 ptrs | 1,439,610 records | 8384 ptr/s | 2 inv-err
+  2,832,800 ptrs | 1,441,379 records | 8385 ptr/s | 2 inv-err
+  2,845,000 ptrs | 1,447,657 records | 8386 ptr/s | 2 inv-err
+  2,860,800 ptrs | 1,455,911 records | 8388 ptr/s | 2 inv-err
+  2,865,600 ptrs | 1,458,384 records | 8397 ptr/s | 2 inv-err
+  2,869,000 ptrs | 1,460,090 records | 8397 ptr/s | 2 inv-err
+  2,876,000 ptrs | 1,463,679 records | 8396 ptr/s | 2 inv-err
+  2,877,600 ptrs | 1,464,521 records | 8400 ptr/s | 2 inv-err
+  2,889,800 ptrs | 1,470,606 records | 8414 ptr/s | 2 inv-err
+  2,906,800 ptrs | 1,479,235 records | 8404 ptr/s | 2 inv-err
+  2,915,200 ptrs | 1,483,565 records | 8404 ptr/s | 2 inv-err
+  2,937,800 ptrs | 1,495,332 records | 8361 ptr/s | 2 inv-err
+  2,939,400 ptrs | 1,496,045 records | 8365 ptr/s | 2 inv-err
+  2,944,600 ptrs | 1,498,780 records | 8364 ptr/s | 2 inv-err
+  2,951,400 ptrs | 1,502,094 records | 8357 ptr/s | 2 inv-err
+  2,961,000 ptrs | 1,506,851 records | 8344 ptr/s | 2 inv-err
+  2,981,200 ptrs | 1,516,854 records | 8270 ptr/s | 2 inv-err
+  2,993,000 ptrs | 1,522,684 records | 8269 ptr/s | 2 inv-err
+  3,009,400 ptrs | 1,531,285 records | 8288 ptr/s | 2 inv-err
+  3,012,000 ptrs | 1,532,584 records | 8291 ptr/s | 2 inv-err
+  3,017,400 ptrs | 1,535,570 records | 8297 ptr/s | 2 inv-err
+  3,027,800 ptrs | 1,540,983 records | 8300 ptr/s | 2 inv-err
+  3,037,400 ptrs | 1,546,374 records | 8302 ptr/s | 2 inv-err
+  3,045,000 ptrs | 1,550,141 records | 8298 ptr/s | 2 inv-err
+  3,058,400 ptrs | 1,557,134 records | 8312 ptr/s | 2 inv-err
+  3,079,800 ptrs | 1,567,716 records | 8329 ptr/s | 2 inv-err
+  3,080,600 ptrs | 1,568,051 records | 8327 ptr/s | 2 inv-err
+  3,082,200 ptrs | 1,568,940 records | 8329 ptr/s | 2 inv-err
+  3,093,800 ptrs | 1,574,979 records | 8332 ptr/s | 2 inv-err
+  3,123,400 ptrs | 1,589,902 records | 8354 ptr/s | 2 inv-err
+  3,134,400 ptrs | 1,595,779 records | 8359 ptr/s | 2 inv-err
+  3,138,200 ptrs | 1,597,658 records | 8360 ptr/s | 2 inv-err
+  3,139,400 ptrs | 1,598,249 records | 8361 ptr/s | 2 inv-err
+  3,145,200 ptrs | 1,601,083 records | 8365 ptr/s | 2 inv-err
+  3,146,600 ptrs | 1,601,830 records | 8365 ptr/s | 2 inv-err
+  3,163,000 ptrs | 1,610,321 records | 8377 ptr/s | 2 inv-err
+  3,167,200 ptrs | 1,612,370 records | 8380 ptr/s | 2 inv-err
+  3,188,400 ptrs | 1,623,155 records | 8389 ptr/s | 2 inv-err
+  3,199,400 ptrs | 1,628,702 records | 8396 ptr/s | 2 inv-err
+  3,201,600 ptrs | 1,629,875 records | 8397 ptr/s | 2 inv-err
+  3,218,600 ptrs | 1,638,524 records | 8402 ptr/s | 2 inv-err
+  3,221,600 ptrs | 1,640,198 records | 8399 ptr/s | 2 inv-err
+  3,226,800 ptrs | 1,642,881 records | 8404 ptr/s | 2 inv-err
+  3,241,200 ptrs | 1,650,014 records | 8409 ptr/s | 2 inv-err
+  3,262,200 ptrs | 1,660,720 records | 8428 ptr/s | 2 inv-err
+  3,272,800 ptrs | 1,666,021 records | 8427 ptr/s | 2 inv-err
+  3,278,000 ptrs | 1,668,535 records | 8427 ptr/s | 2 inv-err
+  3,287,600 ptrs | 1,673,732 records | 8433 ptr/s | 2 inv-err
+  3,293,800 ptrs | 1,676,985 records | 8436 ptr/s | 2 inv-err
+  3,315,400 ptrs | 1,688,088 records | 8443 ptr/s | 2 inv-err
+  3,318,200 ptrs | 1,689,362 records | 8444 ptr/s | 2 inv-err
+  3,326,400 ptrs | 1,693,445 records | 8445 ptr/s | 2 inv-err
+  3,333,400 ptrs | 1,696,914 records | 8442 ptr/s | 2 inv-err
+  3,338,000 ptrs | 1,699,274 records | 8440 ptr/s | 2 inv-err
+  3,354,200 ptrs | 1,707,949 records | 8432 ptr/s | 2 inv-err
+  3,367,600 ptrs | 1,714,896 records | 8428 ptr/s | 2 inv-err
+  3,381,400 ptrs | 1,721,817 records | 8416 ptr/s | 2 inv-err
+  3,401,600 ptrs | 1,732,232 records | 8385 ptr/s | 2 inv-err
+  3,402,600 ptrs | 1,732,774 records | 8385 ptr/s | 2 inv-err
+  3,409,600 ptrs | 1,736,201 records | 8378 ptr/s | 2 inv-err
+  3,417,600 ptrs | 1,740,329 records | 8373 ptr/s | 2 inv-err
+  3,419,800 ptrs | 1,741,329 records | 8370 ptr/s | 2 inv-err
+  3,441,400 ptrs | 1,752,342 records | 8382 ptr/s | 2 inv-err
+  3,455,400 ptrs | 1,759,109 records | 8400 ptr/s | 2 inv-err
+  3,456,000 ptrs | 1,759,416 records | 8400 ptr/s | 2 inv-err
+  3,468,600 ptrs | 1,765,593 records | 8399 ptr/s | 2 inv-err
+  3,488,400 ptrs | 1,775,959 records | 8409 ptr/s | 2 inv-err
+  3,496,000 ptrs | 1,779,955 records | 8416 ptr/s | 2 inv-err
+  3,496,600 ptrs | 1,780,219 records | 8418 ptr/s | 2 inv-err
+  3,510,000 ptrs | 1,786,805 records | 8420 ptr/s | 2 inv-err
+  3,512,800 ptrs | 1,788,165 records | 8420 ptr/s | 2 inv-err
+  3,530,400 ptrs | 1,797,139 records | 8428 ptr/s | 2 inv-err
+  3,534,000 ptrs | 1,798,840 records | 8429 ptr/s | 2 inv-err
+  3,536,000 ptrs | 1,799,839 records | 8432 ptr/s | 2 inv-err
+  3,567,600 ptrs | 1,815,320 records | 8443 ptr/s | 2 inv-err
+  3,568,400 ptrs | 1,815,713 records | 8443 ptr/s | 2 inv-err
+  3,580,200 ptrs | 1,821,808 records | 8450 ptr/s | 2 inv-err
+  3,593,800 ptrs | 1,828,879 records | 8458 ptr/s | 2 inv-err
+  3,596,600 ptrs | 1,830,378 records | 8461 ptr/s | 2 inv-err
+  3,616,800 ptrs | 1,840,479 records | 8469 ptr/s | 2 inv-err
+  3,623,400 ptrs | 1,843,907 records | 8474 ptr/s | 2 inv-err
+  3,643,400 ptrs | 1,854,449 records | 8478 ptr/s | 2 inv-err
+  3,643,800 ptrs | 1,854,645 records | 8479 ptr/s | 2 inv-err
+  3,644,600 ptrs | 1,855,030 records | 8479 ptr/s | 2 inv-err
+  3,649,000 ptrs | 1,857,452 records | 8483 ptr/s | 2 inv-err
+  3,665,800 ptrs | 1,866,053 records | 8490 ptr/s | 2 inv-err
+  3,666,800 ptrs | 1,866,606 records | 8491 ptr/s | 2 inv-err
+  3,692,800 ptrs | 1,880,042 records | 8504 ptr/s | 2 inv-err
+  3,704,800 ptrs | 1,886,066 records | 8502 ptr/s | 2 inv-err
+  3,706,200 ptrs | 1,886,774 records | 8505 ptr/s | 2 inv-err
+  3,733,600 ptrs | 1,901,213 records | 8517 ptr/s | 2 inv-err
+  3,736,400 ptrs | 1,902,750 records | 8520 ptr/s | 2 inv-err
+  3,745,600 ptrs | 1,907,680 records | 8523 ptr/s | 2 inv-err
+  3,745,800 ptrs | 1,907,763 records | 8523 ptr/s | 2 inv-err
+  3,755,400 ptrs | 1,912,808 records | 8526 ptr/s | 2 inv-err
+  3,759,000 ptrs | 1,914,752 records | 8528 ptr/s | 2 inv-err
+  3,761,400 ptrs | 1,915,922 records | 8532 ptr/s | 2 inv-err
+  3,783,600 ptrs | 1,928,215 records | 8541 ptr/s | 2 inv-err
+  3,800,800 ptrs | 1,936,968 records | 8551 ptr/s | 2 inv-err
+  3,818,000 ptrs | 1,945,511 records | 8554 ptr/s | 2 inv-err
+  3,820,800 ptrs | 1,946,783 records | 8557 ptr/s | 2 inv-err
+  3,824,000 ptrs | 1,948,386 records | 8559 ptr/s | 2 inv-err
+  3,847,000 ptrs | 1,960,383 records | 8572 ptr/s | 2 inv-err
+  3,848,000 ptrs | 1,960,940 records | 8572 ptr/s | 2 inv-err
+  3,855,400 ptrs | 1,964,463 records | 8569 ptr/s | 2 inv-err
+  3,856,600 ptrs | 1,965,031 records | 8572 ptr/s | 2 inv-err
+  3,861,800 ptrs | 1,967,871 records | 8572 ptr/s | 2 inv-err
+  3,888,600 ptrs | 1,981,355 records | 8590 ptr/s | 2 inv-err
+  3,899,800 ptrs | 1,987,182 records | 8575 ptr/s | 2 inv-err
+  3,907,600 ptrs | 1,991,180 records | 8554 ptr/s | 2 inv-err
+  3,915,800 ptrs | 1,995,387 records | 8553 ptr/s | 2 inv-err
+  3,923,400 ptrs | 1,999,187 records | 8551 ptr/s | 2 inv-err
+  3,946,600 ptrs | 2,011,455 records | 8522 ptr/s | 2 inv-err
+  3,959,000 ptrs | 2,017,883 records | 8454 ptr/s | 2 inv-err
+  3,972,800 ptrs | 2,025,169 records | 8467 ptr/s | 2 inv-err
+  3,976,000 ptrs | 2,026,851 records | 8472 ptr/s | 2 inv-err
+  3,987,000 ptrs | 2,032,602 records | 8479 ptr/s | 2 inv-err
+  3,993,000 ptrs | 2,035,739 records | 8478 ptr/s | 2 inv-err
+  4,002,000 ptrs | 2,040,249 records | 8479 ptr/s | 2 inv-err
+  4,003,800 ptrs | 2,041,098 records | 8472 ptr/s | 2 inv-err
+  4,032,000 ptrs | 2,055,673 records | 8472 ptr/s | 2 inv-err
+  4,039,400 ptrs | 2,059,458 records | 8479 ptr/s | 2 inv-err
+  4,041,800 ptrs | 2,060,825 records | 8480 ptr/s | 2 inv-err
+  4,044,200 ptrs | 2,062,195 records | 8484 ptr/s | 2 inv-err
+  4,050,800 ptrs | 2,065,571 records | 8487 ptr/s | 2 inv-err
+  4,061,000 ptrs | 2,070,913 records | 8489 ptr/s | 2 inv-err
+  4,064,200 ptrs | 2,072,839 records | 8492 ptr/s | 2 inv-err
+  4,083,800 ptrs | 2,082,882 records | 8493 ptr/s | 2 inv-err
+  4,090,200 ptrs | 2,086,075 records | 8496 ptr/s | 2 inv-err
+  4,119,000 ptrs | 2,101,143 records | 8498 ptr/s | 2 inv-err
+  4,119,600 ptrs | 2,101,509 records | 8499 ptr/s | 2 inv-err
+  4,134,200 ptrs | 2,109,202 records | 8500 ptr/s | 2 inv-err
+  4,140,400 ptrs | 2,112,514 records | 8500 ptr/s | 2 inv-err
+  4,152,600 ptrs | 2,118,575 records | 8490 ptr/s | 2 inv-err
+  4,158,800 ptrs | 2,121,780 records | 8487 ptr/s | 2 inv-err
+  4,167,400 ptrs | 2,126,240 records | 8488 ptr/s | 2 inv-err
+  4,173,000 ptrs | 2,129,288 records | 8487 ptr/s | 2 inv-err
+  4,188,200 ptrs | 2,137,222 records | 8480 ptr/s | 2 inv-err
+  4,220,600 ptrs | 2,153,980 records | 8480 ptr/s | 2 inv-err
+  4,221,200 ptrs | 2,154,288 records | 8479 ptr/s | 2 inv-err
+  4,225,400 ptrs | 2,156,433 records | 8478 ptr/s | 2 inv-err
+  4,228,600 ptrs | 2,158,217 records | 8477 ptr/s | 2 inv-err
+  4,234,200 ptrs | 2,160,964 records | 8477 ptr/s | 2 inv-err
+  4,238,600 ptrs | 2,163,045 records | 8476 ptr/s | 2 inv-err
+  4,259,000 ptrs | 2,173,228 records | 8482 ptr/s | 2 inv-err
+  4,276,200 ptrs | 2,182,113 records | 8479 ptr/s | 2 inv-err
+  4,283,800 ptrs | 2,186,092 records | 8485 ptr/s | 2 inv-err
+  4,291,200 ptrs | 2,189,726 records | 8477 ptr/s | 2 inv-err
+  4,294,400 ptrs | 2,191,494 records | 8480 ptr/s | 2 inv-err
+  4,307,200 ptrs | 2,198,188 records | 8484 ptr/s | 2 inv-err
+  4,319,200 ptrs | 2,204,310 records | 8487 ptr/s | 2 inv-err
+  4,319,800 ptrs | 2,204,623 records | 8488 ptr/s | 2 inv-err
+  4,328,800 ptrs | 2,209,115 records | 8486 ptr/s | 2 inv-err
+  4,339,800 ptrs | 2,214,912 records | 8491 ptr/s | 2 inv-err
+  4,361,600 ptrs | 2,226,224 records | 8490 ptr/s | 2 inv-err
+  4,368,200 ptrs | 2,229,806 records | 8490 ptr/s | 2 inv-err
+  4,368,800 ptrs | 2,230,124 records | 8489 ptr/s | 2 inv-err
+  4,386,000 ptrs | 2,239,146 records | 8496 ptr/s | 2 inv-err
+  4,400,800 ptrs | 2,246,929 records | 8492 ptr/s | 2 inv-err
+  4,410,600 ptrs | 2,252,156 records | 8494 ptr/s | 2 inv-err
+  4,427,800 ptrs | 2,261,142 records | 8495 ptr/s | 2 inv-err
+  4,435,800 ptrs | 2,265,579 records | 8493 ptr/s | 2 inv-err
+  4,445,800 ptrs | 2,270,685 records | 8496 ptr/s | 2 inv-err
+  4,446,200 ptrs | 2,270,915 records | 8496 ptr/s | 2 inv-err
+  4,452,800 ptrs | 2,274,395 records | 8498 ptr/s | 2 inv-err
+  4,470,800 ptrs | 2,283,435 records | 8498 ptr/s | 2 inv-err
+  4,478,200 ptrs | 2,287,498 records | 8501 ptr/s | 2 inv-err
+  4,479,600 ptrs | 2,288,253 records | 8503 ptr/s | 2 inv-err
+  4,485,400 ptrs | 2,291,075 records | 8505 ptr/s | 2 inv-err
+  4,497,400 ptrs | 2,297,267 records | 8505 ptr/s | 2 inv-err
+  4,503,800 ptrs | 2,300,588 records | 8509 ptr/s | 2 inv-err
+  4,524,000 ptrs | 2,310,964 records | 8507 ptr/s | 2 inv-err
+  4,561,200 ptrs | 2,330,275 records | 8521 ptr/s | 2 inv-err
+  4,563,800 ptrs | 2,331,613 records | 8523 ptr/s | 2 inv-err
+  4,579,000 ptrs | 2,339,482 records | 8525 ptr/s | 2 inv-err
+  4,594,400 ptrs | 2,347,596 records | 8532 ptr/s | 2 inv-err
+  4,595,600 ptrs | 2,348,241 records | 8531 ptr/s | 2 inv-err
+  4,599,200 ptrs | 2,350,005 records | 8531 ptr/s | 2 inv-err
+  4,602,000 ptrs | 2,351,413 records | 8532 ptr/s | 2 inv-err
+  4,616,400 ptrs | 2,358,470 records | 8536 ptr/s | 2 inv-err
+  4,622,600 ptrs | 2,361,857 records | 8535 ptr/s | 2 inv-err
+  4,626,800 ptrs | 2,363,989 records | 8538 ptr/s | 2 inv-err
+  4,637,000 ptrs | 2,369,547 records | 8540 ptr/s | 2 inv-err
+  4,645,600 ptrs | 2,374,253 records | 8541 ptr/s | 2 inv-err
+  4,650,000 ptrs | 2,376,491 records | 8543 ptr/s | 2 inv-err
+  4,660,600 ptrs | 2,382,227 records | 8544 ptr/s | 2 inv-err
+  4,672,000 ptrs | 2,388,348 records | 8546 ptr/s | 2 inv-err
+  4,687,400 ptrs | 2,396,719 records | 8551 ptr/s | 2 inv-err
+  4,692,400 ptrs | 2,399,188 records | 8549 ptr/s | 2 inv-err
+  4,702,200 ptrs | 2,404,519 records | 8554 ptr/s | 2 inv-err
+  4,726,000 ptrs | 2,416,641 records | 8558 ptr/s | 2 inv-err
+  4,729,600 ptrs | 2,418,616 records | 8560 ptr/s | 2 inv-err
+  4,734,200 ptrs | 2,420,948 records | 8563 ptr/s | 2 inv-err
+  4,734,400 ptrs | 2,421,044 records | 8563 ptr/s | 2 inv-err
+  4,751,000 ptrs | 2,430,055 records | 8570 ptr/s | 2 inv-err
+  4,756,200 ptrs | 2,432,761 records | 8570 ptr/s | 2 inv-err
+  4,769,800 ptrs | 2,439,976 records | 8573 ptr/s | 2 inv-err
+  4,782,200 ptrs | 2,446,450 records | 8575 ptr/s | 2 inv-err
+  4,794,600 ptrs | 2,452,988 records | 8580 ptr/s | 2 inv-err
+  4,802,400 ptrs | 2,457,001 records | 8583 ptr/s | 2 inv-err
+  4,822,400 ptrs | 2,467,626 records | 8590 ptr/s | 2 inv-err
+  4,831,400 ptrs | 2,472,423 records | 8592 ptr/s | 2 inv-err
+  4,841,400 ptrs | 2,477,694 records | 8593 ptr/s | 2 inv-err
+  4,849,800 ptrs | 2,482,137 records | 8596 ptr/s | 2 inv-err
+  4,856,000 ptrs | 2,485,412 records | 8593 ptr/s | 2 inv-err
+  4,873,800 ptrs | 2,494,625 records | 8591 ptr/s | 2 inv-err
+  4,874,800 ptrs | 2,495,108 records | 8585 ptr/s | 2 inv-err
+  4,885,600 ptrs | 2,500,663 records | 8578 ptr/s | 2 inv-err
+  4,895,000 ptrs | 2,505,892 records | 8571 ptr/s | 2 inv-err
+  4,914,400 ptrs | 2,516,234 records | 8551 ptr/s | 2 inv-err
+  4,920,000 ptrs | 2,519,045 records | 8540 ptr/s | 2 inv-err
+  4,926,600 ptrs | 2,522,637 records | 8526 ptr/s | 2 inv-err
+  4,938,800 ptrs | 2,528,596 records | 8479 ptr/s | 2 inv-err
+  4,949,200 ptrs | 2,533,887 records | 8469 ptr/s | 2 inv-err
+  4,961,000 ptrs | 2,539,900 records | 8473 ptr/s | 2 inv-err
+  4,961,800 ptrs | 2,540,358 records | 8473 ptr/s | 2 inv-err
+  4,976,600 ptrs | 2,548,003 records | 8479 ptr/s | 2 inv-err
+  4,979,000 ptrs | 2,549,290 records | 8481 ptr/s | 2 inv-err
+  4,996,600 ptrs | 2,558,571 records | 8484 ptr/s | 2 inv-err
+  5,017,800 ptrs | 2,569,683 records | 8486 ptr/s | 2 inv-err
+  5,023,600 ptrs | 2,572,880 records | 8487 ptr/s | 2 inv-err
+  5,040,000 ptrs | 2,581,511 records | 8483 ptr/s | 2 inv-err
+  5,042,000 ptrs | 2,582,360 records | 8484 ptr/s | 2 inv-err
+  5,055,000 ptrs | 2,589,171 records | 8486 ptr/s | 2 inv-err
+  5,075,600 ptrs | 2,599,603 records | 8492 ptr/s | 3 inv-err
+  5,079,200 ptrs | 2,601,438 records | 8491 ptr/s | 3 inv-err
+  5,080,000 ptrs | 2,601,845 records | 8490 ptr/s | 3 inv-err
+  5,092,400 ptrs | 2,608,419 records | 8492 ptr/s | 3 inv-err
+  5,092,800 ptrs | 2,608,623 records | 8492 ptr/s | 3 inv-err
+  5,099,000 ptrs | 2,611,857 records | 8490 ptr/s | 3 inv-err
+  5,119,800 ptrs | 2,622,907 records | 8495 ptr/s | 3 inv-err
+  5,128,600 ptrs | 2,627,657 records | 8499 ptr/s | 3 inv-err
+  5,141,600 ptrs | 2,634,435 records | 8493 ptr/s | 3 inv-err
+  5,153,200 ptrs | 2,640,613 records | 8497 ptr/s | 3 inv-err
+  5,155,000 ptrs | 2,641,616 records | 8495 ptr/s | 3 inv-err
+  5,157,400 ptrs | 2,642,925 records | 8497 ptr/s | 3 inv-err
+  5,162,800 ptrs | 2,645,783 records | 8500 ptr/s | 3 inv-err
+  5,178,200 ptrs | 2,653,892 records | 8500 ptr/s | 3 inv-err
+  5,194,800 ptrs | 2,662,541 records | 8502 ptr/s | 3 inv-err
+  5,203,200 ptrs | 2,666,974 records | 8503 ptr/s | 3 inv-err
+  5,223,600 ptrs | 2,677,500 records | 8509 ptr/s | 3 inv-err
+  5,235,800 ptrs | 2,683,766 records | 8512 ptr/s | 3 inv-err
+  5,238,200 ptrs | 2,685,104 records | 8513 ptr/s | 3 inv-err
+  5,238,800 ptrs | 2,685,507 records | 8514 ptr/s | 3 inv-err
+  5,252,400 ptrs | 2,692,467 records | 8518 ptr/s | 3 inv-err
+  5,271,800 ptrs | 2,702,265 records | 8514 ptr/s | 3 inv-err
+  5,278,000 ptrs | 2,705,513 records | 8513 ptr/s | 3 inv-err
+  5,305,000 ptrs | 2,719,907 records | 8514 ptr/s | 3 inv-err
+  5,306,600 ptrs | 2,720,752 records | 8515 ptr/s | 3 inv-err
+  5,312,400 ptrs | 2,723,627 records | 8516 ptr/s | 3 inv-err
+  5,330,000 ptrs | 2,733,202 records | 8517 ptr/s | 3 inv-err
+  5,334,200 ptrs | 2,735,311 records | 8521 ptr/s | 3 inv-err
+  5,338,000 ptrs | 2,737,256 records | 8523 ptr/s | 3 inv-err
+  5,350,600 ptrs | 2,744,241 records | 8529 ptr/s | 3 inv-err
+  5,364,000 ptrs | 2,751,083 records | 8529 ptr/s | 3 inv-err
+  5,374,000 ptrs | 2,756,154 records | 8532 ptr/s | 3 inv-err
+  5,376,800 ptrs | 2,757,526 records | 8533 ptr/s | 3 inv-err
+  5,379,800 ptrs | 2,759,091 records | 8533 ptr/s | 3 inv-err
+  5,401,000 ptrs | 2,770,571 records | 8534 ptr/s | 3 inv-err
+  5,406,400 ptrs | 2,773,377 records | 8529 ptr/s | 3 inv-err
+  5,408,400 ptrs | 2,774,312 records | 8527 ptr/s | 3 inv-err
+  5,444,600 ptrs | 2,793,437 records | 8505 ptr/s | 3 inv-err
+  5,449,400 ptrs | 2,795,826 records | 8492 ptr/s | 3 inv-err
+  5,452,200 ptrs | 2,797,214 records | 8485 ptr/s | 3 inv-err
+  5,468,400 ptrs | 2,805,662 records | 8449 ptr/s | 3 inv-err
+  5,476,400 ptrs | 2,809,745 records | 8451 ptr/s | 3 inv-err
+  5,507,600 ptrs | 2,825,909 records | 8408 ptr/s | 3 inv-err
+  5,514,800 ptrs | 2,829,696 records | 8412 ptr/s | 3 inv-err
+  5,516,400 ptrs | 2,830,557 records | 8413 ptr/s | 3 inv-err
+  5,527,400 ptrs | 2,836,179 records | 8422 ptr/s | 3 inv-err
+  5,531,600 ptrs | 2,838,408 records | 8422 ptr/s | 3 inv-err
+  5,536,400 ptrs | 2,840,999 records | 8424 ptr/s | 3 inv-err
+  5,540,000 ptrs | 2,842,928 records | 8423 ptr/s | 3 inv-err
+  5,547,800 ptrs | 2,846,935 records | 8422 ptr/s | 3 inv-err
+  5,554,200 ptrs | 2,850,060 records | 8426 ptr/s | 3 inv-err
+  5,556,600 ptrs | 2,851,465 records | 8424 ptr/s | 3 inv-err
+  5,578,600 ptrs | 2,863,231 records | 8422 ptr/s | 3 inv-err
+  5,591,400 ptrs | 2,870,102 records | 8423 ptr/s | 3 inv-err
+  5,593,200 ptrs | 2,871,063 records | 8422 ptr/s | 3 inv-err
+  5,631,400 ptrs | 2,891,315 records | 8434 ptr/s | 3 inv-err
+  5,635,800 ptrs | 2,893,635 records | 8436 ptr/s | 3 inv-err
+  5,638,200 ptrs | 2,894,920 records | 8436 ptr/s | 3 inv-err
+  5,648,000 ptrs | 2,899,852 records | 8434 ptr/s | 3 inv-err
+  5,651,400 ptrs | 2,901,488 records | 8436 ptr/s | 3 inv-err
+  5,652,800 ptrs | 2,902,272 records | 8437 ptr/s | 3 inv-err
+  5,658,600 ptrs | 2,905,172 records | 8437 ptr/s | 3 inv-err
+  5,682,600 ptrs | 2,917,445 records | 8440 ptr/s | 3 inv-err
+  5,709,400 ptrs | 2,931,042 records | 8433 ptr/s | 3 inv-err
+  5,711,400 ptrs | 2,931,980 records | 8431 ptr/s | 3 inv-err
+  5,713,600 ptrs | 2,933,208 records | 8428 ptr/s | 3 inv-err
+  5,715,400 ptrs | 2,934,137 records | 8430 ptr/s | 3 inv-err
+  5,730,200 ptrs | 2,942,170 records | 8412 ptr/s | 3 inv-err
+  5,741,000 ptrs | 2,947,670 records | 8405 ptr/s | 3 inv-err
+  5,745,800 ptrs | 2,950,024 records | 8404 ptr/s | 3 inv-err
+  5,751,400 ptrs | 2,952,947 records | 8403 ptr/s | 3 inv-err
+  5,759,400 ptrs | 2,957,215 records | 8402 ptr/s | 3 inv-err
+  5,769,800 ptrs | 2,962,388 records | 8405 ptr/s | 3 inv-err
+  5,782,000 ptrs | 2,968,432 records | 8409 ptr/s | 3 inv-err
+  5,784,600 ptrs | 2,969,665 records | 8409 ptr/s | 3 inv-err
+  5,824,800 ptrs | 2,990,868 records | 8420 ptr/s | 3 inv-err
+  5,825,600 ptrs | 2,991,235 records | 8421 ptr/s | 3 inv-err
+  5,832,200 ptrs | 2,994,754 records | 8423 ptr/s | 3 inv-err
+  5,833,200 ptrs | 2,995,291 records | 8422 ptr/s | 3 inv-err
+  5,845,800 ptrs | 3,001,931 records | 8428 ptr/s | 3 inv-err
+  5,860,000 ptrs | 3,009,343 records | 8433 ptr/s | 3 inv-err
+  5,869,200 ptrs | 3,014,136 records | 8434 ptr/s | 3 inv-err
+  5,875,800 ptrs | 3,017,550 records | 8435 ptr/s | 3 inv-err
+  5,892,800 ptrs | 3,026,610 records | 8441 ptr/s | 3 inv-err
+  5,899,600 ptrs | 3,030,091 records | 8443 ptr/s | 3 inv-err
+  5,900,800 ptrs | 3,030,676 records | 8444 ptr/s | 3 inv-err
+  5,912,000 ptrs | 3,036,357 records | 8448 ptr/s | 3 inv-err
+  5,926,200 ptrs | 3,043,524 records | 8453 ptr/s | 3 inv-err
+  5,947,600 ptrs | 3,054,656 records | 8457 ptr/s | 3 inv-err
+  5,952,200 ptrs | 3,057,062 records | 8458 ptr/s | 3 inv-err
+  5,954,000 ptrs | 3,057,965 records | 8459 ptr/s | 3 inv-err
+  5,973,000 ptrs | 3,068,135 records | 8465 ptr/s | 3 inv-err
+  5,976,200 ptrs | 3,069,898 records | 8465 ptr/s | 3 inv-err
+  5,998,800 ptrs | 3,081,493 records | 8454 ptr/s | 3 inv-err
+  6,007,600 ptrs | 3,086,257 records | 8452 ptr/s | 3 inv-err
+  6,009,000 ptrs | 3,086,911 records | 8453 ptr/s | 3 inv-err
+  6,015,200 ptrs | 3,090,256 records | 8451 ptr/s | 3 inv-err
+  6,023,800 ptrs | 3,094,587 records | 8444 ptr/s | 3 inv-err
+  6,037,400 ptrs | 3,101,723 records | 8426 ptr/s | 3 inv-err
+  6,045,800 ptrs | 3,105,886 records | 8412 ptr/s | 3 inv-err
+  6,067,000 ptrs | 3,116,859 records | 8376 ptr/s | 3 inv-err
+  6,067,800 ptrs | 3,117,250 records | 8377 ptr/s | 3 inv-err
+  6,077,400 ptrs | 3,122,187 records | 8383 ptr/s | 3 inv-err
+  6,099,000 ptrs | 3,133,543 records | 8393 ptr/s | 3 inv-err
+  6,102,000 ptrs | 3,135,027 records | 8394 ptr/s | 3 inv-err
+  6,116,800 ptrs | 3,142,909 records | 8392 ptr/s | 3 inv-err
+  6,120,200 ptrs | 3,144,857 records | 8390 ptr/s | 3 inv-err
+  6,126,200 ptrs | 3,147,874 records | 8389 ptr/s | 3 inv-err
+  6,134,400 ptrs | 3,152,091 records | 8390 ptr/s | 3 inv-err
+  6,137,800 ptrs | 3,153,803 records | 8391 ptr/s | 3 inv-err
+  6,154,800 ptrs | 3,162,916 records | 8397 ptr/s | 3 inv-err
+  6,173,400 ptrs | 3,172,856 records | 8399 ptr/s | 3 inv-err
+  6,177,200 ptrs | 3,175,014 records | 8402 ptr/s | 3 inv-err
+  6,184,400 ptrs | 3,178,544 records | 8403 ptr/s | 3 inv-err
+  6,187,400 ptrs | 3,179,994 records | 8403 ptr/s | 3 inv-err
+  6,206,400 ptrs | 3,189,951 records | 8412 ptr/s | 3 inv-err
+  6,210,000 ptrs | 3,191,921 records | 8414 ptr/s | 3 inv-err
+  6,235,400 ptrs | 3,204,879 records | 8419 ptr/s | 3 inv-err
+  6,243,400 ptrs | 3,209,135 records | 8420 ptr/s | 3 inv-err
+  6,245,200 ptrs | 3,210,042 records | 8420 ptr/s | 3 inv-err
+  6,258,600 ptrs | 3,217,130 records | 8421 ptr/s | 3 inv-err
+  6,264,400 ptrs | 3,219,895 records | 8422 ptr/s | 3 inv-err
+  6,276,400 ptrs | 3,226,012 records | 8418 ptr/s | 3 inv-err
+  6,290,600 ptrs | 3,233,631 records | 8410 ptr/s | 3 inv-err
+  6,299,800 ptrs | 3,238,566 records | 8408 ptr/s | 3 inv-err
+  6,314,600 ptrs | 3,246,350 records | 8386 ptr/s | 3 inv-err
+  6,315,200 ptrs | 3,246,694 records | 8384 ptr/s | 3 inv-err
+  6,336,400 ptrs | 3,257,311 records | 8368 ptr/s | 3 inv-err
+  6,340,000 ptrs | 3,259,067 records | 8370 ptr/s | 3 inv-err
+  6,358,400 ptrs | 3,268,241 records | 8382 ptr/s | 3 inv-err
+  6,359,600 ptrs | 3,268,961 records | 8383 ptr/s | 3 inv-err
+  6,389,400 ptrs | 3,284,368 records | 8384 ptr/s | 3 inv-err
+  6,392,800 ptrs | 3,286,081 records | 8383 ptr/s | 3 inv-err
+  6,408,000 ptrs | 3,293,882 records | 8383 ptr/s | 3 inv-err
+  6,410,000 ptrs | 3,294,869 records | 8383 ptr/s | 3 inv-err
+  6,422,600 ptrs | 3,301,184 records | 8387 ptr/s | 3 inv-err
+  6,422,800 ptrs | 3,301,282 records | 8387 ptr/s | 3 inv-err
+  6,424,400 ptrs | 3,302,063 records | 8388 ptr/s | 3 inv-err
+  6,440,400 ptrs | 3,310,280 records | 8396 ptr/s | 3 inv-err
+  6,444,200 ptrs | 3,312,243 records | 8397 ptr/s | 3 inv-err
+  6,451,800 ptrs | 3,316,163 records | 8399 ptr/s | 3 inv-err
+  6,478,800 ptrs | 3,330,279 records | 8404 ptr/s | 3 inv-err
+  6,482,000 ptrs | 3,332,020 records | 8404 ptr/s | 3 inv-err
+  6,489,800 ptrs | 3,335,903 records | 8405 ptr/s | 3 inv-err
+  6,498,600 ptrs | 3,340,384 records | 8406 ptr/s | 3 inv-err
+  6,508,200 ptrs | 3,345,049 records | 8404 ptr/s | 3 inv-err
+  6,513,600 ptrs | 3,347,895 records | 8402 ptr/s | 3 inv-err
+  6,522,400 ptrs | 3,352,313 records | 8402 ptr/s | 3 inv-err
+  6,530,000 ptrs | 3,356,495 records | 8390 ptr/s | 3 inv-err
+  6,556,800 ptrs | 3,370,466 records | 8343 ptr/s | 3 inv-err
+  6,569,400 ptrs | 3,376,775 records | 8336 ptr/s | 3 inv-err
+  6,569,800 ptrs | 3,376,981 records | 8335 ptr/s | 3 inv-err
+  6,579,000 ptrs | 3,381,595 records | 8336 ptr/s | 3 inv-err
+  6,600,400 ptrs | 3,392,842 records | 8344 ptr/s | 3 inv-err
+  6,605,200 ptrs | 3,395,376 records | 8347 ptr/s | 3 inv-err
+  6,611,600 ptrs | 3,398,966 records | 8349 ptr/s | 3 inv-err
+  6,617,400 ptrs | 3,402,010 records | 8349 ptr/s | 3 inv-err
+  6,617,600 ptrs | 3,402,117 records | 8349 ptr/s | 3 inv-err
+  6,632,200 ptrs | 3,409,643 records | 8350 ptr/s | 3 inv-err
+  6,637,800 ptrs | 3,412,640 records | 8353 ptr/s | 3 inv-err
+  6,650,800 ptrs | 3,419,568 records | 8357 ptr/s | 3 inv-err
+  6,656,800 ptrs | 3,422,815 records | 8357 ptr/s | 3 inv-err
+  6,679,200 ptrs | 3,434,962 records | 8360 ptr/s | 3 inv-err
+  6,686,200 ptrs | 3,438,637 records | 8362 ptr/s | 3 inv-err
+  6,716,000 ptrs | 3,454,214 records | 8371 ptr/s | 3 inv-err
+  6,718,600 ptrs | 3,455,527 records | 8371 ptr/s | 3 inv-err
+  6,726,400 ptrs | 3,459,598 records | 8373 ptr/s | 3 inv-err
+  6,728,600 ptrs | 3,460,918 records | 8374 ptr/s | 3 inv-err
+  6,730,400 ptrs | 3,461,811 records | 8374 ptr/s | 3 inv-err
+  6,753,200 ptrs | 3,474,256 records | 8382 ptr/s | 3 inv-err
+  6,757,600 ptrs | 3,476,651 records | 8383 ptr/s | 3 inv-err
+  6,762,600 ptrs | 3,479,231 records | 8383 ptr/s | 3 inv-err
+  6,763,200 ptrs | 3,479,518 records | 8382 ptr/s | 3 inv-err
+  6,771,200 ptrs | 3,484,025 records | 8383 ptr/s | 3 inv-err
+  6,793,800 ptrs | 3,495,789 records | 8388 ptr/s | 3 inv-err
+  6,813,000 ptrs | 3,505,922 records | 8389 ptr/s | 3 inv-err
+  6,817,200 ptrs | 3,508,108 records | 8389 ptr/s | 3 inv-err
+  6,831,000 ptrs | 3,514,886 records | 8390 ptr/s | 3 inv-err
+  6,833,600 ptrs | 3,516,234 records | 8388 ptr/s | 3 inv-err
+  6,852,600 ptrs | 3,526,078 records | 8380 ptr/s | 3 inv-err
+  6,858,800 ptrs | 3,529,375 records | 8380 ptr/s | 3 inv-err
+  6,861,800 ptrs | 3,530,934 records | 8378 ptr/s | 3 inv-err
+  6,872,600 ptrs | 3,536,408 records | 8367 ptr/s | 3 inv-err
+  6,899,600 ptrs | 3,550,567 records | 8351 ptr/s | 3 inv-err
+  6,906,400 ptrs | 3,554,024 records | 8349 ptr/s | 3 inv-err
+  6,906,800 ptrs | 3,554,258 records | 8349 ptr/s | 3 inv-err
+  6,911,600 ptrs | 3,556,701 records | 8341 ptr/s | 3 inv-err
+  6,913,200 ptrs | 3,557,468 records | 8341 ptr/s | 3 inv-err
+  6,939,600 ptrs | 3,570,973 records | 8346 ptr/s | 3 inv-err
+  6,952,600 ptrs | 3,577,734 records | 8350 ptr/s | 3 inv-err
+  6,963,600 ptrs | 3,583,600 records | 8354 ptr/s | 3 inv-err
+  6,970,200 ptrs | 3,587,183 records | 8354 ptr/s | 3 inv-err
+  6,983,200 ptrs | 3,593,748 records | 8357 ptr/s | 3 inv-err
+  6,996,400 ptrs | 3,600,524 records | 8360 ptr/s | 3 inv-err
+  6,998,800 ptrs | 3,601,870 records | 8360 ptr/s | 3 inv-err
+  7,002,200 ptrs | 3,603,570 records | 8361 ptr/s | 3 inv-err
+  7,012,200 ptrs | 3,609,043 records | 8362 ptr/s | 3 inv-err
+  7,031,400 ptrs | 3,619,274 records | 8360 ptr/s | 3 inv-err
+  7,043,400 ptrs | 3,625,854 records | 8357 ptr/s | 3 inv-err
+  7,046,400 ptrs | 3,627,336 records | 8359 ptr/s | 3 inv-err
+  7,047,600 ptrs | 3,627,966 records | 8359 ptr/s | 3 inv-err
+  7,059,600 ptrs | 3,634,215 records | 8361 ptr/s | 3 inv-err
+  7,077,200 ptrs | 3,643,413 records | 8363 ptr/s | 3 inv-err
+  7,078,800 ptrs | 3,644,292 records | 8362 ptr/s | 3 inv-err
+  7,111,800 ptrs | 3,661,811 records | 8370 ptr/s | 3 inv-err
+  7,124,000 ptrs | 3,668,434 records | 8371 ptr/s | 3 inv-err
+  7,125,000 ptrs | 3,669,031 records | 8372 ptr/s | 3 inv-err
+  7,130,800 ptrs | 3,672,074 records | 8373 ptr/s | 3 inv-err
+  7,163,284 ptrs | 3,688,991 records | 8379 ptr/s | 3 inv-err
+  7,163,684 ptrs | 3,689,215 records | 8379 ptr/s | 3 inv-err
+  7,169,284 ptrs | 3,692,078 records | 8368 ptr/s | 3 inv-err
+  7,171,284 ptrs | 3,693,116 records | 8335 ptr/s | 3 inv-err
+DONE: 7,172,084 pointers -> 3,693,486 records | 7,171,269 fetched, 0 empty | 4 invoke-err | 1013s | 7081 ptr/s
+Next: OPENSEARCH_ENDPOINT=… node load-extracted.js cc-extracted/bf-cc-warc-people-company/
+=== load cc-warc-people-company Sat Aug  1 03:27:47 EDT 2026 ===
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-people-company/ -> OpenSearch (conc 8)
+35,857 file(s) to load
+  1,000/35,857 files, 83,818 docs
+  2,000/35,857 files, 167,788 docs
+  3,000/35,857 files, 250,465 docs
+  4,000/35,857 files, 333,103 docs
+  5,000/35,857 files, 417,062 docs
+  6,000/35,857 files, 500,637 docs
+  7,000/35,857 files, 583,461 docs
+  8,000/35,857 files, 668,190 docs
+  9,000/35,857 files, 751,271 docs
+  10,000/35,857 files, 837,426 docs
+  11,000/35,857 files, 922,048 docs
+  12,000/35,857 files, 1,007,284 docs
+  13,000/35,857 files, 1,090,701 docs
+  14,000/35,857 files, 1,176,930 docs
+  15,000/35,857 files, 1,263,502 docs
+  16,000/35,857 files, 1,350,287 docs
+  17,000/35,857 files, 1,436,843 docs
+  18,000/35,857 files, 1,522,630 docs
+  19,000/35,857 files, 1,608,474 docs
+  20,000/35,857 files, 1,694,048 docs
+  21,000/35,857 files, 1,778,849 docs
+  22,000/35,857 files, 1,864,965 docs
+  23,000/35,857 files, 1,950,574 docs
+  24,000/35,857 files, 1,978,137 docs
+  25,000/35,857 files, 1,978,137 docs
+  26,000/35,857 files, 1,978,137 docs
+  27,000/35,857 files, 1,978,137 docs
+  28,000/35,857 files, 1,978,137 docs
+  29,000/35,857 files, 1,978,137 docs
+  30,000/35,857 files, 1,978,137 docs
+  31,000/35,857 files, 1,978,137 docs
+  32,000/35,857 files, 1,978,137 docs
+  33,000/35,857 files, 1,978,137 docs
+  34,000/35,857 files, 1,978,137 docs
+  35,000/35,857 files, 1,978,137 docs
+DONE: 35,857 file(s), 1,978,137 docs -> OpenSearch, 12630 error(s), 1982s
+--- after cc-warc-people-company ---
+C:\Users\scott\OneDrive\Desktop\Common Crawler Code\rampedup-phase1\node_modules\@opensearch-project\opensearch\lib\Connection.js:131
+      callback(new ConnectionError(err.message), null);
+               ^
+
+ConnectionError: Connection Error
+    at ClientRequest.onError (C:\Users\scott\OneDrive\Desktop\Common Crawler Code\rampedup-phase1\node_modules\@opensearch-project\opensearch\lib\Connection.js:131:16)
+    at ClientRequest.emit (node:events:509:20)
+    at emitErrorEvent (node:_http_client:109:11)
+    at TLSSocket.socketErrorListener (node:_http_client:593:5)
+    at TLSSocket.emit (node:events:509:20)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  meta: {
+    body: null,
+    statusCode: null,
+    headers: null,
+    meta: {
+      context: null,
+      request: {
+        params: {
+          method: 'GET',
+          path: '/contacts/_count',
+          querystring: '',
+          body: '',
+          headers: {
+            'user-agent': 'opensearch-js/3.6.0 (win32 10.0.22621-x64; Node.js v26.2.0)'
+          },
+          timeout: 30000
+        },
+        options: {},
+        id: 2
+      },
+      name: 'opensearch-js',
+      connection: AwsSigv4SignerConnection {
+        url: https://search-contacts-prod-3wdhiegssjafz4v3hmtdbkgmmu.us-east-1.es.amazonaws.com/,
+        ssl: null,
+        id: 'https://search-contacts-prod-3wdhiegssjafz4v3hmtdbkgmmu.us-east-1.es.amazonaws.com/',
+        headers: {},
+        deadCount: 8,
+        resurrectTimeout: 1785573183068,
+        _openRequests: 0,
+        _status: 'dead',
+        roles: { data: true, ingest: true },
+        agent: Agent {
+          _events: [Object: null prototype] {
+            free: [Function (anonymous)],
+            newListener: [Function: maybeEnableKeylog]
+          },
+          _eventsCount: 2,
+          _maxListeners: undefined,
+          options: [Object: null prototype] {
+            keepAlive: true,
+            keepAliveMsecs: 1000,
+            maxSockets: 256,
+            maxFreeSockets: 256,
+            scheduling: 'lifo',
+            defaultPort: 443,
+            protocol: 'https:',
+            noDelay: true,
+            path: null
+          },
+          defaultPort: 443,
+          protocol: 'https:',
+          requests: [Object: null prototype] {},
+          sockets: [Object: null prototype] {
+            'search-contacts-prod-3wdhiegssjafz4v3hmtdbkgmmu.us-east-1.es.amazonaws.com:443:::::::::::::::::::::': [Array]
+          },
+          freeSockets: [Object: null prototype] {},
+          keepAliveMsecs: 1000,
+          keepAlive: true,
+          maxSockets: 256,
+          maxFreeSockets: 256,
+          scheduling: 'lifo',
+          maxTotalSockets: Infinity,
+          totalSocketCount: 1,
+          agentKeepAliveTimeoutBuffer: 1000,
+          maxCachedSessions: 100,
+          _sessionCache: { map: {}, list: [] },
+          Symbol(shapeMode): false,
+          Symbol(kCapture): false
+        },
+        makeRequest: [Function: request]
+      },
+      attempts: 3,
+      aborted: false
+    }
+  }
+}
+
+Node.js v26.2.0
+=== drive cc-warc-bio-repo Sat Aug  1 04:01:03 EDT 2026 ===
+Lambda concurrency limit 10 -> driving at 8 concurrent (raise the quota to go faster)
+  200 ptrs | 0 records | 8696 ptr/s | 1 inv-err
+  10,200 ptrs | 0 records | 71329 ptr/s | 51 inv-err
+  20,200 ptrs | 0 records | 81781 ptr/s | 101 inv-err
+  30,200 ptrs | 0 records | 87536 ptr/s | 151 inv-err
+  40,200 ptrs | 0 records | 90337 ptr/s | 201 inv-err
+  50,200 ptrs | 0 records | 91606 ptr/s | 251 inv-err
+  60,200 ptrs | 0 records | 93916 ptr/s | 301 inv-err
+  70,200 ptrs | 0 records | 94865 ptr/s | 351 inv-err
+  80,200 ptrs | 0 records | 96394 ptr/s | 401 inv-err
+  90,200 ptrs | 0 records | 97725 ptr/s | 451 inv-err
+  100,200 ptrs | 0 records | 97852 ptr/s | 501 inv-err
+  110,200 ptrs | 0 records | 98305 ptr/s | 551 inv-err
+  120,200 ptrs | 0 records | 99093 ptr/s | 601 inv-err
+  130,200 ptrs | 0 records | 99541 ptr/s | 651 inv-err
+  140,200 ptrs | 0 records | 100286 ptr/s | 701 inv-err
+  150,200 ptrs | 0 records | 101213 ptr/s | 751 inv-err
+  160,200 ptrs | 0 records | 101650 ptr/s | 801 inv-err
+  170,200 ptrs | 0 records | 102468 ptr/s | 851 inv-err
+  180,200 ptrs | 0 records | 102971 ptr/s | 901 inv-err
+  190,200 ptrs | 0 records | 103201 ptr/s | 951 inv-err
+  200,200 ptrs | 0 records | 103623 ptr/s | 1001 inv-err
+  210,200 ptrs | 0 records | 103802 ptr/s | 1051 inv-err
+  220,200 ptrs | 0 records | 104163 ptr/s | 1101 inv-err
+  230,200 ptrs | 0 records | 104163 ptr/s | 1151 inv-err
+  240,200 ptrs | 0 records | 104253 ptr/s | 1201 inv-err
+  250,200 ptrs | 0 records | 104686 ptr/s | 1251 inv-err
+  260,200 ptrs | 0 records | 104919 ptr/s | 1301 inv-err
+  270,200 ptrs | 0 records | 104973 ptr/s | 1351 inv-err
+  280,200 ptrs | 0 records | 105497 ptr/s | 1401 inv-err
+  290,200 ptrs | 0 records | 105527 ptr/s | 1451 inv-err
+  300,200 ptrs | 0 records | 105704 ptr/s | 1501 inv-err
+  310,200 ptrs | 0 records | 106015 ptr/s | 1551 inv-err
+  320,200 ptrs | 0 records | 106202 ptr/s | 1601 inv-err
+  330,200 ptrs | 0 records | 106413 ptr/s | 1651 inv-err
+  340,200 ptrs | 0 records | 106679 ptr/s | 1701 inv-err
+  350,200 ptrs | 0 records | 106638 ptr/s | 1751 inv-err
+  360,200 ptrs | 0 records | 106726 ptr/s | 1801 inv-err
+  370,200 ptrs | 0 records | 107087 ptr/s | 1851 inv-err
+  380,200 ptrs | 0 records | 107038 ptr/s | 1901 inv-err
+  390,200 ptrs | 0 records | 107198 ptr/s | 1951 inv-err
+  400,200 ptrs | 0 records | 107263 ptr/s | 2001 inv-err
+  410,200 ptrs | 0 records | 107608 ptr/s | 2051 inv-err
+  420,200 ptrs | 0 records | 107771 ptr/s | 2101 inv-err
+  430,200 ptrs | 0 records | 107901 ptr/s | 2151 inv-err
+  440,200 ptrs | 0 records | 108157 ptr/s | 2201 inv-err
+  450,200 ptrs | 0 records | 108091 ptr/s | 2251 inv-err
+  460,200 ptrs | 0 records | 108308 ptr/s | 2301 inv-err
+  470,200 ptrs | 0 records | 108491 ptr/s | 2351 inv-err
+  480,200 ptrs | 0 records | 108471 ptr/s | 2401 inv-err
+  490,200 ptrs | 0 records | 108764 ptr/s | 2451 inv-err
+  500,200 ptrs | 0 records | 108668 ptr/s | 2501 inv-err
+  510,200 ptrs | 0 records | 108901 ptr/s | 2551 inv-err
+  520,200 ptrs | 0 records | 108692 ptr/s | 2601 inv-err
+  530,200 ptrs | 0 records | 108714 ptr/s | 2651 inv-err
+  540,200 ptrs | 0 records | 108670 ptr/s | 2701 inv-err
+  550,200 ptrs | 0 records | 108692 ptr/s | 2751 inv-err
+  560,200 ptrs | 0 records | 108650 ptr/s | 2801 inv-err
+  570,200 ptrs | 0 records | 108921 ptr/s | 2851 inv-err
+  580,200 ptrs | 0 records | 109142 ptr/s | 2901 inv-err
+  590,200 ptrs | 0 records | 109276 ptr/s | 2951 inv-err
+  600,200 ptrs | 0 records | 109246 ptr/s | 3001 inv-err
+DONE: 607,486 pointers -> 0 records | 0 fetched, 0 empty | 3038 invoke-err | 6s | 109437 ptr/s
+Next: OPENSEARCH_ENDPOINT=… node load-extracted.js cc-extracted/bf-cc-warc-bio-repo/
+=== load cc-warc-bio-repo Sat Aug  1 04:01:08 EDT 2026 ===
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-bio-repo/ -> OpenSearch (conc 8)
+load error: 
+cc-warc-bio-repo LOAD-FAILED
+=== drive cc-warc-mmiss-all Sat Aug  1 04:01:09 EDT 2026 ===
+Lambda concurrency limit 10 -> driving at 8 concurrent (raise the quota to go faster)
+  200 ptrs | 0 records | 8333 ptr/s | 1 inv-err
+  10,200 ptrs | 0 records | 71831 ptr/s | 51 inv-err
+  20,200 ptrs | 0 records | 82787 ptr/s | 101 inv-err
+  30,200 ptrs | 0 records | 85795 ptr/s | 151 inv-err
+  40,200 ptrs | 0 records | 89732 ptr/s | 201 inv-err
+  50,200 ptrs | 0 records | 87304 ptr/s | 251 inv-err
+  60,200 ptrs | 0 records | 88922 ptr/s | 301 inv-err
+  70,200 ptrs | 0 records | 90933 ptr/s | 351 inv-err
+  80,200 ptrs | 0 records | 92184 ptr/s | 401 inv-err
+  90,200 ptrs | 0 records | 93086 ptr/s | 451 inv-err
+  100,200 ptrs | 0 records | 94085 ptr/s | 501 inv-err
+  110,200 ptrs | 0 records | 94430 ptr/s | 551 inv-err
+  120,200 ptrs | 0 records | 96237 ptr/s | 601 inv-err
+  130,200 ptrs | 0 records | 96659 ptr/s | 651 inv-err
+  140,200 ptrs | 0 records | 97632 ptr/s | 701 inv-err
+  150,200 ptrs | 0 records | 98881 ptr/s | 751 inv-err
+  160,200 ptrs | 0 records | 99257 ptr/s | 801 inv-err
+  170,200 ptrs | 0 records | 100000 ptr/s | 851 inv-err
+  180,200 ptrs | 0 records | 100896 ptr/s | 901 inv-err
+  190,200 ptrs | 0 records | 101440 ptr/s | 951 inv-err
+  200,200 ptrs | 0 records | 102247 ptr/s | 1001 inv-err
+  210,200 ptrs | 0 records | 102687 ptr/s | 1051 inv-err
+  220,200 ptrs | 0 records | 103283 ptr/s | 1101 inv-err
+  230,200 ptrs | 0 records | 103461 ptr/s | 1151 inv-err
+  240,200 ptrs | 0 records | 103938 ptr/s | 1201 inv-err
+  250,200 ptrs | 0 records | 104120 ptr/s | 1251 inv-err
+  260,200 ptrs | 0 records | 103955 ptr/s | 1301 inv-err
+  270,200 ptrs | 0 records | 104244 ptr/s | 1351 inv-err
+  280,200 ptrs | 0 records | 104669 ptr/s | 1401 inv-err
+  290,200 ptrs | 0 records | 104917 ptr/s | 1451 inv-err
+  300,200 ptrs | 0 records | 105333 ptr/s | 1501 inv-err
+  310,200 ptrs | 0 records | 105690 ptr/s | 1551 inv-err
+  320,200 ptrs | 0 records | 105886 ptr/s | 1601 inv-err
+  330,200 ptrs | 0 records | 106105 ptr/s | 1651 inv-err
+  340,200 ptrs | 0 records | 106246 ptr/s | 1701 inv-err
+  350,200 ptrs | 0 records | 106315 ptr/s | 1751 inv-err
+  360,200 ptrs | 0 records | 106442 ptr/s | 1801 inv-err
+  370,200 ptrs | 0 records | 106624 ptr/s | 1851 inv-err
+  380,200 ptrs | 0 records | 106828 ptr/s | 1901 inv-err
+  390,200 ptrs | 0 records | 107168 ptr/s | 1951 inv-err
+  400,200 ptrs | 0 records | 107292 ptr/s | 2001 inv-err
+  410,200 ptrs | 0 records | 107495 ptr/s | 2051 inv-err
+  420,200 ptrs | 0 records | 107661 ptr/s | 2101 inv-err
+  430,200 ptrs | 0 records | 107955 ptr/s | 2151 inv-err
+  440,200 ptrs | 0 records | 108184 ptr/s | 2201 inv-err
+  450,200 ptrs | 0 records | 108482 ptr/s | 2251 inv-err
+  460,200 ptrs | 0 records | 108563 ptr/s | 2301 inv-err
+  470,200 ptrs | 0 records | 108717 ptr/s | 2351 inv-err
+  480,200 ptrs | 0 records | 108815 ptr/s | 2401 inv-err
+  490,200 ptrs | 0 records | 108982 ptr/s | 2451 inv-err
+  500,200 ptrs | 0 records | 109071 ptr/s | 2501 inv-err
+  510,200 ptrs | 0 records | 108994 ptr/s | 2551 inv-err
+  520,200 ptrs | 0 records | 109125 ptr/s | 2601 inv-err
+  530,200 ptrs | 0 records | 109297 ptr/s | 2651 inv-err
+  540,200 ptrs | 0 records | 109463 ptr/s | 2701 inv-err
+  550,200 ptrs | 0 records | 109340 ptr/s | 2751 inv-err
+  560,200 ptrs | 0 records | 109371 ptr/s | 2801 inv-err
+  570,200 ptrs | 0 records | 109612 ptr/s | 2851 inv-err
+  580,200 ptrs | 0 records | 109762 ptr/s | 2901 inv-err
+  590,200 ptrs | 0 records | 109784 ptr/s | 2951 inv-err
+  600,200 ptrs | 0 records | 109846 ptr/s | 3001 inv-err
+  610,200 ptrs | 0 records | 109847 ptr/s | 3051 inv-err
+  620,200 ptrs | 0 records | 109945 ptr/s | 3101 inv-err
+  630,200 ptrs | 0 records | 110040 ptr/s | 3151 inv-err
+  640,200 ptrs | 0 records | 110227 ptr/s | 3201 inv-err
+  650,200 ptrs | 0 records | 110241 ptr/s | 3251 inv-err
+  660,200 ptrs | 0 records | 110401 ptr/s | 3301 inv-err
+  670,200 ptrs | 0 records | 110539 ptr/s | 3351 inv-err
+  680,200 ptrs | 0 records | 110692 ptr/s | 3401 inv-err
+  690,200 ptrs | 0 records | 110787 ptr/s | 3451 inv-err
+  700,200 ptrs | 0 records | 110914 ptr/s | 3501 inv-err
+  710,200 ptrs | 0 records | 111056 ptr/s | 3551 inv-err
+  720,200 ptrs | 0 records | 111125 ptr/s | 3601 inv-err
+  730,200 ptrs | 0 records | 111175 ptr/s | 3651 inv-err
+  740,200 ptrs | 0 records | 111308 ptr/s | 3701 inv-err
+  750,200 ptrs | 0 records | 111289 ptr/s | 3751 inv-err
+  760,200 ptrs | 0 records | 111222 ptr/s | 3801 inv-err
+  770,200 ptrs | 0 records | 111397 ptr/s | 3851 inv-err
+DONE: 771,052 pointers -> 0 records | 0 fetched, 0 empty | 3856 invoke-err | 7s | 111488 ptr/s
+Next: OPENSEARCH_ENDPOINT=… node load-extracted.js cc-extracted/bf-cc-warc-mmiss-all/
+=== load cc-warc-mmiss-all Sat Aug  1 04:01:16 EDT 2026 ===
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-mmiss-all/ -> OpenSearch (conc 8)
+load error: 
+cc-warc-mmiss-all LOAD-FAILED
+=== drive cc-warc-tld-expand Sat Aug  1 04:01:16 EDT 2026 ===
+Lambda concurrency limit 10 -> driving at 8 concurrent (raise the quota to go faster)
+  200 ptrs | 0 records | 8696 ptr/s | 1 inv-err
+  10,200 ptrs | 0 records | 70833 ptr/s | 51 inv-err
+  20,200 ptrs | 0 records | 82449 ptr/s | 101 inv-err
+  30,200 ptrs | 0 records | 88304 ptr/s | 151 inv-err
+  40,200 ptrs | 0 records | 91572 ptr/s | 201 inv-err
+  50,200 ptrs | 0 records | 92449 ptr/s | 251 inv-err
+  60,200 ptrs | 0 records | 93916 ptr/s | 301 inv-err
+  70,200 ptrs | 0 records | 95640 ptr/s | 351 inv-err
+  80,200 ptrs | 0 records | 96163 ptr/s | 401 inv-err
+  90,200 ptrs | 0 records | 96989 ptr/s | 451 inv-err
+  100,200 ptrs | 0 records | 97661 ptr/s | 501 inv-err
+  110,200 ptrs | 0 records | 97695 ptr/s | 551 inv-err
+  120,200 ptrs | 0 records | 98525 ptr/s | 601 inv-err
+  130,200 ptrs | 0 records | 99389 ptr/s | 651 inv-err
+  140,200 ptrs | 0 records | 99645 ptr/s | 701 inv-err
+  150,200 ptrs | 0 records | 100334 ptr/s | 751 inv-err
+DONE: 150,413 pointers -> 0 records | 0 fetched, 0 empty | 753 invoke-err | 1s | 100476 ptr/s
+Next: OPENSEARCH_ENDPOINT=… node load-extracted.js cc-extracted/bf-cc-warc-tld-expand/
+=== load cc-warc-tld-expand Sat Aug  1 04:01:18 EDT 2026 ===
+loading s3://aws-athena-query-results-475987770186-us-east-1/cc-extracted/bf-cc-warc-tld-expand/ -> OpenSearch (conc 8)
+load error: 
+cc-warc-tld-expand LOAD-FAILED
+=== WAVE 2 DONE Sat Aug  1 04:01:19 EDT 2026 ===
+C:\Users\scott\OneDrive\Desktop\Common Crawler Code\rampedup-phase1\node_modules\@opensearch-project\opensearch\lib\Connection.js:131
+      callback(new ConnectionError(err.message), null);
+               ^
+
+ConnectionError: Connection Error
+    at ClientRequest.onError (C:\Users\scott\OneDrive\Desktop\Common Crawler Code\rampedup-phase1\node_modules\@opensearch-project\opensearch\lib\Connection.js:131:16)
+    at ClientRequest.emit (node:events:509:20)
+    at emitErrorEvent (node:_http_client:109:11)
+    at TLSSocket.socketErrorListener (node:_http_client:593:5)
+    at TLSSocket.emit (node:events:509:20)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  meta: {
+    body: null,
+    statusCode: null,
+    headers: null,
+    meta: {
+      context: null,
+      request: {
+        params: {
+          method: 'GET',
+          path: '/contacts/_count',
+          querystring: '',
+          body: '',
+          headers: {
+            'user-agent': 'opensearch-js/3.6.0 (win32 10.0.22621-x64; Node.js v26.2.0)'
+          },
+          timeout: 30000
+        },
+        options: {},
+        id: 2
+      },
+      name: 'opensearch-js',
+      connection: AwsSigv4SignerConnection {
+        url: https://search-contacts-prod-3wdhiegssjafz4v3hmtdbkgmmu.us-east-1.es.amazonaws.com/,
+        ssl: null,
+        id: 'https://search-contacts-prod-3wdhiegssjafz4v3hmtdbkgmmu.us-east-1.es.amazonaws.com/',
+        headers: {},
+        deadCount: 8,
+        resurrectTimeout: 1785573199489,
+        _openRequests: 0,
+        _status: 'dead',
+        roles: { data: true, ingest: true },
+        agent: Agent {
+          _events: [Object: null prototype] {
+            free: [Function (anonymous)],
+            newListener: [Function: maybeEnableKeylog]
+          },
+          _eventsCount: 2,
+          _maxListeners: undefined,
+          options: [Object: null prototype] {
+            keepAlive: true,
+            keepAliveMsecs: 1000,
+            maxSockets: 256,
+            maxFreeSockets: 256,
+            scheduling: 'lifo',
+            defaultPort: 443,
+            protocol: 'https:',
+            noDelay: true,
+            path: null
+          },
+          defaultPort: 443,
+          protocol: 'https:',
+          requests: [Object: null prototype] {},
+          sockets: [Object: null prototype] {
+            'search-contacts-prod-3wdhiegssjafz4v3hmtdbkgmmu.us-east-1.es.amazonaws.com:443:::::::::::::::::::::': [Array]
+          },
+          freeSockets: [Object: null prototype] {},
+          keepAliveMsecs: 1000,
+          keepAlive: true,
+          maxSockets: 256,
+          maxFreeSockets: 256,
+          scheduling: 'lifo',
+          maxTotalSockets: Infinity,
+          totalSocketCount: 1,
+          agentKeepAliveTimeoutBuffer: 1000,
+          maxCachedSessions: 100,
+          _sessionCache: { map: {}, list: [] },
+          Symbol(shapeMode): false,
+          Symbol(kCapture): false
+        },
+        makeRequest: [Function: request]
+      },
+      attempts: 3,
+      aborted: false
+    }
+  }
+}
+
+Node.js v26.2.0

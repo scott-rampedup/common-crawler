@@ -1,0 +1,9 @@
+    HQ: 100,000 (0 err)
+    HQ: 200,000 (0 err)
+    HQ: 300,000 (0 err)
+    HQ: 400,000 (0 err)
+  HQ: 411,723 applied, 0 err
+    Locations: 100,000 (0 err)
+  Locations: 177,790 applied, 0 err
+  employees: 30,587 upserted to Master DB (Source="Employee")
+DONE in 179s

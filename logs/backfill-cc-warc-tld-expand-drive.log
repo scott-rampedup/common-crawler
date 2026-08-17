@@ -1,0 +1,19 @@
+Lambda concurrency limit 10 -> driving at 8 concurrent (raise the quota to go faster)
+  200 ptrs | 0 records | 8696 ptr/s | 1 inv-err
+  10,200 ptrs | 0 records | 70833 ptr/s | 51 inv-err
+  20,200 ptrs | 0 records | 82449 ptr/s | 101 inv-err
+  30,200 ptrs | 0 records | 88304 ptr/s | 151 inv-err
+  40,200 ptrs | 0 records | 91572 ptr/s | 201 inv-err
+  50,200 ptrs | 0 records | 92449 ptr/s | 251 inv-err
+  60,200 ptrs | 0 records | 93916 ptr/s | 301 inv-err
+  70,200 ptrs | 0 records | 95640 ptr/s | 351 inv-err
+  80,200 ptrs | 0 records | 96163 ptr/s | 401 inv-err
+  90,200 ptrs | 0 records | 96989 ptr/s | 451 inv-err
+  100,200 ptrs | 0 records | 97661 ptr/s | 501 inv-err
+  110,200 ptrs | 0 records | 97695 ptr/s | 551 inv-err
+  120,200 ptrs | 0 records | 98525 ptr/s | 601 inv-err
+  130,200 ptrs | 0 records | 99389 ptr/s | 651 inv-err
+  140,200 ptrs | 0 records | 99645 ptr/s | 701 inv-err
+  150,200 ptrs | 0 records | 100334 ptr/s | 751 inv-err
+DONE: 150,413 pointers -> 0 records | 0 fetched, 0 empty | 753 invoke-err | 1s | 100476 ptr/s
+Next: OPENSEARCH_ENDPOINT=… node load-extracted.js cc-extracted/bf-cc-warc-tld-expand/
