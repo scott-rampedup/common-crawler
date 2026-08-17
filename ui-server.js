@@ -1769,25 +1769,46 @@ const server = http.createServer(async (req, res) => {
       const region = process.env.AWS_REGION || 'us-east-1';
       const bucket = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${region}`;
       if (!_qs3) _qs3 = new S3Client({ region });
-      let token = null, objects = 0, bytes = 0, urls = 0, unnamed = 0, oldest = '', newest = '';
+      let token = null, allKeys = [], sizes = new Map();
       do {
         const r = await _qs3.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: MONITOR_QUEUE_PREFIX, ContinuationToken: token }));
-        for (const o of (r.Contents || [])) {
-          objects++; bytes += o.Size || 0;
-          const m = /-(\d+)\.txt$/.exec(o.Key || '');
-          if (m) urls += Number(m[1]); else unnamed++;
-          const k = (o.Key || '').slice(MONITOR_QUEUE_PREFIX.length);
-          if (!oldest || k < oldest) oldest = k;
-          if (!newest || k > newest) newest = k;
-        }
+        for (const o of (r.Contents || [])) { allKeys.push(o.Key); sizes.set(o.Key, o.Size || 0); }
         token = r.IsTruncated ? r.NextContinuationToken : null;
       } while (token);
+
+      // A LIST of this prefix is NOT the backlog. The IAM user has no s3:DeleteObject, so every object a
+      // run consumes stays in the listing forever and is skipped via the queue_consumed ledger instead.
+      // Counting the raw listing reported 10,398,933 URLs when 97,504 were actually unprocessed -- a
+      // number alarming enough to cast doubt on the whole pipeline. Report what is genuinely left.
+      const consumedSet = new Set();
+      try {
+        const cc = reader && reader.client;
+        if (cc && allKeys.length) {
+          for (let i = 0; i < allKeys.length; i += 1000) {
+            const r = await cc.mget({ index: process.env.QUEUE_CONSUMED_INDEX || 'queue_consumed',
+              body: { ids: allKeys.slice(i, i + 1000) }, _source: false });
+            for (const d of (((r.body || r).docs) || [])) if (d && d.found) consumedSet.add(d._id);
+          }
+        }
+      } catch (e) { /* ledger absent -> treat everything as pending, which errs loud not quiet */ }
+
+      let objects = 0, bytes = 0, urls = 0, unnamed = 0, oldest = '', newest = '';
+      for (const key of allKeys) {
+        if (consumedSet.has(key)) continue;
+        objects++; bytes += sizes.get(key) || 0;
+        const m = /-(\d+)\.txt$/.exec(key || '');
+        if (m) urls += Number(m[1]); else unnamed++;
+        const k = (key || '').slice(MONITOR_QUEUE_PREFIX.length);
+        if (!oldest || k < oldest) oldest = k;
+        if (!newest || k > newest) newest = k;
+      }
       // An oldest entry far behind the newest means the drain is not keeping up — surface the age rather
       // than only the size, because a small queue that never empties is the worse failure.
       const parseStamp = (k) => { const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})/.exec(k || ''); return m ? Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`) : 0; };
       const oldestMs = parseStamp(oldest);
       sendJson(res, {
         objects, urls, bytes, unnamed,
+        consumed: consumedSet.size, listed: allKeys.length,
         oldest: oldest ? oldest.slice(0, 19).replace(/-(\d{2})-(\d{2})-(\d{2})$/, ' $1:$2:$3') : null,
         newest: newest ? newest.slice(0, 19).replace(/-(\d{2})-(\d{2})-(\d{2})$/, ' $1:$2:$3') : null,
         oldestAgeHours: oldestMs ? Math.round(((Date.now() - oldestMs) / 3600000) * 10) / 10 : null,

@@ -806,6 +806,9 @@ async function fetchBacklog() {
       const bits = [];
       if (b.urls) bits.push(`${Number(b.objects).toLocaleString()} batch${b.objects === 1 ? '' : 'es'}, ${(b.bytes / 1e6).toFixed(1)}MB, oldest ${escapeHtml(b.oldest || '')}`);
       else bits.push('Queue is empty — everything discovered has been extracted.');
+      // The prefix keeps every object forever (no delete permission), so say plainly how much of the
+      // listing is already done. Without this the raw object count reads as an enormous backlog.
+      if (b.consumed) bits.push(`${Number(b.consumed).toLocaleString()} of ${Number(b.listed).toLocaleString()} batches already processed (kept in S3, skipped on every run).`);
       if (b.liveJobs) bits.push('Inline live crawling is ON as well, which is slower than the queue drain and is lost on restart.');
       if (b.lastDrain) bits.push(`Last drain finished ${escapeHtml(String(b.lastDrain.finished || '').slice(0, 19).replace('T', ' '))} (exit ${b.lastDrain.code}).`);
       note.textContent = bits.join(' · ');
