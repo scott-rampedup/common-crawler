@@ -62,23 +62,41 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
   // So: the comparison is now uncapped and streamed. `liveCap` bounds only how many URLs get an INLINE live
   // crawl job; past it the URLs still go to the durable S3 queue for the ETL. A backlog can delay when a new
   // bio is turned into a contact. It can no longer stop us from finding it.
-  async function runPass({ liveCap = 300000, conc = 48, flush = 3000, kind = 'People', type = '',
-                           page = 5000, cap = null, maxSitemaps = 0, fetchTimeout = 8000, onProgress = null } = {}) {
+  async function runPass({ liveCap = 300000, conc = 64, flush = 3000, kind = 'People', type = '',
+                           page = 5000, cap = null, maxSitemaps = 0, fetchTimeout = 8000,
+                           fetchMaxBytes = 8 * 1024 * 1024, stateFlush = 500, onProgress = null } = {}) {
     if (running) { log('monitor pass already running — skipping'); return { skipped: true }; }
     if (cap != null) liveCap = cap;                       // back-compat with the old {cap} callers
     running = true;
     const startedAt = new Date().toISOString();
     const t0 = Date.now();
     const summary = { startedAt, finishedAt: null, seconds: 0, total: 0, scanned: 0, withGap: 0,
-      newUrls: 0, liveQueued: 0, jobs: 0, noUrls: 0, errors: 0, liveCapReached: false, top: [] };
+      newUrls: 0, liveQueued: 0, jobs: 0, noUrls: 0, errors: 0, liveCapReached: false, top: [],
+      stateOk: 0, stateErrors: 0, stateRejected: 0, stateSample: '', ok: false };
     const byDomain = new Map();                            // domain -> new-URL count, for the report
     // A sweep of this size is dominated by sitemaps that no longer resolve, and the default fetchDoc spends
     // up to 15s on the primary path and another 15s on the residential gateway for each one. Measured on
     // live data: 262 of 408 sitemaps returned nothing, at 16.4s average -> a 45-hour full sweep. Shorten the
     // timeout and only escalate to residential for statuses that actually mean "blocked" rather than "gone".
-    const swFetch = (u) => ccEngine.fetchDoc(u, { timeout: fetchTimeout, fallbackStatus: [403, 429, 503] });
+    const swFetch = (u) => ccEngine.fetchDoc(u, { timeout: fetchTimeout, fallbackStatus: [403, 429, 503], maxBytes: fetchMaxBytes });
     const nowIso = startedAt;
     let buffer = [];
+    // State writes go through ONE bulk per stateFlush sitemaps instead of one update per sitemap. At
+    // conc 320 the old path put that many single-doc updates in flight at once, which is what OpenSearch
+    // sheds first under load -- and every rejection was swallowed.
+    let stateBuf = [];
+    const flushState = async () => {
+      if (!stateBuf.length) return;
+      const batch = stateBuf; stateBuf = [];
+      const r = await sitemaps.bulkSetMonitorState(sitemapsClient, batch);
+      summary.stateOk += r.ok; summary.stateErrors += r.errors; summary.stateRejected += r.rejected;
+      if (r.sample && !summary.stateSample) { summary.stateSample = r.sample; log(`  state write error: ${r.sample}`); }
+    };
+    const putState = async (sitemap_url, patch) => {
+      stateBuf.push({ sitemap_url, patch });
+      if (stateBuf.length >= stateFlush) await flushState();
+    };
+
     const doFlush = () => {
       if (!buffer.length) return;
       const urls = buffer; buffer = [];
@@ -110,7 +128,7 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
         }
         // last_new_at makes "new tonight" queryable — last_new alone can't distinguish a sitemap that found
         // 12 new bios this pass from one that found 12 a week ago and none since.
-        await sitemaps.setMonitorState(sitemapsClient, d.sitemap_url, {
+        await putState(d.sitemap_url, {
           last_checked: nowIso, last_new: missing.length,
           total_new: (Number(d.total_new) || 0) + missing.length,
           ...(missing.length ? { last_new_at: nowIso } : {}),
@@ -118,7 +136,7 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
         });
       } catch (e) {
         summary.errors++;
-        try { await sitemaps.setMonitorState(sitemapsClient, d.sitemap_url, { last_checked: nowIso, monitor_note: String(e.message || 'error').slice(0, 200) }); } catch (e2) { /* */ }
+        try { await putState(d.sitemap_url, { last_checked: nowIso, monitor_note: String(e.message || 'error').slice(0, 200) }); } catch (e2) { /* */ }
       }
     };
 
@@ -145,15 +163,22 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
         }
       }
       doFlush();
+      await flushState();
       try { await sitemapsClient.indices.refresh({ index: sitemaps.INDEX }); } catch (e) { /* */ }
     } finally {
       running = false;
       summary.finishedAt = new Date().toISOString();
       summary.seconds = Math.round((Date.now() - t0) / 1000);
+      try { await flushState(); } catch (e) { /* */ }
+      // A sweep is only "ok" if it covered everything AND its writes actually landed. Coverage alone was
+      // the old bar, and a pass that stamped nothing still read as a clean run.
+      summary.ok = summary.total > 0 && summary.scanned >= summary.total && summary.stateErrors === 0;
       summary.top = [...byDomain.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([domain, count]) => ({ domain, count }));
       log(`nightly sweep done: scanned ${summary.scanned.toLocaleString()}/${summary.total.toLocaleString()}, ` +
           `${summary.withGap.toLocaleString()} sitemap(s) with new bios, ${summary.newUrls.toLocaleString()} new URL(s) ` +
-          `in ${summary.jobs} job(s), ${summary.noUrls.toLocaleString()} returned no urls, ${summary.errors.toLocaleString()} error(s), ${summary.seconds}s`);
+          `in ${summary.jobs} job(s), ${summary.noUrls.toLocaleString()} returned no urls, ${summary.errors.toLocaleString()} error(s), ` +
+          `state writes ${summary.stateOk.toLocaleString()} ok / ${summary.stateErrors.toLocaleString()} failed` +
+          `${summary.stateRejected ? ` (${summary.stateRejected.toLocaleString()} rejected by OpenSearch)` : ''}, ${summary.seconds}s`);
     }
     return summary;
   }

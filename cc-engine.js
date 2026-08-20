@@ -1198,13 +1198,17 @@ async function liveFetchPage(url){
 async function fetchDoc(url, opts = {}){
   const accept = /xml|text|gzip|octet-stream|html|rss|plain/;
   const timeout = opts.timeout || 15000;
-  let r = await httpGetRaw(url, { accept, maxBytes: 30 * 1024 * 1024, returnMeta: true, timeout });
+  // 30MB per document is right for a deliberate fetch of one big sitemap. It is not right for hundreds of
+  // concurrent ones: 320 in flight against a 6.6GB heap is 9.6GB of worst case, which is what aborted the
+  // app process (exit 134) during the first nightly sweep. Sweeps pass a much smaller ceiling.
+  const maxBytes = opts.maxBytes || 30 * 1024 * 1024;
+  let r = await httpGetRaw(url, { accept, maxBytes, returnMeta: true, timeout });
   if(r.status === 200 && r.body) return r.body;
   const mayFallback = !opts.fallbackStatus || opts.fallbackStatus.includes(r.status);
   // escalate to the residential gateway for docs blocked on the primary path (e.g. a Cloudflare-
   // fronted sitemap) so big agent sitemaps still come through.
   if(PROXY_FALLBACK_URL && mayFallback){
-    r = await httpGetRaw(url, { accept, maxBytes: 30 * 1024 * 1024, returnMeta: true, proxyTier: "fallback", timeout });
+    r = await httpGetRaw(url, { accept, maxBytes, returnMeta: true, proxyTier: "fallback", timeout });
     if(r.status === 200 && r.body) return r.body;
   }
   return "";

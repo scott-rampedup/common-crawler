@@ -345,23 +345,6 @@ function getLibMonitor() {   // lazy: sitemapsClient + reader are set in startup
   }
   return libMonitor;
 }
-// Run fn once a day at a fixed UTC hour, re-arming AFTER it finishes so a long sweep can't stack on itself
-// or shift its own start time. setInterval from boot does neither: it drifts on every deploy.
-function scheduleDaily(hourUtc, minuteUtc, fn, label) {
-  const arm = () => {
-    const now = new Date();
-    const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hourUtc, minuteUtc, 0, 0));
-    if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
-    const ms = next - now;
-    console.log(`[schedule] ${label}: next run ${next.toISOString()} (in ${Math.round(ms / 60000)} min)`);
-    setTimeout(async () => {
-      try { await fn(); } catch (e) { console.error(`[schedule] ${label} threw:`, e && e.message); }
-      finally { arm(); }
-    }, ms);
-  };
-  arm();
-}
-
 let monitorRunning = false;
 // Single guard shared by the scheduled tick AND the manual /api/monitor/run endpoint, so two passes
 // never overlap.
@@ -1760,12 +1743,21 @@ const server = http.createServer(async (req, res) => {
       // A full sweep is ~237k sitemaps and takes hours, so it cannot be awaited inside a request. {full:true}
       // starts it in the background and returns immediately; the default stays a quick bounded spot-check.
       try {
+        // A full sweep runs on its own machine, never in this process — see the scheduler comment above.
         if (b && b.full) {
-          const smReport = require('./sitemap-monitor-report');
-          lm.runPass({ liveCap: Number(b.liveCap) || 300000, conc: Math.max(1, Number(b.conc) || 48) })
-            .then((sum) => (sum && !sum.skipped ? smReport.sendSweepReport(sum, { client: reader && reader.client }) : null))
-            .catch((e) => console.error('[sitemap-lib-monitor] manual full sweep failed:', e.message));
-          sendJson(res, { started: true, full: true, note: 'Full sweep running in the background; a report email follows.' });
+          if (!process.env.FLY_API_TOKEN) { jsonErr(res, 503, 'FLY_API_TOKEN not set — cannot launch a sweep machine'); return; }
+          const { launchFleet, reapFleet } = require('./fleet-launch');
+          await reapFleet({ namePrefix: 'sitemap-sweep', log: (m) => console.log(m) });
+          const started = await launchFleet({
+            shards: 1, namePrefix: 'sitemap-sweep',
+            memoryMb: Number(process.env.SITEMAP_SWEEP_MEMORY_MB) || 16384, cpus: Number(process.env.SITEMAP_SWEEP_CPUS) || 8,
+            env: { SWEEP_CONC: String(Math.max(1, Number(b.conc) || Number(process.env.SITEMAP_LIB_MONITOR_CONC) || 64)),
+                   CC_MAX_SOCKETS: String(Number(process.env.CC_MAX_SOCKETS) || 1024) },
+            cmd: () => ['node', '/app/sitemap-sweep.js'],
+            log: (m) => console.log(m),
+          });
+          sendJson(res, { started: started.length > 0, machines: started,
+            note: started.length ? 'Full sweep running on its own machine; a report email follows.' : 'No machine started.' });
           return;
         }
         const maxSitemaps = Math.min(50000, Math.max(1, Number(b && b.maxSitemaps) || 5000));
@@ -2616,31 +2608,87 @@ pruneOldJobs();
       // schedule — re-fetch each, extract the page URLs we don't have a contact for. last_checked ordering
       // rotates coverage across passes; run often enough (default every 12h) that all get re-checked daily.
       if (process.env.SITEMAP_LIB_MONITOR !== '0') {
-        // Nightly at a FIXED hour, not every-N-hours-from-boot. A 12h interval anchored on process start
-        // drifts with every deploy, and two half-sweeps a day is not the same thing as one full sweep a
-        // night: the pass takes the least-recently-checked sitemaps, so drift decides which ones get seen.
-        const SM_HOUR = Math.min(23, Math.max(0, Number(process.env.SITEMAP_LIB_MONITOR_HOUR) || 1));  // UTC
-        const SM_LIVE_CAP = Number(process.env.SITEMAP_LIB_MONITOR_MAX) || 300000;   // inline live jobs only
-        const SM_CONC = Math.max(1, Number(process.env.SITEMAP_LIB_MONITOR_CONC) || 320);  // measured: 14.3 sitemaps/s -> ~4.6h full sweep
-        const SM_TYPE = process.env.SITEMAP_LIB_MONITOR_TYPE || '';    // '' = every monitored People sitemap
-        const smReport = require('./sitemap-monitor-report');
-        const smPass = async (why) => {
-          const lm = getLibMonitor();
-          if (!lm) { console.error('[sitemap-lib-monitor] no monitor (OpenSearch not ready) — sweep skipped'); return; }
-          let summary = null;
-          try { summary = await lm.runPass({ liveCap: SM_LIVE_CAP, conc: SM_CONC, type: SM_TYPE,
-            fetchTimeout: Math.max(2000, Number(process.env.SITEMAP_LIB_MONITOR_TIMEOUT_MS) || 8000) }); }
-          catch (e) { console.error('[sitemap-lib-monitor] pass error:', e.message); }
-          if (!summary || summary.skipped) return;
-          // Report even on a partial or failed sweep — the incomplete-coverage banner is the whole point.
-          try { await smReport.sendSweepReport(summary, { client: reader && reader.client }); }
-          catch (e) { console.error('[sitemap-lib-monitor] report failed:', e.message); }
-          // Hand the night's finds straight to the drain rather than waiting for its own timer.
-          try { runBioEtlDrainGuarded('after nightly sitemap sweep'); } catch (e) { /* best-effort */ }
-        };
-        scheduleDaily(SM_HOUR, 0, () => smPass('nightly'), 'Sitemap Library monitor');
-        if (/^(1|true|yes|on)$/i.test(process.env.SITEMAP_LIB_MONITOR_ON_BOOT || '')) setTimeout(() => smPass('boot'), 5 * 60 * 1000);
-        console.log(`Sitemap Library monitor: ON, nightly at ${String(SM_HOUR).padStart(2, '0')}:00 UTC — FULL sweep of every monitored ${SM_TYPE || 'People'} sitemap (conc ${SM_CONC}, live cap ${SM_LIVE_CAP.toLocaleString()} URLs).`);
+        // The nightly sweep runs on its OWN machine, and is scheduled by re-checking persisted state every
+        // hour rather than by a timer.
+        //
+        // Both of those are corrections. The first version ran the sweep in THIS process at conc 320 and
+        // took it down with a V8 heap abort (exit_code=134) 26 minutes in, twice in one morning — the UI,
+        // the live crawler and the bio-ETL drain all live here. The second used setTimeout to the next
+        // 06:00; when the process restarted at 06:26 the new one armed for 06:00 TOMORROW and the day was
+        // silently lost. ui-server.js already documents that exact trap for the legacy monitor and solves
+        // it by checking a persisted last-run date hourly. This does the same.
+        const SW_START = Number(process.env.SITEMAP_SWEEP_UTC_START || 6);     // off-peak window, UTC
+        const SW_END = Number(process.env.SITEMAP_SWEEP_UTC_END || 12);
+        // Measured on a dedicated machine against real sitemaps: conc 64 -> 5.4/s (12.3h); conc 256 with
+        // the default 64-socket cap -> 12.2/s (5.4h); conc 384 with CC_MAX_SOCKETS=1024 -> 16.9/s (3.9h).
+        // Peak heap across all three was under 0.1GB, so this is network-bound, not memory-bound.
+        const SW_CONC = Math.max(1, Number(process.env.SITEMAP_LIB_MONITOR_CONC) || 384);
+        const SW_CPUS = Number(process.env.SITEMAP_SWEEP_CPUS) || 8;
+        const SW_MEM = Number(process.env.SITEMAP_SWEEP_MEMORY_MB) || Math.max(2048 * SW_CPUS, 16384);
+        const SW_MAX_ATTEMPTS = Math.max(1, Number(process.env.SITEMAP_SWEEP_MAX_ATTEMPTS) || 2);
+        const SW_PREFIX = 'sitemap-sweep';
+        const SW_STATE_ID = 'sitemap_sweep_state';
+        const CFG = process.env.CC_CONFIG_INDEX || 'cc_config';
+        const today = () => new Date().toISOString().slice(0, 10);
+        const inWindow = () => { const h = new Date().getUTCHours(); return SW_START <= SW_END ? (h >= SW_START && h < SW_END) : (h >= SW_START || h < SW_END); };
+
+        async function sweepState() {
+          try { const g = await reader.client.get({ index: CFG, id: SW_STATE_ID }); return (g.body || g)._source || {}; }
+          catch (e) { return {}; }
+        }
+        // Did a sweep actually SUCCEED today? The run record is written by the sweep machine itself, so a
+        // crashed sweep leaves no record and the next tick retries — up to SW_MAX_ATTEMPTS, so a sweep that
+        // crashes every time cannot spawn machines all day.
+        async function sweptToday() {
+          try {
+            const g = await reader.client.get({ index: CFG, id: 'sitemap_monitor_runs' });
+            const runs = ((g.body || g)._source || {}).runs || [];
+            return runs.some((r) => r.ok && String(r.startedAt || '').slice(0, 10) === today());
+          } catch (e) { return false; }
+        }
+        async function sweepMachineLive() {
+          try {
+            const { currentImage } = require('./fleet-launch');   // shares flyApi's auth handling
+            const res = await fetch(`https://api.machines.dev/v1/apps/${process.env.FLY_APP_NAME || 'common-crawler'}/machines`,
+              { headers: { Authorization: `Bearer ${process.env.FLY_API_TOKEN}` } });
+            const list = await res.json();
+            return (Array.isArray(list) ? list : []).some((m) => String(m.name || '').startsWith(SW_PREFIX) && m.state === 'started');
+          } catch (e) { return false; }          // unknown -> assume none, the attempt counter still bounds us
+        }
+
+        async function sweepTick() {
+          try {
+            if (!reader || !reader.client) return;
+            if (!process.env.FLY_API_TOKEN) { console.error('[sweep] FLY_API_TOKEN not set — cannot launch the nightly sweep machine'); return; }
+            if (!inWindow()) return;
+            if (await sweptToday()) return;
+            const st = await sweepState();
+            const attempts = (st.date === today() ? Number(st.attempts) || 0 : 0);
+            if (attempts >= SW_MAX_ATTEMPTS) {
+              if (attempts === SW_MAX_ATTEMPTS) console.error(`[sweep] ${attempts} attempt(s) today already failed — not retrying until tomorrow`);
+              return;
+            }
+            if (await sweepMachineLive()) { console.log('[sweep] a sweep machine is already running — skipping tick'); return; }
+            await reader.client.index({ index: CFG, id: SW_STATE_ID, refresh: true,
+              body: { date: today(), attempts: attempts + 1, last_launch: new Date().toISOString() } });
+            const { launchFleet, reapFleet } = require('./fleet-launch');
+            await reapFleet({ namePrefix: SW_PREFIX, log: (m) => console.log(m) });
+            const started = await launchFleet({
+              shards: 1, namePrefix: SW_PREFIX, memoryMb: SW_MEM, cpus: SW_CPUS,
+              // Machines launched through the API get the app's SECRETS but NOT fly.toml's [env], so every
+              // tuning value there (CC_MAX_SOCKETS in particular) silently reverts to its code default on
+              // the sweep machine. A 64-socket ceiling under a 256-way sweep throttles it without any error.
+              env: { SWEEP_CONC: String(SW_CONC), CC_MAX_SOCKETS: String(Number(process.env.CC_MAX_SOCKETS) || 1024) },
+              cmd: () => ['node', '/app/sitemap-sweep.js'],
+              log: (m) => console.log(m),
+            });
+            console.log(`[sweep] nightly sweep launched (attempt ${attempts + 1}/${SW_MAX_ATTEMPTS}): ${started.map((m) => m.id).join(', ') || 'NONE STARTED'}`);
+          } catch (e) { console.error('[sweep] tick error:', e && e.message); }
+        }
+
+        setInterval(sweepTick, 60 * 60 * 1000);          // hourly: survives restarts, cannot drift
+        setTimeout(sweepTick, 3 * 60 * 1000);            // and shortly after boot (fires only if due)
+        console.log(`Sitemap Library monitor: ON — full sweep of every monitored People sitemap, once per UTC day, on its own machine (window ${SW_START}-${SW_END}h UTC, conc ${SW_CONC}, ${SW_MEM}MB).`);
       }
       // The DRAIN for what that monitor produces. Scheduled deliberately more often than the producer
       // (default 6h vs 12h) so the queue trends to empty instead of merely keeping pace — a drain running

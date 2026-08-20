@@ -156,6 +156,40 @@ async function monitoredBatch(client, size = 50000, kind = 'People') {
 }
 
 // Update a sitemap's monitor state after a pass (partial doc).
+// Bulk version of setMonitorState, and the only one that tells you whether the writes landed.
+//
+// setMonitorState swallows every error by design ("best-effort"). At sweep scale that is not a safe
+// default: the first nightly sweep stamped ZERO sitemaps and logged ZERO errors, which is indistinguishable
+// from never having run. Hundreds of concurrent single-doc updates are also exactly the shape OpenSearch
+// sheds under load (es_rejected_execution_exception), so the failure mode is likely, silent, and total.
+// Returning counts lets the pass report "wrote nothing" as the failure it is.
+async function bulkSetMonitorState(client, patches) {
+  const res = { attempted: patches.length, ok: 0, errors: 0, rejected: 0, sample: '' };
+  if (!patches.length) return res;
+  const body = [];
+  for (const p of patches) body.push({ update: { _index: INDEX, _id: p.sitemap_url } }, { doc: p.patch });
+  try {
+    const r = await client.bulk({ body, refresh: false }, { requestTimeout: 180000 });
+    const b = r.body || r;
+    if (b.errors) {
+      for (const it of (b.items || [])) {
+        const u = it.update;
+        if (u && u.error) {
+          res.errors++;
+          if (/reject|circuit_break|too_many|unavailable/i.test(String(u.error.type || ''))) res.rejected++;
+          if (!res.sample) res.sample = `${u.error.type}: ${String(u.error.reason || '').slice(0, 120)}`;
+        }
+      }
+    }
+    res.ok = res.attempted - res.errors;
+  } catch (e) {
+    res.errors = res.attempted;
+    res.sample = String(e && e.message || e).slice(0, 140);
+    if (/reject|429|timeout|unavailable/i.test(res.sample)) res.rejected = res.attempted;
+  }
+  return res;
+}
+
 async function setMonitorState(client, sitemapUrl, patch) {
   if (!sitemapUrl) return;
   try { await client.update({ index: INDEX, id: sitemapUrl, body: { doc: patch } }); } catch (e) { /* best-effort */ }
@@ -396,4 +430,4 @@ async function monitoredCount(client, { kind = 'People', type = '' } = {}) {
   return (r.body || r).count;
 }
 
-module.exports = { INDEX, MAPPING, makeClient, ensureIndex, deriveType, docFromWatch, docFromUrl, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, updateOne, renameSitemap, bulkDelete, csvHeader, rowToCsvLine, each, monitoredBatch, monitoredCursor, monitoredCount, setMonitorState };
+module.exports = { INDEX, MAPPING, makeClient, ensureIndex, deriveType, docFromWatch, docFromUrl, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, updateOne, renameSitemap, bulkDelete, csvHeader, rowToCsvLine, each, monitoredBatch, monitoredCursor, monitoredCount, setMonitorState, bulkSetMonitorState };

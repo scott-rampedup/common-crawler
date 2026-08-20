@@ -71,7 +71,7 @@ async function currentImage(token, app = APP) {
 async function launchFleet(o) {
   const token = o.token || process.env.FLY_API_TOKEN;
   if (!token) throw new Error('no FLY_API_TOKEN — cannot launch a fleet');
-  if (!o.in) throw new Error('no --in list to crawl');
+  if (!o.in && !o.cmd) throw new Error('no --in list to crawl');
   const app = o.app || APP;
   const shards = Math.max(1, Number(o.shards) || 8);
   const tag = o.tag || 'fleet';
@@ -92,12 +92,15 @@ async function launchFleet(o) {
       image,
       restart: { policy: 'no' },
       guest: { cpu_kind: 'performance', cpus, memory_mb: memMb },
-      env: {
+      env: Object.assign({
         LIVE_CONC: String(o.liveConc || process.env.FLEET_LIVE_CONC || 96),
         CONC: String(o.conc || process.env.FLEET_CONC || 64),
         NODE_OPTIONS: `--max-old-space-size=${heapMb}`,
-      },
-      init: { cmd: ['node', '/app/live-fleet-shard.js', '--in', o.in, '--shard', `${i}/${shards}`, '--tag', tag] },
+      }, o.env || {}),
+      // o.cmd lets a caller run a different entrypoint on the same fleet plumbing (image resolution,
+      // restart:no, explicit heap). It receives (shardIndex, shardCount) so it can partition its own work.
+      init: { cmd: o.cmd ? o.cmd(i, shards)
+        : ['node', '/app/live-fleet-shard.js', '--in', o.in, '--shard', `${i}/${shards}`, '--tag', tag] },
     };
     try {
       const m = await flyApi(`/apps/${app}/machines`, 'POST', { name, region, config }, token);
