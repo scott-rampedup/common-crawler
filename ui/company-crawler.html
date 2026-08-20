@@ -137,6 +137,16 @@
               <option value="Location">Location only (Google Maps)</option>
             </select>
           </label>
+          <label>Email Address
+            <select id="fEmailType">
+              <option value="">Any (no filter)</option>
+              <option value="Professional">Professional</option>
+              <option value="Personal">Personal</option>
+              <option value="Role-Based">Role-Based</option>
+              <option value="any">Has any classified email</option>
+              <option value="none">No email</option>
+            </select>
+          </label>
           <label>Website Type
             <input id="fWebsiteType" type="search" list="websiteTypes" placeholder="e.g. People, Location, BIO URL" />
             <datalist id="websiteTypes">
@@ -344,6 +354,7 @@
         founded_min: $('fFoundedMin').value.trim(), founded_max: $('fFoundedMax').value.trim(),
         contactMin: $('fContactMin').value.trim(), sitemap: $('fSitemap').value.trim(),
         companyType: $('fCompanyType').value,
+        emailType: $('fEmailType').value,
         websiteType: $('fWebsiteType').value.trim(),
         naics: naicsParam(),
         linkedin: $('fLinkedin').checked ? 'yes' : '',
@@ -540,6 +551,7 @@
     function reset() {
       ['fName','fDomain','fRegion','fLocality','fFoundedMin','fFoundedMax','fContactMin','fSitemap','addIndustry','addCountry','fWebsiteType','fNaics'].forEach((i) => { $(i).value = ''; });
       $('fCompanyType').value = '';
+      $('fEmailType').value = '';
       $('fLinkedin').checked = false;
       sel.industry.clear(); sel.size.clear(); sel.country.clear();
       sortState.col = ''; sortState.dir = 'asc'; selected.clear(); updateSel();

@@ -99,6 +99,18 @@ function buildQuery(f) {
   if (f.contactMin) filter.push({ range: { contact_count: { gte: Number(f.contactMin) } } });
   // sitemap search: users type a sitemap URL or a domain — match on the (shared) root domain either way
   if (f.sitemap) { const d = normDomain(f.sitemap); if (d) filter.push({ term: { domain: d } }); }
+  // Email Address type. email_type is written by the CC enricher and only dynamically mapped, so the
+  // aggregatable/filterable field is the .keyword subfield -- filtering the analysed text field would match
+  // "Role-Based" for a "Professional" query on token overlap. Live values: Professional 883,267,
+  // Personal 456,721, Role-Based 986,556, empty 4,313,573.
+  //   any  -> has any classified email      none -> has no email at all
+  if (f.emailType) {
+    const et = String(f.emailType);
+    const nonEmpty = { bool: { filter: [{ exists: { field: 'email_type.keyword' } }], must_not: [{ term: { 'email_type.keyword': '' } }] } };
+    if (et === 'any') filter.push(nonEmpty);
+    else if (et === 'none') filter.push({ bool: { must_not: [nonEmpty] } });
+    else filter.push({ terms: { 'email_type.keyword': multi(et) } });
+  }
   if (f.companyType) filter.push({ term: { 'company_type.keyword': String(f.companyType) } });   // HQ | Location (Google Maps)
   if (f.websiteType) filter.push({ match_phrase: { website_type: String(f.websiteType) } });      // People | Location | BIO URL | Company | … (case-insensitive)
   if (f.naics) { const s = String(f.naics).trim(); filter.push({ bool: { should: [   // NAICS code (exact) OR title (phrase)
