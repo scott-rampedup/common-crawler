@@ -152,7 +152,7 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
       const limit = maxSitemaps > 0 ? Math.min(maxSitemaps, summary.total) : 0;
       if (limit) summary.total = limit;
       outer:
-      for await (const rows of sitemaps.monitoredCursor(sitemapsClient, { kind, type, page })) {
+      for await (const rows of sitemaps.monitoredCursor(sitemapsClient, { kind, type, page, notCheckedSince: nowIso })) {
         for (let i = 0; i < rows.length; i += conc) {
           await Promise.all(rows.slice(i, i + conc).map(processOne));
           if (limit && summary.scanned >= limit) break outer;

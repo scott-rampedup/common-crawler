@@ -70,3 +70,6 @@ wdc-emails-*.txt
 _universe/u-targets.ndjson
 _universe/u-urls.txt
 logs/*.log
+
+# Generated export (64MB) — reproducible from the companies index, never an input.
+team-pages-distinct.csv

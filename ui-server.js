@@ -84,7 +84,10 @@ async function takeBioEtlLease(client) {
     if (exp > now) { console.log(`[bio-etl] lease held by ${b._source.holder} until ${b._source.expires_at} — skipping`); return false; }
     seqNo = b._seq_no; primaryTerm = b._primary_term;
   } catch (e) {
-    if (!/404|not_found|index_not_found/i.test(String(e && e.message))) throw e;   // no lease yet -> create
+    // e.message is "Response Error"; the 404 is on e.statusCode. Matching the message never matched, so a
+    // missing lease document -- the normal first-run state -- was rethrown and the drain refused to start.
+    const code = e && (e.statusCode || (e.meta && e.meta.statusCode));
+    if (!(code === 404 || /404|not_found|index_not_found/i.test(String(e && e.message)))) throw e;   // no lease yet -> create
   }
   const body = { holder: me, taken_at: new Date(now).toISOString(), expires_at: new Date(now + BIO_ETL_LEASE_MS).toISOString() };
   const params = { index: CONFIG_INDEX, id: BIO_ETL_LEASE_ID, body, refresh: true };

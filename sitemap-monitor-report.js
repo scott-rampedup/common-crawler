@@ -18,13 +18,24 @@ const KEEP_RUNS = 60;                     // ~2 months of nightlies
 const n = (v) => Number(v || 0).toLocaleString();
 const pct = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : 0);
 
+// The OpenSearch JS client reports a missing document as `ResponseError` with message "Response Error" --
+// the status lives on e.statusCode / e.meta.statusCode, never in the message. Matching /404|not_found/
+// against e.message therefore NEVER matches, so a first-run "document does not exist" was rethrown as a
+// hard failure. That silently cost two things: the sweep's run history never recorded (and the scheduler
+// decides "did a sweep succeed today" from it), and the bio-ETL lease check treated a missing lease as an
+// error and refused to drain.
+function isNotFound(e) {
+  const code = e && (e.statusCode || (e.meta && e.meta.statusCode));
+  return code === 404 || /404|not_found|index_not_found/i.test(String(e && e.message));
+}
+
 // Persist the run, newest first, capped. Best-effort: a reporting failure must never fail the sweep.
 async function recordRun(client, summary) {
   if (!client) return;
   try {
     let runs = [];
     try { const g = await client.get({ index: CONFIG_INDEX, id: RUNS_ID }); runs = ((g.body || g)._source || {}).runs || []; }
-    catch (e) { if (!/404|not_found|index_not_found/i.test(String(e && e.message))) throw e; }
+    catch (e) { if (!isNotFound(e)) throw e; }
     runs.unshift({ startedAt: summary.startedAt, finishedAt: summary.finishedAt, seconds: summary.seconds,
       total: summary.total, scanned: summary.scanned, withGap: summary.withGap, newUrls: summary.newUrls,
       liveQueued: summary.liveQueued, noUrls: summary.noUrls, errors: summary.errors,

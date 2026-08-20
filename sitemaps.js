@@ -404,11 +404,23 @@ async function each(client, f, onRow, cap = 200000) {
 //
 // Yields arrays so the caller can process a page and drop it — holding all 237k docs at once is ~70MB of
 // heap that the pass has no reason to keep.
-async function* monitoredCursor(client, { kind = 'People', type = '', page = 5000 } = {}) {
+//
+// notCheckedSince is NOT optional in practice. The sort key is last_checked, and the pass MUTATES
+// last_checked on every sitemap it finishes. search_after therefore pages over a field its own caller is
+// rewriting: once the originally-stale sitemaps are consumed, every doc the pass just stamped (all sharing
+// one timestamp, because nowIso is fixed at pass start) sorts AFTER the cursor position and is handed back
+// for a second lap. Observed on the first full run -- 236,763/236,763 stamped and complete, yet the pass
+// kept going, re-fetching sitemaps and re-queueing ~660,000 URLs it had already queued.
+//
+// Excluding anything stamped at or after the pass started makes the cursor immune to its own writes, and
+// makes a re-run resume rather than restart.
+async function* monitoredCursor(client, { kind = 'People', type = '', page = 5000, notCheckedSince = '' } = {}) {
   const filter = [];
   if (kind) filter.push({ term: { kind } });
   if (type) filter.push({ term: { type } });
-  const bool = { filter, must_not: [{ term: { monitored: false } }, { term: { status: 'inactive' } }] };
+  const must_not = [{ term: { monitored: false } }, { term: { status: 'inactive' } }];
+  if (notCheckedSince) must_not.push({ range: { last_checked: { gte: notCheckedSince } } });
+  const bool = { filter, must_not };
   let after = null;
   for (;;) {
     const body = { size: page, query: { bool },
