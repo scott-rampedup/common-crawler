@@ -51,3 +51,22 @@ lambda-build/
 test-ptrs.jsonl
 ptrs-*-test.jsonl
 names-genders.csv.bak
+
+# Regenerable pipeline artifacts — staged URL lists, shard/chunk splits and harvest dumps.
+# These were swept into 79e6c57 by a broad `git add` and made the pending push a 1.06GB pack that
+# GitHub rejected with HTTP 408. They are all reproducible output, never inputs.
+monitor-bio-urls.txt
+monitor-misses.txt
+live-candidates-full.txt
+mbu-chunk-*
+mmiss-chunk-*
+mbu-sample.txt
+mbu-sample-ptr.jsonl
+live-shard-*
+live-rr-*.txt
+batch-1m.txt
+bio-repo-misses.txt
+wdc-emails-*.txt
+_universe/u-targets.ndjson
+_universe/u-urls.txt
+logs/*.log
