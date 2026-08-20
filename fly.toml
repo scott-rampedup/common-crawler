@@ -13,6 +13,8 @@ primary_region = 'ewr'   # must match the existing 'data' volume's region
   DOMAIN_CONCURRENCY = '48'     # total domains/URLs in flight (safe now: rotating proxy IPs)
   IN_SITE_CONCURRENCY = '4'     # how many pages from one site to fetch at once
   HOST_CONCURRENCY = '3'        # max simultaneous requests to any single host (stays polite per site)
+  CC_MAX_SOCKETS = '512'        # socket ceiling for the shared HTTP agents. 64 throttled the nightly
+                                # sitemap sweep below its requested concurrency (it runs 128 wide).
   CC_CONCURRENCY = '1'          # global Common Crawl request limit (keep low: shared service)
   HTML_MAX_KB = '1024'          # cap HTML page size we download/parse (KB)
   FIX_REMAX_LOC = '3'           # one-off (re-run, positional parser): fix remaining remax 'Denver, CO' locations from the slug. REMOVE after it runs.

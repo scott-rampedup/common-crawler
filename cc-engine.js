@@ -66,8 +66,11 @@ function currentCrawl(){ return CRAWL; }
 
 // Keep-alive agents so we reuse TCP/TLS connections (esp. when pulling many pages
 // from one site) instead of paying a fresh handshake per request.
-const keepAliveHttp  = new http.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 16, timeout: 30000 });
-const keepAliveHttps = new https.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 16, timeout: 30000 });
+// 64 sockets suits a 48-way live crawl. The nightly sitemap sweep runs far wider than that, and a socket
+// cap below the requested concurrency silently serialises it — the pass looks slow rather than blocked.
+const MAX_SOCKETS = Math.max(16, Number(process.env.CC_MAX_SOCKETS) || 64);
+const keepAliveHttp  = new http.Agent({ keepAlive: true, maxSockets: MAX_SOCKETS, maxFreeSockets: 16, timeout: 30000 });
+const keepAliveHttps = new https.Agent({ keepAlive: true, maxSockets: MAX_SOCKETS, maxFreeSockets: 16, timeout: 30000 });
 
 // Optional outbound proxies + unblocker for LIVE page fetches (e.g. NetNut). THREE tiers,
 // escalated cheapest-first by liveFetchPage — a tier is tried only when the previous one is blocked:
@@ -91,8 +94,8 @@ function makeProxyAgents(url){
     const { HttpsProxyAgent } = require("https-proxy-agent");
     // keepAlive:false -> a fresh connection (and thus a fresh rotating exit IP) per request.
     // Reusing a socket would pin one IP, defeating rotation + the retry-rolls-a-new-IP logic.
-    return { http:  new HttpProxyAgent(url,  { keepAlive: false, maxSockets: 64 }),
-             https: new HttpsProxyAgent(url, { keepAlive: false, maxSockets: 64 }) };
+    return { http:  new HttpProxyAgent(url,  { keepAlive: false, maxSockets: MAX_SOCKETS }),
+             https: new HttpsProxyAgent(url, { keepAlive: false, maxSockets: MAX_SOCKETS }) };
   }catch(e){ console.warn("proxy agent unavailable:", e.message); return { http: null, https: null }; }
 }
 const PROXY_URL = process.env.PROXY_URL || "";
@@ -1185,14 +1188,23 @@ async function liveFetchPage(url){
 }
 
 // Fetch robots.txt / sitemaps — XML, plain text, or gzipped, possibly large.
-async function fetchDoc(url){
+// opts.timeout       — per-request timeout (default 15s)
+// opts.fallbackStatus — which primary statuses justify a second, residential attempt. Default null keeps
+//   the original "retry anything that wasn't a 200" behaviour. That default is right for a handful of
+//   important documents and wrong for a 237,018-sitemap sweep: a dead host times out on the primary path
+//   AND again on the residential one, so every dead sitemap cost up to 30s and dead sitemaps are the
+//   majority. Passing [403,429,503] keeps the Cloudflare escalation that the fallback exists for while
+//   not spending residential bandwidth on hosts that are simply gone.
+async function fetchDoc(url, opts = {}){
   const accept = /xml|text|gzip|octet-stream|html|rss|plain/;
-  let r = await httpGetRaw(url, { accept, maxBytes: 30 * 1024 * 1024, returnMeta: true });
+  const timeout = opts.timeout || 15000;
+  let r = await httpGetRaw(url, { accept, maxBytes: 30 * 1024 * 1024, returnMeta: true, timeout });
   if(r.status === 200 && r.body) return r.body;
+  const mayFallback = !opts.fallbackStatus || opts.fallbackStatus.includes(r.status);
   // escalate to the residential gateway for docs blocked on the primary path (e.g. a Cloudflare-
   // fronted sitemap) so big agent sitemaps still come through.
-  if(PROXY_FALLBACK_URL){
-    r = await httpGetRaw(url, { accept, maxBytes: 30 * 1024 * 1024, returnMeta: true, proxyTier: "fallback" });
+  if(PROXY_FALLBACK_URL && mayFallback){
+    r = await httpGetRaw(url, { accept, maxBytes: 30 * 1024 * 1024, returnMeta: true, proxyTier: "fallback", timeout });
     if(r.status === 200 && r.body) return r.body;
   }
   return "";

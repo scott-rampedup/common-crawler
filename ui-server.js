@@ -2621,14 +2621,15 @@ pruneOldJobs();
         // night: the pass takes the least-recently-checked sitemaps, so drift decides which ones get seen.
         const SM_HOUR = Math.min(23, Math.max(0, Number(process.env.SITEMAP_LIB_MONITOR_HOUR) || 1));  // UTC
         const SM_LIVE_CAP = Number(process.env.SITEMAP_LIB_MONITOR_MAX) || 300000;   // inline live jobs only
-        const SM_CONC = Math.max(1, Number(process.env.SITEMAP_LIB_MONITOR_CONC) || 48);
+        const SM_CONC = Math.max(1, Number(process.env.SITEMAP_LIB_MONITOR_CONC) || 320);  // measured: 14.3 sitemaps/s -> ~4.6h full sweep
         const SM_TYPE = process.env.SITEMAP_LIB_MONITOR_TYPE || '';    // '' = every monitored People sitemap
         const smReport = require('./sitemap-monitor-report');
         const smPass = async (why) => {
           const lm = getLibMonitor();
           if (!lm) { console.error('[sitemap-lib-monitor] no monitor (OpenSearch not ready) — sweep skipped'); return; }
           let summary = null;
-          try { summary = await lm.runPass({ liveCap: SM_LIVE_CAP, conc: SM_CONC, type: SM_TYPE }); }
+          try { summary = await lm.runPass({ liveCap: SM_LIVE_CAP, conc: SM_CONC, type: SM_TYPE,
+            fetchTimeout: Math.max(2000, Number(process.env.SITEMAP_LIB_MONITOR_TIMEOUT_MS) || 8000) }); }
           catch (e) { console.error('[sitemap-lib-monitor] pass error:', e.message); }
           if (!summary || summary.skipped) return;
           // Report even on a partial or failed sweep — the incomplete-coverage banner is the whole point.

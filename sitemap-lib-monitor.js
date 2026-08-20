@@ -63,7 +63,7 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
   // crawl job; past it the URLs still go to the durable S3 queue for the ETL. A backlog can delay when a new
   // bio is turned into a contact. It can no longer stop us from finding it.
   async function runPass({ liveCap = 300000, conc = 48, flush = 3000, kind = 'People', type = '',
-                           page = 5000, cap = null, maxSitemaps = 0, onProgress = null } = {}) {
+                           page = 5000, cap = null, maxSitemaps = 0, fetchTimeout = 8000, onProgress = null } = {}) {
     if (running) { log('monitor pass already running — skipping'); return { skipped: true }; }
     if (cap != null) liveCap = cap;                       // back-compat with the old {cap} callers
     running = true;
@@ -72,6 +72,11 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
     const summary = { startedAt, finishedAt: null, seconds: 0, total: 0, scanned: 0, withGap: 0,
       newUrls: 0, liveQueued: 0, jobs: 0, noUrls: 0, errors: 0, liveCapReached: false, top: [] };
     const byDomain = new Map();                            // domain -> new-URL count, for the report
+    // A sweep of this size is dominated by sitemaps that no longer resolve, and the default fetchDoc spends
+    // up to 15s on the primary path and another 15s on the residential gateway for each one. Measured on
+    // live data: 262 of 408 sitemaps returned nothing, at 16.4s average -> a 45-hour full sweep. Shorten the
+    // timeout and only escalate to residential for statuses that actually mean "blocked" rather than "gone".
+    const swFetch = (u) => ccEngine.fetchDoc(u, { timeout: fetchTimeout, fallbackStatus: [403, 429, 503] });
     const nowIso = startedAt;
     let buffer = [];
     const doFlush = () => {
@@ -87,12 +92,12 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
     const processOne = async (d) => {
       summary.scanned++;
       try {
-        const { watches } = await ccEngine.discoverSitemaps({ urls: [d.sitemap_url], directoryRules, genderMap, bioSitemapNames, locationSitemapNames });
+        const { watches } = await ccEngine.discoverSitemaps({ urls: [d.sitemap_url], directoryRules, genderMap, bioSitemapNames, locationSitemapNames, _fetchDoc: swFetch });
         let pageUrls = peopleUrls(watches);
         // keyword second pass ONLY when the strict pass got nothing (avoids doubling fetches at scale)
         if (!pageUrls.length) {
           const hints = keywordTokens(d.keyword);
-          if (hints.size) { try { const { watches: w2 } = await ccEngine.discoverSitemaps({ urls: [d.sitemap_url], directoryRules, genderMap, bioSitemapNames, locationSitemapNames, keywordHints: hints }); pageUrls = peopleUrls(w2); } catch (e) { /* */ } }
+          if (hints.size) { try { const { watches: w2 } = await ccEngine.discoverSitemaps({ urls: [d.sitemap_url], directoryRules, genderMap, bioSitemapNames, locationSitemapNames, keywordHints: hints, _fetchDoc: swFetch }); pageUrls = peopleUrls(w2); } catch (e) { /* */ } }
         }
         let missing = [];
         if (pageUrls.length) { const have = await haveSet(pageUrls); missing = pageUrls.filter((u) => !have.has(u)); }
