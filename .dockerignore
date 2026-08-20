@@ -36,3 +36,20 @@ lambda-build/
 .DS_Store
 Thumbs.db
 Common Crawler.png
+
+# Regenerable pipeline artifacts — same set as .gitignore. These are staged URL lists, shard/chunk
+# splits and harvest dumps: build/staging output, never runtime inputs. *.jsonl above already caught
+# the harvest dumps, but the .txt lists and the extension-less chunk splits were not covered, so the
+# build context was still ~4.9GB and the deploy upload stalled indefinitely.
+monitor-bio-urls.txt
+monitor-misses.txt
+live-candidates-full.txt
+mbu-chunk-*
+mmiss-chunk-*
+mbu-sample.txt
+live-shard-*
+live-rr-*.txt
+batch-1m.txt
+bio-repo-misses.txt
+wdc-emails-*.txt
+cc-bio-urls*.txt

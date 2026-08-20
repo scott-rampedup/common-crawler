@@ -332,9 +332,12 @@ function getLibMonitor() {   // lazy: sitemapsClient + reader are set in startup
   if (!libMonitor && sitemapsClient && reader && reader.client) {
     libMonitor = makeLibMonitor({
       sitemaps, sitemapsClient, contactsClient: reader.client, contactsIndex: openSearch.INDEX, ccEngine,
-      extract: (urls, label) => {
+      extract: (urls, label, opts = {}) => {
+        // The queue write is unconditional. It is the durable record that these URLs were found to be new,
+        // and it must not depend on how busy the live crawler is or how deep the ETL queue already runs.
         queueBioUrls(urls, label || 'Sitemap Monitor');               // nightly bio-ETL (Lambda) drains this
-        if (MONITOR_LIVE_JOBS) startJob(urls, '', false, 'webpage', 'Monitor', label || 'Sitemap Monitor', null, 'Sitemap Monitor');
+        // Past the sweep's live cap, opts.live is false: still queued, just no inline crawl job.
+        if (MONITOR_LIVE_JOBS && opts.live !== false) startJob(urls, '', false, 'webpage', 'Monitor', label || 'Sitemap Monitor', null, 'Sitemap Monitor');
       },
       directoryRules: {}, genderMap: GENDER_MAP, bioSitemapNames: BIO_SITEMAP_NAMES, locationSitemapNames: LOCATION_SITEMAP_NAMES,
       log: (m) => console.log('[sitemap-lib-monitor] ' + m),
@@ -342,6 +345,23 @@ function getLibMonitor() {   // lazy: sitemapsClient + reader are set in startup
   }
   return libMonitor;
 }
+// Run fn once a day at a fixed UTC hour, re-arming AFTER it finishes so a long sweep can't stack on itself
+// or shift its own start time. setInterval from boot does neither: it drifts on every deploy.
+function scheduleDaily(hourUtc, minuteUtc, fn, label) {
+  const arm = () => {
+    const now = new Date();
+    const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hourUtc, minuteUtc, 0, 0));
+    if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+    const ms = next - now;
+    console.log(`[schedule] ${label}: next run ${next.toISOString()} (in ${Math.round(ms / 60000)} min)`);
+    setTimeout(async () => {
+      try { await fn(); } catch (e) { console.error(`[schedule] ${label} threw:`, e && e.message); }
+      finally { arm(); }
+    }, ms);
+  };
+  arm();
+}
+
 let monitorRunning = false;
 // Single guard shared by the scheduled tick AND the manual /api/monitor/run endpoint, so two passes
 // never overlap.
@@ -1737,7 +1757,20 @@ const server = http.createServer(async (req, res) => {
     const lm = getLibMonitor();
     if (!lm) { jsonErr(res, 503, 'Sitemap Library monitor not available (OpenSearch off).'); return; }
     readJsonBody(req, async (b) => {
-      try { const cap = Math.min(50000, Math.max(1, Number(b && b.cap) || 5000)); sendJson(res, await lm.runPass({ cap })); }
+      // A full sweep is ~237k sitemaps and takes hours, so it cannot be awaited inside a request. {full:true}
+      // starts it in the background and returns immediately; the default stays a quick bounded spot-check.
+      try {
+        if (b && b.full) {
+          const smReport = require('./sitemap-monitor-report');
+          lm.runPass({ liveCap: Number(b.liveCap) || 300000, conc: Math.max(1, Number(b.conc) || 48) })
+            .then((sum) => (sum && !sum.skipped ? smReport.sendSweepReport(sum, { client: reader && reader.client }) : null))
+            .catch((e) => console.error('[sitemap-lib-monitor] manual full sweep failed:', e.message));
+          sendJson(res, { started: true, full: true, note: 'Full sweep running in the background; a report email follows.' });
+          return;
+        }
+        const maxSitemaps = Math.min(50000, Math.max(1, Number(b && b.maxSitemaps) || 5000));
+        sendJson(res, await lm.runPass({ maxSitemaps, liveCap: Number(b && b.cap) || 300000 }));
+      }
       catch (e) { jsonErr(res, 500, e.message); }
     });
     return;
@@ -2583,14 +2616,30 @@ pruneOldJobs();
       // schedule — re-fetch each, extract the page URLs we don't have a contact for. last_checked ordering
       // rotates coverage across passes; run often enough (default every 12h) that all get re-checked daily.
       if (process.env.SITEMAP_LIB_MONITOR !== '0') {
-        const SM_HOURS = Math.max(1, Number(process.env.SITEMAP_LIB_MONITOR_HOURS) || 12);
-        const SM_CAP = Number(process.env.SITEMAP_LIB_MONITOR_MAX) || 300000;      // max bio URLs enqueued per pass
-        const SM_CONC = Math.max(1, Number(process.env.SITEMAP_LIB_MONITOR_CONC) || 16);
-        const SM_BATCH = Math.max(1, Number(process.env.SITEMAP_LIB_MONITOR_BATCH) || 50000); // sitemaps re-checked per pass
-        const smPass = async () => { const lm = getLibMonitor(); if (!lm) return; try { await lm.runPass({ cap: SM_CAP, conc: SM_CONC, batch: SM_BATCH }); } catch (e) { console.error('[sitemap-lib-monitor] pass error:', e.message); } };
-        setTimeout(smPass, 12 * 60 * 1000);                            // ~12 min after boot
-        setInterval(smPass, SM_HOURS * 3600 * 1000);
-        console.log(`Sitemap Library monitor: ON, every ${SM_HOURS}h (up to ${SM_BATCH.toLocaleString()} sitemaps, cap ${SM_CAP.toLocaleString()} URLs/pass, conc ${SM_CONC}).`);
+        // Nightly at a FIXED hour, not every-N-hours-from-boot. A 12h interval anchored on process start
+        // drifts with every deploy, and two half-sweeps a day is not the same thing as one full sweep a
+        // night: the pass takes the least-recently-checked sitemaps, so drift decides which ones get seen.
+        const SM_HOUR = Math.min(23, Math.max(0, Number(process.env.SITEMAP_LIB_MONITOR_HOUR) || 1));  // UTC
+        const SM_LIVE_CAP = Number(process.env.SITEMAP_LIB_MONITOR_MAX) || 300000;   // inline live jobs only
+        const SM_CONC = Math.max(1, Number(process.env.SITEMAP_LIB_MONITOR_CONC) || 48);
+        const SM_TYPE = process.env.SITEMAP_LIB_MONITOR_TYPE || '';    // '' = every monitored People sitemap
+        const smReport = require('./sitemap-monitor-report');
+        const smPass = async (why) => {
+          const lm = getLibMonitor();
+          if (!lm) { console.error('[sitemap-lib-monitor] no monitor (OpenSearch not ready) — sweep skipped'); return; }
+          let summary = null;
+          try { summary = await lm.runPass({ liveCap: SM_LIVE_CAP, conc: SM_CONC, type: SM_TYPE }); }
+          catch (e) { console.error('[sitemap-lib-monitor] pass error:', e.message); }
+          if (!summary || summary.skipped) return;
+          // Report even on a partial or failed sweep — the incomplete-coverage banner is the whole point.
+          try { await smReport.sendSweepReport(summary, { client: reader && reader.client }); }
+          catch (e) { console.error('[sitemap-lib-monitor] report failed:', e.message); }
+          // Hand the night's finds straight to the drain rather than waiting for its own timer.
+          try { runBioEtlDrainGuarded('after nightly sitemap sweep'); } catch (e) { /* best-effort */ }
+        };
+        scheduleDaily(SM_HOUR, 0, () => smPass('nightly'), 'Sitemap Library monitor');
+        if (/^(1|true|yes|on)$/i.test(process.env.SITEMAP_LIB_MONITOR_ON_BOOT || '')) setTimeout(() => smPass('boot'), 5 * 60 * 1000);
+        console.log(`Sitemap Library monitor: ON, nightly at ${String(SM_HOUR).padStart(2, '0')}:00 UTC — FULL sweep of every monitored ${SM_TYPE || 'People'} sitemap (conc ${SM_CONC}, live cap ${SM_LIVE_CAP.toLocaleString()} URLs).`);
       }
       // The DRAIN for what that monitor produces. Scheduled deliberately more often than the producer
       // (default 6h vs 12h) so the queue trends to empty instead of merely keeping pace — a drain running

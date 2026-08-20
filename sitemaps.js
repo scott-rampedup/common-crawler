@@ -36,6 +36,7 @@ const MAPPING = {
       last_checked: { type: 'date' },                                    // last monitor pass over this sitemap
       last_new:     { type: 'integer' },                                 // URLs handed to extraction last pass
       total_new:    { type: 'integer' },                                 // cumulative extracted via monitoring
+      last_new_at:  { type: 'date' },                                    // last pass that actually FOUND new bios
       monitor_note: { type: 'keyword' },                                 // last monitor status/error
       expanded_at:  { type: 'date' },                                    // last sitemap-expand-urls pass (drives --resume)
     },
@@ -52,6 +53,7 @@ const ADDED_FIELDS = {
   last_checked: { type: 'date' },
   last_new:     { type: 'integer' },
   total_new:    { type: 'integer' },
+  last_new_at:  { type: 'date' },
   monitor_note: { type: 'keyword' },
   expanded_at:  { type: 'date' },
 };
@@ -357,4 +359,41 @@ async function each(client, f, onRow, cap = 200000) {
   return n;
 }
 
-module.exports = { INDEX, MAPPING, makeClient, ensureIndex, deriveType, docFromWatch, docFromUrl, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, updateOne, renameSitemap, bulkDelete, csvHeader, rowToCsvLine, each, monitoredBatch, setMonitorState };
+// Stream EVERY monitored sitemap, page by page (search_after), least-recently-checked first.
+//
+// monitoredBatch caps at `Math.min(50000, size)` because that is OpenSearch's single-search ceiling. That
+// ceiling silently became the monitor's coverage model: 237,018 monitored People sitemaps against 50,000
+// per pass meant a full sweep took ~2.4 days, and "nightly" only ever re-checked the oldest 29%. The
+// nightly sweep needs all of them in ONE pass, so it pages instead of taking a single slice.
+//
+// Yields arrays so the caller can process a page and drop it — holding all 237k docs at once is ~70MB of
+// heap that the pass has no reason to keep.
+async function* monitoredCursor(client, { kind = 'People', type = '', page = 5000 } = {}) {
+  const filter = [];
+  if (kind) filter.push({ term: { kind } });
+  if (type) filter.push({ term: { type } });
+  const bool = { filter, must_not: [{ term: { monitored: false } }, { term: { status: 'inactive' } }] };
+  let after = null;
+  for (;;) {
+    const body = { size: page, query: { bool },
+      sort: [{ last_checked: { order: 'asc', missing: '_first' } }, { sitemap_url: 'asc' }] };
+    if (after) body.search_after = after;
+    const r = await client.search({ index: INDEX, body }, { requestTimeout: 120000 });
+    const hits = ((r.body || r).hits.hits || []);
+    if (!hits.length) return;
+    yield hits.map((h) => h._source);
+    after = hits[hits.length - 1].sort;
+  }
+}
+
+// How many sitemaps a full sweep will visit — so the pass can report progress against a real total.
+async function monitoredCount(client, { kind = 'People', type = '' } = {}) {
+  const filter = [];
+  if (kind) filter.push({ term: { kind } });
+  if (type) filter.push({ term: { type } });
+  const bool = { filter, must_not: [{ term: { monitored: false } }, { term: { status: 'inactive' } }] };
+  const r = await client.count({ index: INDEX, body: { query: { bool } } });
+  return (r.body || r).count;
+}
+
+module.exports = { INDEX, MAPPING, makeClient, ensureIndex, deriveType, docFromWatch, docFromUrl, bulkUpsert, existingDomains, count, stats, search, facets, EDITABLE, bulkUpdate, updateOne, renameSitemap, bulkDelete, csvHeader, rowToCsvLine, each, monitoredBatch, monitoredCursor, monitoredCount, setMonitorState };

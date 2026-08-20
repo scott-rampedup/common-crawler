@@ -46,20 +46,45 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
 
   const peopleUrls = (watches) => [...new Set((watches || []).filter((w) => w.kind === 'People').flatMap((w) => (w.urls || []).map((u) => u.url)))];
 
-  // One pass over the Library's People sitemaps (least-recently-checked first). Re-fetches each, finds the
-  // page URLs we DON'T already have a contact for (delta), and hands them to extraction — so every sitemap
-  // is re-checked for new hires. Concurrency for throughput; missing URLs are batched into a few big jobs
-  // (not one per sitemap). `cap` bounds URLs enqueued per pass; last_checked ordering rotates the rest.
-  async function runPass({ cap = 300000, conc = 16, batch = 50000, flush = 3000 } = {}) {
+  // ONE NIGHTLY PASS over EVERY monitored People sitemap in the Library.
+  //
+  // The contract this has to keep: every sitemap is re-fetched, its bio URLs compared against the contacts
+  // we already hold, the new ones flagged and handed to extraction, and its last_checked stamped — for all
+  // of them, every night, regardless of how far behind the extraction queue is.
+  //
+  // The previous version broke that contract two ways, and both looked like "the monitor ran fine":
+  //   1. it took a single 50,000-sitemap slice (OpenSearch's per-search ceiling) out of 237,018, so a full
+  //      sweep took ~2.4 days and "nightly" meant the oldest 29%;
+  //   2. it early-returned the moment the URL cap was hit — `if (summary.extracted >= cap) return` — which
+  //      skipped every remaining sitemap AND left their last_checked unwritten, so the sitemaps most likely
+  //      to have new bios were the ones the next pass would also skip.
+  //
+  // So: the comparison is now uncapped and streamed. `liveCap` bounds only how many URLs get an INLINE live
+  // crawl job; past it the URLs still go to the durable S3 queue for the ETL. A backlog can delay when a new
+  // bio is turned into a contact. It can no longer stop us from finding it.
+  async function runPass({ liveCap = 300000, conc = 48, flush = 3000, kind = 'People', type = '',
+                           page = 5000, cap = null, maxSitemaps = 0, onProgress = null } = {}) {
     if (running) { log('monitor pass already running — skipping'); return { skipped: true }; }
+    if (cap != null) liveCap = cap;                       // back-compat with the old {cap} callers
     running = true;
-    const summary = { scanned: 0, withGap: 0, extracted: 0, jobs: 0, errors: 0 };
-    const nowIso = new Date().toISOString();
+    const startedAt = new Date().toISOString();
+    const t0 = Date.now();
+    const summary = { startedAt, finishedAt: null, seconds: 0, total: 0, scanned: 0, withGap: 0,
+      newUrls: 0, liveQueued: 0, jobs: 0, noUrls: 0, errors: 0, liveCapReached: false, top: [] };
+    const byDomain = new Map();                            // domain -> new-URL count, for the report
+    const nowIso = startedAt;
     let buffer = [];
-    const doFlush = () => { if (!buffer.length) return; const urls = buffer; buffer = []; try { extract(urls, `Sitemap Monitor: ${urls.length} new bio URL(s)`); summary.jobs++; } catch (e) { summary.errors++; } };
+    const doFlush = () => {
+      if (!buffer.length) return;
+      const urls = buffer; buffer = [];
+      // Under the live cap we ask for a live job too; past it, queue only. Either way the URLs are durable.
+      const live = summary.liveQueued < liveCap;
+      if (live) summary.liveQueued += urls.length; else summary.liveCapReached = true;
+      try { extract(urls, `Sitemap Monitor: ${urls.length} new bio URL(s)`, { live }); summary.jobs++; }
+      catch (e) { summary.errors++; }
+    };
 
     const processOne = async (d) => {
-      if (summary.extracted >= cap) return;
       summary.scanned++;
       try {
         const { watches } = await ccEngine.discoverSitemaps({ urls: [d.sitemap_url], directoryRules, genderMap, bioSitemapNames, locationSitemapNames });
@@ -71,16 +96,19 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
         }
         let missing = [];
         if (pageUrls.length) { const have = await haveSet(pageUrls); missing = pageUrls.filter((u) => !have.has(u)); }
-        if (missing.length && summary.extracted < cap) {
-          const room = cap - summary.extracted;
-          if (missing.length > room) missing = missing.slice(0, room);
-          summary.withGap++; summary.extracted += missing.length;
+        else summary.noUrls++;
+        if (missing.length) {
+          summary.withGap++; summary.newUrls += missing.length;
+          byDomain.set(d.domain || d.sitemap_url, (byDomain.get(d.domain || d.sitemap_url) || 0) + missing.length);
           buffer.push(...missing);
           if (buffer.length >= flush) doFlush();
         }
+        // last_new_at makes "new tonight" queryable — last_new alone can't distinguish a sitemap that found
+        // 12 new bios this pass from one that found 12 a week ago and none since.
         await sitemaps.setMonitorState(sitemapsClient, d.sitemap_url, {
           last_checked: nowIso, last_new: missing.length,
           total_new: (Number(d.total_new) || 0) + missing.length,
+          ...(missing.length ? { last_new_at: nowIso } : {}),
           monitor_note: pageUrls.length ? '' : 'no urls fetched',
         });
       } catch (e) {
@@ -90,16 +118,38 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
     };
 
     try {
-      const rows = await sitemaps.monitoredBatch(sitemapsClient, batch, 'People');
-      log(`monitor pass: ${rows.length} sitemap(s) this pass (conc ${conc}, cap ${cap})`);
-      // process in concurrent chunks
-      for (let i = 0; i < rows.length && summary.extracted < cap; i += conc) {
-        await Promise.all(rows.slice(i, i + conc).map(processOne));
+      summary.total = await sitemaps.monitoredCount(sitemapsClient, { kind, type });
+      log(`nightly sweep: ${summary.total.toLocaleString()} monitored ${[type, kind].filter(Boolean).join(' ')} sitemap(s) — ALL of them (conc ${conc}, live cap ${liveCap.toLocaleString()})`);
+      let lastLog = 0;
+      // maxSitemaps bounds the SWEEP (used by the manual button so it returns in seconds). The nightly run
+      // leaves it 0 = every sitemap; it is not a throughput knob and nothing schedules it.
+      const limit = maxSitemaps > 0 ? Math.min(maxSitemaps, summary.total) : 0;
+      if (limit) summary.total = limit;
+      outer:
+      for await (const rows of sitemaps.monitoredCursor(sitemapsClient, { kind, type, page })) {
+        for (let i = 0; i < rows.length; i += conc) {
+          await Promise.all(rows.slice(i, i + conc).map(processOne));
+          if (limit && summary.scanned >= limit) break outer;
+        }
+        if (summary.scanned - lastLog >= 20000) {
+          lastLog = summary.scanned;
+          const rate = Math.round(summary.scanned / Math.max(1, (Date.now() - t0) / 1000));
+          const eta = rate ? Math.round((summary.total - summary.scanned) / rate / 60) : 0;
+          log(`  ${summary.scanned.toLocaleString()}/${summary.total.toLocaleString()} sitemaps | ${summary.newUrls.toLocaleString()} new bio URL(s) | ${rate}/s | ETA ${eta}m`);
+          if (onProgress) { try { onProgress({ ...summary }); } catch (e) { /* */ } }
+        }
       }
       doFlush();
       try { await sitemapsClient.indices.refresh({ index: sitemaps.INDEX }); } catch (e) { /* */ }
-      log(`monitor pass done: scanned ${summary.scanned}, gaps ${summary.withGap}, extracted ${summary.extracted} in ${summary.jobs} job(s), errors ${summary.errors}`);
-    } finally { running = false; }
+    } finally {
+      running = false;
+      summary.finishedAt = new Date().toISOString();
+      summary.seconds = Math.round((Date.now() - t0) / 1000);
+      summary.top = [...byDomain.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([domain, count]) => ({ domain, count }));
+      log(`nightly sweep done: scanned ${summary.scanned.toLocaleString()}/${summary.total.toLocaleString()}, ` +
+          `${summary.withGap.toLocaleString()} sitemap(s) with new bios, ${summary.newUrls.toLocaleString()} new URL(s) ` +
+          `in ${summary.jobs} job(s), ${summary.noUrls.toLocaleString()} returned no urls, ${summary.errors.toLocaleString()} error(s), ${summary.seconds}s`);
+    }
     return summary;
   }
 

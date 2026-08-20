@@ -1,5 +1,11 @@
 /**
- * send-monitor-report.js — email the Sitemap Monitor's nightly summary to contact@common-crawler.com.
+ * send-monitor-report.js — LEGACY. Reports on the old SQLite monitor (watched_sitemaps / bio_urls /
+ * observations), which covers a few thousand hand-watched sitemaps. That is NOT the system that runs
+ * nightly: the Sitemap Library monitor sweeps 237,018 monitored People sitemaps in OpenSearch and mails its
+ * own report from sitemap-monitor-report.js. The two sets of numbers describe different things, and this
+ * one will look alarmingly small next to the nightly email. Kept only for the legacy tables.
+ *
+ * email the legacy Sitemap Monitor's summary to contact@common-crawler.com.
  * Reads the monitor SQLite READ-ONLY (no init side-effects) and sends via mailer.js (Fly SMTP secrets).
  *   node send-monitor-report.js [to] [--dry]
  * Run on Fly (where /data/contacts.db + SMTP live): fly ssh console -C "node /app/send-monitor-report.js --dry"
