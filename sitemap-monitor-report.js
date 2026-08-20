@@ -28,7 +28,8 @@ async function recordRun(client, summary) {
     runs.unshift({ startedAt: summary.startedAt, finishedAt: summary.finishedAt, seconds: summary.seconds,
       total: summary.total, scanned: summary.scanned, withGap: summary.withGap, newUrls: summary.newUrls,
       liveQueued: summary.liveQueued, noUrls: summary.noUrls, errors: summary.errors,
-      stateOk: summary.stateOk, stateErrors: summary.stateErrors, queueErrors: summary.queueErrors, ok: !!summary.ok });
+      seenUrls: summary.seenUrls, stateOk: summary.stateOk, stateErrors: summary.stateErrors,
+      queueErrors: summary.queueErrors, ok: !!summary.ok });
     await client.index({ index: CONFIG_INDEX, id: RUNS_ID, body: { runs: runs.slice(0, KEEP_RUNS) }, refresh: true });
   } catch (e) { console.error('[monitor-report] could not record run:', e.message); }
 }
@@ -44,6 +45,7 @@ function build(summary, extra = {}) {
 
   const rows = [
     ['Sitemaps compared', `${n(summary.scanned)} of ${n(summary.total)} monitored (${pct(summary.scanned, summary.total)}%)`],
+    ...(summary.seenUrls != null ? [['BIO URLs monitored', `${n(summary.seenUrls)} (not de-duplicated across sitemaps)`]] : []),
     ['Sitemaps with new bios', n(summary.withGap)],
     ['New BIO URLs found', `<strong>${n(summary.newUrls)}</strong>`],
     ['Queued for extraction', `${n(summary.newUrls)} (${n(summary.liveQueued)} also started live)`],

@@ -37,6 +37,7 @@ const MAPPING = {
       last_new:     { type: 'integer' },                                 // URLs handed to extraction last pass
       total_new:    { type: 'integer' },                                 // cumulative extracted via monitoring
       last_new_at:  { type: 'date' },                                    // last pass that actually FOUND new bios
+      last_seen_urls: { type: 'integer' },                               // bio URLs the last pass FETCHED here
       monitor_note: { type: 'keyword' },                                 // last monitor status/error
       expanded_at:  { type: 'date' },                                    // last sitemap-expand-urls pass (drives --resume)
     },
@@ -54,6 +55,7 @@ const ADDED_FIELDS = {
   last_new:     { type: 'integer' },
   total_new:    { type: 'integer' },
   last_new_at:  { type: 'date' },
+  last_seen_urls: { type: 'integer' },
   monitor_note: { type: 'keyword' },
   expanded_at:  { type: 'date' },
 };

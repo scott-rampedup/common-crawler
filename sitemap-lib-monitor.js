@@ -71,7 +71,7 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
     const startedAt = new Date().toISOString();
     const t0 = Date.now();
     const summary = { startedAt, finishedAt: null, seconds: 0, total: 0, scanned: 0, withGap: 0,
-      newUrls: 0, liveQueued: 0, jobs: 0, noUrls: 0, errors: 0, liveCapReached: false, top: [],
+      newUrls: 0, seenUrls: 0, liveQueued: 0, jobs: 0, noUrls: 0, errors: 0, liveCapReached: false, top: [],
       stateOk: 0, stateErrors: 0, stateRejected: 0, stateSample: '', ok: false };
     const byDomain = new Map();                            // domain -> new-URL count, for the report
     // A sweep of this size is dominated by sitemaps that no longer resolve, and the default fetchDoc spends
@@ -118,6 +118,9 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
           if (hints.size) { try { const { watches: w2 } = await ccEngine.discoverSitemaps({ urls: [d.sitemap_url], directoryRules, genderMap, bioSitemapNames, locationSitemapNames, keywordHints: hints, _fetchDoc: swFetch }); pageUrls = peopleUrls(w2); } catch (e) { /* */ } }
         }
         let missing = [];
+        // Record what was SEEN, not only what was new. last_new alone cannot answer "how many bio URLs are
+        // we monitoring" -- the delta is the small end of the number and the interesting one is the base.
+        summary.seenUrls += pageUrls.length;
         if (pageUrls.length) { const have = await haveSet(pageUrls); missing = pageUrls.filter((u) => !have.has(u)); }
         else summary.noUrls++;
         if (missing.length) {
@@ -129,7 +132,7 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
         // last_new_at makes "new tonight" queryable — last_new alone can't distinguish a sitemap that found
         // 12 new bios this pass from one that found 12 a week ago and none since.
         await putState(d.sitemap_url, {
-          last_checked: nowIso, last_new: missing.length,
+          last_checked: nowIso, last_new: missing.length, last_seen_urls: pageUrls.length,
           total_new: (Number(d.total_new) || 0) + missing.length,
           ...(missing.length ? { last_new_at: nowIso } : {}),
           monitor_note: pageUrls.length ? '' : 'no urls fetched',
@@ -175,6 +178,7 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
       summary.ok = summary.total > 0 && summary.scanned >= summary.total && summary.stateErrors === 0;
       summary.top = [...byDomain.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([domain, count]) => ({ domain, count }));
       log(`nightly sweep done: scanned ${summary.scanned.toLocaleString()}/${summary.total.toLocaleString()}, ` +
+          `${summary.seenUrls.toLocaleString()} bio URL(s) monitored, ` +
           `${summary.withGap.toLocaleString()} sitemap(s) with new bios, ${summary.newUrls.toLocaleString()} new URL(s) ` +
           `in ${summary.jobs} job(s), ${summary.noUrls.toLocaleString()} returned no urls, ${summary.errors.toLocaleString()} error(s), ` +
           `state writes ${summary.stateOk.toLocaleString()} ok / ${summary.stateErrors.toLocaleString()} failed` +
