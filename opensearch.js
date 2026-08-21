@@ -68,6 +68,10 @@ const MAPPING = {
     source:         { type: 'keyword' },
     directory:      { type: 'keyword' },
     bio_check:      { type: 'keyword' },
+    // Pre-Process | Processed | Failed Processing. Declared text+keyword to MATCH the live index: the
+    // field was dynamically mapped when a value was written before this declaration existed, and a mapper
+    // type cannot be changed in place. Filter and aggregate on status.keyword, as with email_type.
+    status:         { type: 'text', fields: { keyword: { type: 'keyword', ignore_above: 256 } } },
     type:           { type: 'keyword' },
     score:          { type: 'integer' },
     time_stamp:     { type: 'keyword' },
@@ -75,11 +79,21 @@ const MAPPING = {
   } },
 };
 
+// Fields added after the index was first created. ensureIndex only ever CREATED an index, so a new field
+// in MAPPING never reached the 14.4M-document production index and silently stayed unmapped/dynamic.
+const ADDED_FIELDS = { status: { type: 'text', fields: { keyword: { type: 'keyword', ignore_above: 256 } } } };
+
 async function ensureIndex(client) {
   const exists = await client.indices.exists({ index: INDEX });
-  if (exists.body) return false;
-  await client.indices.create({ index: INDEX, body: MAPPING });
-  return true;
+  if (!exists.body) { await client.indices.create({ index: INDEX, body: MAPPING }); return true; }
+  // put_mapping is additive and idempotent for identical definitions, so this is safe on every boot.
+  try {
+    await client.indices.putMapping({ index: INDEX, body: { properties: ADDED_FIELDS } });
+    console.log(`[opensearch] contacts mapping ensured (${Object.keys(ADDED_FIELDS).join(', ')}).`);
+  } catch (e) {
+    console.error('[opensearch] CONTACTS MAPPING NOT APPLIED —', e.message, '— status filtering will not work until this is resolved');
+  }
+  return false;
 }
 
 // A CONTACT's linkedin_url must be a personal profile (linkedin.com/in/<slug>). Reject company pages and
@@ -162,6 +176,34 @@ function rowToDoc(r) {
 // would stall the delta-syncer on that batch forever. Skip such docs so one bad row can't block everyone.
 function validId(email) { const id = String(email || '').toLowerCase(); return id && Buffer.byteLength(id) <= 512 ? id : ''; }
 
+const PRE_STATUS = 'Pre-Process';
+
+// The BIO URL as a document id. URLs can exceed the 512-byte _id cap, so long ones hash to a stable form;
+// both the write and the placeholder-delete go through this function so they can never disagree.
+function urlId(u) {
+  const s = String(u || '').trim();
+  if (!s) return '';
+  if (Buffer.byteLength(s) <= 500) return s;
+  return 'u:' + require('crypto').createHash('sha1').update(s).digest('hex');
+}
+
+// Which id a contact is stored under.
+//
+// Contacts were keyed _id = email, unconditionally, and bulkUpsert dropped any document without one. That
+// is why all 62,929 Source="URL" records have an email: a record without one was never stored, silently.
+// Two rules follow from pre-processing:
+//
+//   Pre-Process  -> ALWAYS keyed on the BIO URL, even when a modelled email exists. The modelled address is
+//                   itself a guess; keying on it means the real crawl later writes a DIFFERENT _id and
+//                   creates a second record for the same person instead of replacing the placeholder.
+//   anything else -> the email when there is one (unchanged), otherwise the BIO URL, so a page that was
+//                   crawled successfully but yielded no address is still a record rather than nothing.
+function contactId(d) {
+  if (String((d && d.status) || '') === PRE_STATUS) return urlId(d && d.web_source_url);
+  const e = validId(d && d.email);
+  return e || urlId(d && d.web_source_url);
+}
+
 // Bulk index docs, _id = email. Score-gated upsert: a re-indexed email only overwrites if its score is
 // >= the stored score (mirrors the Postgres upsert), so the best record for a person wins.
 // ---- opt-out suppression: emails a person confirmed removal for live in the SEPARATE `optout` index.
@@ -181,14 +223,24 @@ async function suppressedSet(client) {
   return set;
 }
 
-async function bulkUpsert(client, docs) {
+// clearPlaceholder: when a REAL record (anything not Pre-Process) is written for a BIO URL, delete the
+// Pre-Process placeholder that was standing in for it, in the same bulk. This is what makes "overwrite on
+// processing" an overwrite rather than a second copy of the person. Deleting a placeholder that was never
+// created is a no-op, so it is safe to leave on; pass false for bulk historical loads that can't have one.
+async function bulkUpsert(client, docs, { clearPlaceholder = true } = {}) {
   const sup = await suppressedSet(client);
   const body = [];
+  let skipped = 0;
   for (const d of docs) {
-    const id = validId(d.email);
-    if (!id) continue;
-    if (sup.has(id)) continue;                    // opted out -> never (re)add
+    const id = contactId(d);
+    if (!id) { skipped++; continue; }
+    const mail = validId(d.email);
+    if (mail && sup.has(mail)) continue;          // opted out -> never (re)add
 
+    if (clearPlaceholder && d.web_source_url && String(d.status || '') !== PRE_STATUS) {
+      const pid = urlId(d.web_source_url);
+      if (pid && pid !== id) body.push({ delete: { _index: INDEX, _id: pid } });
+    }
     body.push({ update: { _index: INDEX, _id: id } });
     body.push({
       scripted_upsert: true, upsert: d,
@@ -202,11 +254,20 @@ async function bulkUpsert(client, docs) {
         params: { doc: d } },
     });
   }
-  if (!body.length) return { indexed: 0, errors: 0 };
+  // Report skipped here too. Returning a bare {indexed:0} made "every document was unstorable" look
+  // identical to "there was nothing to do" -- the exact reporting gap that hid the sweep's failed writes.
+  if (!body.length) return { indexed: 0, skipped, errors: 0 };
   const res = await client.bulk({ body, refresh: false });
   let errors = 0;
-  if (res.body.errors) for (const it of res.body.items) if (it.update && it.update.error) errors++;
-  return { indexed: docs.length, errors };
+  if (res.body.errors) {
+    for (const it of res.body.items) {
+      if (it.update && it.update.error) errors++;
+      // A delete for a placeholder that never existed comes back 404 with no error object; that is the
+      // normal case for every record that was crawled without ever being pre-processed, not a failure.
+      else if (it.delete && it.delete.error) errors++;
+    }
+  }
+  return { indexed: docs.length - skipped, skipped, errors };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -404,6 +465,7 @@ async function bulkDelete(client, emails) {
 }
 
 module.exports = {
+  contactId, urlId, PRE_STATUS,
   makeClient, ensureIndex, rowToDoc, bulkUpsert, INDEX, MAPPING,
   search, each, facets, count, stats, docToRecord, buildQuery,
   recordToDoc, indexDocs, bulkDelete, cleanContactLinkedin, invalidateSuppression, OPTOUT_INDEX,

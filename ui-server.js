@@ -2586,6 +2586,9 @@ pruneOldJobs();
       companies.getRoleEmailTerms(companiesClient)
         .then((t) => { setAdminRoleTerms(t); if (t.length) console.log(`Role-Based email terms: ${t.length} admin term(s) loaded (+${BUILTIN_ROLE_TERMS.length} built-in).`); })
         .catch((e) => console.error('role-email-terms load failed:', e.message));
+      // The contacts index was created once and never re-checked, so every field added to MAPPING after
+      // that day stayed unmapped in production. Ensure it like the others.
+      if (reader && reader.client) openSearch.ensureIndex(reader.client).catch((e) => console.error('contacts index ensure failed:', e.message));
       sitemaps.ensureIndex(sitemapsClient).then(() => console.log('Sitemap Library index ready (monitor fields ensured).')).catch((e) => console.error('sitemaps index ensure failed:', e.message));
       atp.ensureIndex(atpClient).then(() => console.log('ATP Library index ready.')).catch((e) => console.error('atp index ensure failed:', e.message));
       corporatePlaces.ensureIndex(placesClient).then(() => console.log('Corporate Places index ready.')).catch((e) => console.error('corporate_places index ensure failed:', e.message));
