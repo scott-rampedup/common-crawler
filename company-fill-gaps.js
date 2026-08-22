@@ -54,7 +54,9 @@ const CA_REGION_ZIP = /^([A-Z]{2})\s+([A-Z]\d[A-Z]\s*\d[A-Z]\d)$/i;   // "ON M5V
 function parseAddress(addr) {
   const out = { locality: '', region: '', country: '' };
   const parts = String(addr || '').split(',').map((s) => s.trim()).filter(Boolean);
-  if (parts.length < 3) return out;                                   // too little structure to be sure
+  // Two parts is enough when the second is a US state + ZIP: "Owings Mills, MD 21117". Fewer than two,
+  // or two without that pattern ("Scotland"), stays blank.
+  if (parts.length < 2) return out;
   const last = parts[parts.length - 1];
   // Very common shape with the country omitted entirely: "401 Biscayne Blvd N-120, Miami, FL 33132".
   // A US state abbreviation followed by a 5-digit ZIP is unambiguous -- Canadian postcodes are
@@ -193,7 +195,29 @@ async function fillLocation(client) {
   if (!process.env.OPENSEARCH_ENDPOINT) { console.error('need OPENSEARCH_ENDPOINT'); process.exit(1); }
   const client = co.makeClient(process.env.OPENSEARCH_ENDPOINT);
   if (DRY) console.error('[dry-run: nothing will be written]');
-  if (DO_IND) await fillIndustry(client);
-  if (DO_LOC) await fillLocation(client);
+  // Both passes page with search_after over a query the pass itself empties -- a filled record no longer
+  // matches "must_not exists", so the cursor walks past records that shifted. First run: 2,437,667 matched
+  // at the start, 2,036,216 scanned, 412,901 left behind. So repeat until a pass finds nothing new.
+  const MAX_PASSES = DRY ? 1 : num('--passes', 6);
+  const remaining = async (which) => {
+    const q = which === 'ind'
+      ? { bool: { filter: [{ exists: { field: 'naics_code' } }], must_not: [{ exists: { field: 'industry' } }] } }
+      : { bool: { filter: [{ exists: { field: 'full_address' } }], must_not: [{ exists: { field: 'locality' } }, { term: { 'full_address.keyword': '' } }] } };
+    return (await client.count({ index: co.INDEX, body: { query: q } })).body.count;
+  };
+  const runUntilStable = async (label, fn) => {
+    let prev = Infinity;
+    for (let pass = 1; pass <= MAX_PASSES; pass++) {
+      if (pass > 1) console.error(`
+---- ${label} pass ${pass} (${prev.toLocaleString()} still unfilled) ----`);
+      await fn(client);
+      try { await client.indices.refresh({ index: co.INDEX }); } catch (e) { /* */ }
+      const now = await remaining(label === 'INDUSTRY' ? 'ind' : 'loc');
+      if (DRY || now === 0 || now >= prev) { console.error(`${label}: ${now.toLocaleString()} remain (converged after ${pass} pass(es))`); break; }
+      prev = now;
+    }
+  };
+  if (DO_IND) await runUntilStable('INDUSTRY', fillIndustry);
+  if (DO_LOC) await runUntilStable('LOCATION', fillLocation);
   try { await client.indices.refresh({ index: co.INDEX }); } catch (e) { /* */ }
 })().catch((e) => { console.error('ERR', e && e.stack || e); process.exit(1); });
