@@ -117,7 +117,35 @@ async function filterList(inPath, outPath, opts = {}) {
   return { seen, known, knownLedger, kept };
 }
 
-module.exports = { filterList };
+/**
+ * The same "we already did this" test filterList applies, but in memory and returning the set.
+ *
+ * Two independent sources, because the contacts index alone misses the big silent bucket: a page that was
+ * fetched fine and simply had no person on it produces no contact, so a contacts-only check re-fetches it
+ * forever. bio-etl needs this per queue object to decide whether an object is genuinely finished.
+ */
+async function knownSet(urls, opts = {}) {
+  const client = opts.client || os.makeClient(process.env.OPENSEARCH_ENDPOINT);
+  const out = new Set();
+  const list = [...new Set((urls || []).filter(Boolean))];
+  if (!list.length) return out;
+  let ledger = null;
+  if (!/^(0|false|no|off)$/i.test(process.env.CRAWL_LEDGER || '1')) {
+    try { ledger = require('./crawl-ledger'); await ledger.ensureIndex(client); } catch (e) { ledger = null; }
+  }
+  for (let i = 0; i < list.length; i += 1024) {
+    const chunk = list.slice(i, i + 1024);
+    try {
+      const r = await client.search({ index: os.INDEX, body: { size: 0, query: { terms: { web_source_url: chunk } },
+        aggs: { u: { terms: { field: 'web_source_url', size: chunk.length } } } } }, { requestTimeout: 120000 });
+      for (const b of (((r.body || r).aggregations.u.buckets) || [])) out.add(b.key);
+    } catch (e) { /* unfiltered URL costs a fetch, not correctness */ }
+    if (ledger) { try { for (const u of await ledger.skipSet(client, chunk)) out.add(u); } catch (e) { /* */ } }
+  }
+  return out;
+}
+
+module.exports = { filterList, knownSet };
 
 if (require.main === module) {
   const arg = (n, d) => { const i = process.argv.indexOf('--' + n); return i > 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : d; };

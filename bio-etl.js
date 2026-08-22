@@ -175,15 +175,44 @@ async function alreadyConsumed(keys) {
       let keys = await listKeys(prefix);
       if (!keys.length) { console.error(`nothing under s3://${BUCKET}/${prefix} — nothing to do.`); process.exit(0); }
       console.error(`  ${keys.length} object(s) under ${prefix}`);
-      // Skip objects a previous run already consumed but could not delete.
+      // Skip objects a previous run VERIFIED as fully converted.
+      //
+      // The ledger used to be written when a run merely READ an object -- before its misses had been
+      // crawled -- so a fleet shard that died took its slice with it and the object was skipped forever
+      // after. Measured cost: 7,966 objects / 32,312,633 URLs marked consumed, of which a 2,000-URL sample
+      // spread across the whole history found 9 with contacts. 0.4%.
+      //
+      // The ledger is now only a cache of "every URL in this object is already known", and membership has
+      // to be earned by checking. Anything not in it is read and have-checked -- cheap, since these are
+      // text files -- which means a dead shard's work returns automatically on the next run.
       const done = await alreadyConsumed(keys);
       if (done.size) {
         keys = keys.filter((k) => !done.has(k));
-        console.error(`  ${done.size} already consumed by an earlier run — ${keys.length} to process`);
-        if (!keys.length) { console.error('  everything under this prefix has been processed; nothing to do.'); process.exit(0); }
+        console.error(`  ${done.size} verified-complete by an earlier run -- ${keys.length} to check`);
+        if (!keys.length) { console.error('  everything under this prefix is converted; nothing to do.'); process.exit(0); }
       }
-      for (const k of keys) { for (const line of (await getText(k)).split('\n')) addLine(line); }
-      consumed = keys;
+      const { knownSet } = require('./skip-known');
+      const nowComplete = [];
+      let objUrls = 0, objKnown = 0;
+      for (const k of keys) {
+        const urls = (await getText(k)).split('\n').map((x) => x.trim()).filter(Boolean);
+        objUrls += urls.length;
+        let have;
+        try { have = await knownSet(urls); }
+        catch (e) { have = new Set(); console.error(`  have-check failed for ${k} (${e.message}) -- treating all as unprocessed`); }
+        objKnown += have.size;
+        const todo = urls.filter((u) => !have.has(u));
+        for (const line of todo) addLine(line);
+        if (urls.length && !todo.length) nowComplete.push(k);
+      }
+      console.error(`  ${objUrls.toLocaleString()} URL(s) across ${keys.length} object(s); ${objKnown.toLocaleString()} already done`);
+      if (nowComplete.length) {
+        try { const n = await markConsumed(nowComplete); console.error(`  ${n.toLocaleString()} object(s) fully converted -> ledger`); }
+        catch (e) { console.error('  could not record completed objects:', e.message); }
+      }
+      // Deliberately empty: `consumed` drove the delete-and-mark-on-read path further down, which is the
+      // behaviour that lost 32M URLs. Objects are retired only by the verified check above.
+      consumed = [];
     } else {
       const rl = readline.createInterface({ input: fs.createReadStream(IN), crlfDelay: Infinity });
       for await (const line of rl) addLine(line);
