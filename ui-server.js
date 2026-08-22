@@ -2700,10 +2700,37 @@ pruneOldJobs();
       // (default 6h vs 12h) so the queue trends to empty instead of merely keeping pace — a drain running
       // at exactly the producer's rate never recovers from a backlog, it only stops adding to one.
       if (process.env.BIO_ETL_DRAIN !== '0') {
+        // Hourly tick against a PERSISTED last-run time, not a timer anchored on boot.
+        //
+        // This is the third place in this file to have had the same bug. A setTimeout of 20 minutes and a
+        // setInterval of 6 hours both restart from zero on every deploy, and this app is deployed often --
+        // a dozen times in two days while the sitemap work was going in. The 20-minute timer never survived
+        // long enough to fire even once, so combined with the lease-404 bug the drain had NEVER run: 5.5M
+        // URLs queued on 20 Aug produced 83 contacts. The queue was never the problem, the clock was.
         const BD_HOURS = Math.max(1, Number(process.env.BIO_ETL_DRAIN_HOURS) || 6);
-        setTimeout(() => runBioEtlDrainGuarded('startup'), 20 * 60 * 1000);   // ~20 min after boot, behind smPass
-        setInterval(() => runBioEtlDrainGuarded('schedule'), BD_HOURS * 3600 * 1000);
-        console.log(`Bio-URL queue drain: ON, every ${BD_HOURS}h (s3://…/${MONITOR_QUEUE_PREFIX}).`);
+        const CFG_I = process.env.CC_CONFIG_INDEX || 'cc_config';
+        const DRAIN_STATE_ID = 'bio_etl_drain_state';
+        async function drainTick() {
+          try {
+            if (!reader || !reader.client) return;
+            let last = 0;
+            try {
+              const g = await reader.client.get({ index: CFG_I, id: DRAIN_STATE_ID });
+              last = Date.parse(((g.body || g)._source || {}).last_run || '') || 0;
+            } catch (e) {
+              const code = e && (e.statusCode || (e.meta && e.meta.statusCode));
+              if (!(code === 404 || /404|not_found|index_not_found/i.test(String(e && e.message)))) throw e;
+            }
+            const dueMs = BD_HOURS * 3600 * 1000;
+            if (last && Date.now() - last < dueMs) return;
+            await reader.client.index({ index: CFG_I, id: DRAIN_STATE_ID, refresh: true,
+              body: { last_run: new Date().toISOString(), by: process.env.FLY_MACHINE_ID || 'local' } });
+            runBioEtlDrainGuarded('scheduled tick');
+          } catch (e) { console.error('[bio-etl] tick error:', e && e.message); }
+        }
+        setInterval(drainTick, 60 * 60 * 1000);          // survives restarts: the due-check is persisted
+        setTimeout(drainTick, 4 * 60 * 1000);            // and shortly after boot, so a restart resumes
+        console.log(`Bio-URL queue drain: ON, due every ${BD_HOURS}h, checked hourly against persisted state (s3://…/${MONITOR_QUEUE_PREFIX}).`);
       } else {
         console.log('Bio-URL queue drain: OFF (BIO_ETL_DRAIN=0) — the monitor queue will grow unbounded.');
       }
