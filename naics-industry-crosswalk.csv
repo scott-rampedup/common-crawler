@@ -1,0 +1,384 @@
+naics_code,industry
+111998,Farming
+112130,Ranching
+112990,Ranching and Fisheries
+113310,Forestry and Logging
+114119,Fisheries
+115310,"Farming, Ranching, Forestry"
+211120,Oil Extraction
+211130,Natural Gas Extraction
+212115,Coal Mining
+212210,Mining
+212290,Metal Ore Mining
+212390,Nonmetallic Mineral Mining
+213112,Oil and Gas
+213115,"Oil, Gas, and Mining"
+221111,Hydroelectric Power Generation
+221112,Fossil Fuel Electric Power Generation
+221113,Nuclear Electric Power Generation
+221114,Solar Electric Power Generation
+221115,Wind Electric Power Generation
+221116,Geothermal Electric Power Generation
+221117,Biomass Electric Power Generation
+221118,Renewable Energy Power Generation
+221121,Utilities
+221122,"Electric Power Transmission, Control, and Distribution"
+221210,Natural Gas Distribution
+221310,Water Supply and Irrigation Systems
+221320,"Water, Waste, Steam, and Air Conditioning Services"
+221330,Steam and Air-Conditioning Supply
+236116,Construction
+236118,Residential Building Construction
+236210,Nonresidential Building Construction
+236220,Building Construction
+237130,Utility System Construction
+237210,Subdivision of Land
+237310,"Highway, Street, and Bridge Construction"
+237990,Civil Engineering
+238190,Building Structure and Exterior Contractors
+238290,Building Equipment Contractors
+238390,Building Finishing Contractors
+238990,Specialty Trade Contractors
+311119,Animal Feed Manufacturing
+311352,Sugar and Confectionery Product Manufacturing
+311423,Fruit and Vegetable Preserves Manufacturing
+311500,Dairy Product Manufacturing
+311612,Meat Products Manufacturing
+311710,Seafood Product Manufacturing
+311811,Baked Goods Manufacturing
+311999,Food and Beverage Manufacturing
+312110,Beverage Manufacturing
+312120,Breweries
+312130,Wineries
+312140,Distilleries
+312230,Tobacco Manufacturing
+313312,Textile Manufacturing
+315250,Apparel Manufacturing
+315990,Fashion Accessories Manufacturing
+316210,Footwear Manufacturing
+316990,Leather Product Manufacturing
+321999,Wood Product Manufacturing
+322299,Paper and Forest Product Manufacturing
+323120,Printing Services
+324199,Oil and Coal Product Manufacturing
+325199,Chemical Raw Materials Manufacturing
+325220,Artificial Rubber and Synthetic Fiber Manufacturing
+325320,Agricultural Chemical Manufacturing
+325414,Pharmaceutical Manufacturing
+325520,"Paint, Coating, and Adhesive Manufacturing"
+325611,Soap and Cleaning Product Manufacturing
+325998,Chemical Manufacturing
+326112,Packaging and Containers Manufacturing
+326160,Plastics and Rubber Product Manufacturing
+326199,Plastics Manufacturing
+326299,Rubber Products Manufacturing
+327120,Clay and Refractory Products Manufacturing
+327215,Glass Product Manufacturing
+327390,"Glass, Ceramics and Concrete Manufacturing"
+327420,Lime and Gypsum Products Manufacturing
+327999,Abrasives and Nonmetallic Minerals Manufacturing
+331529,Primary Metal Manufacturing
+332119,Fabricated Metal Products
+332216,Cutlery and Handtool Manufacturing
+332323,Architectural and Structural Metal Manufacturing
+332410,Automation Machinery Manufacturing
+332439,"Boilers, Tanks, and Shipping Container Manufacturing"
+332510,Accessible Hardware Manufacturing
+332618,Spring and Wire Product Manufacturing
+332722,Turned Products and Fastener Manufacturing
+332813,Metal Treatments
+332999,"Metal Valve, Ball, and Roller Manufacturing"
+333132,"Agriculture, Construction, Mining Machinery Manufacturing"
+333248,Industrial Machinery Manufacturing
+333310,Commercial and Service Industry Machinery Manufacturing
+333415,HVAC and Refrigeration Equipment Manufacturing
+333519,Metalworking Machinery Manufacturing
+333618,Engines and Power Transmission Equipment Manufacturing
+333998,Machinery Manufacturing
+334112,Computer and Network Security
+334118,Computer Hardware Manufacturing
+334290,Communications Equipment Manufacturing
+334310,Audio and Video Equipment Manufacturing
+334413,Fuel Cell Manufacturing
+334419,Computers and Electronics Manufacturing
+334512,Climate Technology Product Manufacturing
+334515,Smart Meter Manufacturing
+334519,Measuring and Control Instrument Manufacturing
+334610,Magnetic and Optical Media Manufacturing
+335139,Electric Lighting Equipment Manufacturing
+335220,Household Appliance Manufacturing
+335314,Electrical Equipment Manufacturing
+335929,Renewable Energy Equipment Manufacturing
+335999,"Appliances, Electrical, and Electronics Manufacturing"
+336120,Motor Vehicle Manufacturing
+336320,Alternative Fuel Vehicle Manufacturing
+336390,Motor Vehicle Parts Manufacturing
+336414,Defense and Space Manufacturing
+336419,Aviation and Aerospace Component Manufacturing
+336510,Railroad Equipment Manufacturing
+336612,Shipbuilding
+336999,Transportation Equipment Manufacturing
+337127,Household and Institutional Furniture Manufacturing
+337215,Office Furniture and Fixtures Manufacturing
+337920,Mattress and Blinds Manufacturing
+339110,Medical Equipment Manufacturing
+339920,Sporting Goods Manufacturing
+339999,Manufacturing
+423140,Wholesale Motor Vehicles and Parts
+423210,Furniture and Home Furnishings Manufacturing
+423220,Wholesale Furniture and Home Furnishings
+423390,Wholesale Building Materials
+423410,Wholesale Photography Equipment and Supplies
+423430,Wholesale Computer Equipment
+423520,Wholesale Metals and Minerals
+423690,"Wholesale Appliances, Electrical, and Electronics"
+423740,"Wholesale Hardware, Plumbing, Heating Equipment"
+423860,Wholesale Import and Export
+423930,Wholesale Recyclable Materials
+423940,Wholesale Luxury Goods and Jewelry
+424120,Retail Art Supplies
+424130,Wholesale Paper Products
+424210,Wholesale Drugs and Sundries
+424340,Wholesale Footwear
+424350,Wholesale Apparel and Sewing Supplies
+424490,Wholesale Food and Beverage
+424590,Wholesale Raw Farm Products
+424690,Wholesale Chemical and Allied Products
+424720,Wholesale Petroleum and Petroleum Products
+424820,Wholesale Alcoholic Beverages
+424990,Wholesale
+441110,Retail Motor Vehicles
+444240,Retail Building Materials and Garden Equipment
+445110,Retail Groceries
+445320,Food and Beverage Retail
+448190,Retail Apparel and Fashion
+449129,Retail Furniture and Home Furnishings
+449210,"Retail Appliances, Electrical, and Electronic Equipment"
+455219,Internet Marketplace Platforms
+456110,Retail Pharmacies
+456199,Retail Health and Personal Care Products
+457120,Retail Gasoline
+458320,Retail Luxury Goods and Jewelry
+459140,Retail Musical Instruments
+459210,Retail Books and Printed News
+459310,Retail Florists
+459410,Retail Office Equipment
+459420,Retail Office Supplies and Gifts
+459510,Retail Recyclable Materials & Used Merchandise
+459920,Retail Art Dealers
+481111,Airlines and Aviation
+482111,Rail Transportation
+483212,Maritime Transportation
+484230,Truck Transportation
+485119,Urban Transit Services
+485210,Interurban and Rural Bus Services
+485320,Taxi and Limousine Services
+485410,School and Employee Bus Services
+485510,Ground Passenger Transportation
+485999,Shuttles and Special Needs Transportation Services
+486990,Pipeline Transportation
+487990,Sightseeing Transportation
+488999,"Transportation, Logistics, Supply Chain and Storage"
+491110,Postal Services
+492210,Freight and Package Transportation
+493190,Warehousing and Storage
+512110,Media Production
+512131,Movies and Sound Recording
+512199,Animation and Post-production
+512230,Sheet Music Publishing
+512290,Entertainment Providers
+513110,Newspaper Publishing
+513120,Periodical Publishing
+513130,Book Publishing
+513210,Desktop Computing Software Products
+516120,Radio and Television Broadcasting
+516210,Social Networking Platforms
+517111,Telecommunications Carriers
+517112,Wireless Services
+517212,Business Intelligence Platforms
+517410,Satellite Telecommunications
+517810,Media and Telecommunications
+518210,Blockchain Services
+519130,Business Content
+519210,Libraries
+519290,"Technology, Information and Media"
+522110,Banking
+522180,Savings Institutions
+522299,International Trade and Development
+522310,Loan Brokers
+522320,Financial Services
+522390,Credit Intermediation
+523150,Investment Banking
+523160,Capital Markets
+523210,Securities and Commodity Exchanges
+523910,Venture Capital and Private Equity Principals
+523940,Investment Advice
+523991,Trusts and Estates
+523999,Investment Management
+524114,Insurance Carriers
+524210,Insurance Agencies and Brokerages
+524291,"Claims Adjusting, Actuarial Services"
+524298,Insurance
+525110,Pension Funds
+525190,Insurance and Employee Benefit Funds
+525920,Funds and Trusts
+531110,Leasing Residential Real Estate
+531120,Leasing Non-residential Real Estate
+531210,Real Estate and Equipment Rental Services
+532289,Consumer Goods Rental
+532310,Equipment Rental Services
+532490,Commercial and Industrial Equipment Rental
+541110,Law Practice
+541199,Alternative Dispute Resolution
+541211,Accounting
+541310,Architecture and Planning
+541320,Horticulture
+541330,Engineering Services
+541360,Surveying and Mapping Services
+541410,Interior Design
+541430,Graphic Design
+541490,Design Services
+541511,Computer Games
+541512,IT System Design Services
+541513,Computer Networking Products
+541519,Digital Accessibility Services
+541611,Strategic Management Services
+541612,Human Resources Services
+541613,Advertising Services
+541618,Business Consulting and Services
+541620,Environmental Services
+541690,Outsourcing and Offshoring Consulting
+541713,Nanotechnology Research
+541714,Biotechnology Research
+541715,Services for Renewable Energy
+541720,Think Tanks
+541820,Government Relations Services
+541890,Marketing Services
+541910,Market Research
+541922,Photography
+541930,Translation and Localization
+541940,Veterinary Services
+541990,Data Security Software Products
+551114,Holding Companies
+561110,Administrative and Support Services
+561210,Facilities Services
+561311,Staffing and Recruiting
+561312,Executive Search Services
+561320,Temporary Help Services
+561410,Writing and Editing
+561422,Telephone Call Centers
+561440,Collection Agencies
+561599,Travel Arrangements
+561611,Security and Investigations
+561612,Security Guards and Patrol Services
+561621,Security Systems Services
+561720,Janitorial Services
+561730,Landscaping Services
+561920,Events Services
+562119,Waste Collection
+562219,Waste Treatment and Disposal
+611110,Primary and Secondary Education
+611310,Higher Education
+611410,Secretarial Schools
+611420,E-Learning Providers
+611430,Professional Training and Coaching
+611511,Cosmetology and Barber Schools
+611512,Flight Training
+611519,Technical and Vocational Training
+611610,Fine Arts Schools
+611620,Sports and Recreation Instruction
+611630,Language Schools
+611710,Education
+621111,Medical Practices
+621112,Physicians
+621210,Dentists
+621310,Chiropractors
+621320,Optometrists
+621330,Mental Health Care
+621340,"Physical, Occupational and Speech Therapists"
+621399,Alternative Medicine
+621410,Family Planning Centers
+621498,Outpatient Care Centers
+621512,Medical and Diagnostic Laboratories
+621610,Home Health Care Services
+621910,Ambulance Services
+622110,Hospitals
+622310,Hospitals and Health Care
+623990,Nursing Homes and Residential Care Facilities
+624120,Services for the Elderly and Disabled
+624190,Individual and Family Services
+624229,Community Services
+624230,Emergency and Relief Services
+624310,Vocational Rehabilitation Services
+624410,Child Day Care Services
+711110,Theater Companies
+711120,Dance Companies
+711130,Musicians
+711190,Circuses and Magic Shows
+711211,Sports Teams and Clubs
+711212,Racetracks
+711219,Spectator Sports
+711320,Performing Arts and Spectator Sports
+711510,Artists and Writers
+712110,Museums
+712120,Historical Sites
+712130,Zoos and Botanical Gardens
+712190,"Museums, Historical Sites, and Zoos"
+713120,Amusement Parks and Arcades
+713210,Gambling Facilities and Casinos
+713910,Golf Courses and Country Clubs
+713920,Skiing Facilities
+713940,Wellness and Fitness Services
+713990,Recreational Facilities
+721110,Hotels and Motels
+721191,"Bed-and-Breakfasts, Hostels, Homestays"
+721199,Hospitality
+721310,Accommodation Services
+722310,Food and Beverage Services
+722320,Caterers
+722330,Mobile Food Services
+722410,"Bars, Taverns, and Nightclubs"
+722511,Restaurants
+811198,Vehicle Repair and Maintenance
+811210,Electronic and Precision Equipment Maintenance
+811310,Commercial and Industrial Machinery Maintenance
+811420,Reupholstery and Furniture Repair
+811430,Footwear and Leather Goods Repair
+811490,Repair and Maintenance
+812100,Personal Care Product Manufacturing
+812199,Personal Care Services
+812310,Laundry and Drycleaning Services
+812910,Pet Services
+812990,Consumer Services
+813110,Religious Institutions
+813211,Fundraising
+813219,Philanthropic Fundraising Services
+813410,Civic and Social Organizations
+813910,Industry Associations
+813920,Professional Organizations
+813940,Political Organizations
+813990,Non-profit Organizations
+814110,Household Services
+921110,Executive Offices
+921120,Legislative Offices
+921140,Public Policy Offices
+921190,Government Administration
+922110,Courts of Law
+922120,Law Enforcement
+922130,Administration of Justice
+922140,Correctional Institutions
+922160,Fire Protection
+922190,Public Safety
+923110,Education Administration Programs
+923120,Public Health
+923130,Health and Human Services
+924110,"Air, Water, and Waste Program Management"
+924120,Conservation Programs
+925110,Housing Programs
+925120,Housing and Community Development
+926110,Economic Programs
+926120,Transportation Programs
+926130,Utilities Administration
+927110,Space Research and Technology
+928110,Armed Forces
+928120,International Affairs
