@@ -2734,6 +2734,48 @@ pruneOldJobs();
       } else {
         console.log('Bio-URL queue drain: OFF (BIO_ETL_DRAIN=0) — the monitor queue will grow unbounded.');
       }
+      // ---- Crawl-fleet health watch ----
+      // Nothing has ever watched a fleet. fleet-health.js is CLI-only and shells to flyctl, which is not in
+      // this image, and bio-etl only PRINTS a suggestion to run it. Meanwhile a shard that dies of a V8
+      // heap abort is reported by Fly as `stopped` — identical to one that finished — so four of eight
+      // shards were lost on an earlier run while the drain reported success. Check on a timer and say so.
+      if (process.env.FLEET_HEALTH !== '0') {
+        const FH_MIN = Math.max(2, Number(process.env.FLEET_HEALTH_MINUTES) || 10);
+        let lastReported = '';
+        const fleetHealthTick = async () => {
+          if (!process.env.FLY_API_TOKEN) return;
+          try {
+            const { fleetStatus } = require('./fleet-launch');
+            for (const prefix of ['live-fleet', 'sitemap-sweep', 'childmaps-load']) {
+              const st = await fleetStatus({ namePrefix: prefix });
+              if (!st.ok || !st.total) continue;
+              const line = `${prefix}: ${st.running} running, ${st.done} finished, ${st.failed.length} FAILED`;
+              if (st.failed.length) {
+                const detail = st.failed.map((f) => `${f.name}(exit ${f.exitCode}${f.oom ? ', oom' : ''})`).join(', ');
+                console.error(`[fleet-health] ${line} — ${detail}`);
+                // Email once per distinct failure set, so a persistent dead shard doesn't mail every tick.
+                const sig = prefix + ':' + st.failed.map((f) => f.id).sort().join(',');
+                if (sig !== lastReported && mailer.mailEnabled()) {
+                  lastReported = sig;
+                  await mailer.sendMail({
+                    to: process.env.MONITOR_REPORT_TO || mailer.adminEmail(),
+                    subject: `Crawl fleet: ${st.failed.length} shard(s) died (${prefix})`,
+                    text: `${line}
+
+${detail}
+
+A dead shard's slice of the URL list is NOT processed. Re-launch or re-run the remainder.`,
+                    html: `<p><strong>${line}</strong></p><p>${detail}</p><p>A dead shard's slice of the URL list is <strong>not</strong> processed — re-launch, or re-run the remainder.</p>`,
+                  });
+                }
+              } else if (st.running) console.log(`[fleet-health] ${line}`);
+            }
+          } catch (e) { console.error('[fleet-health] check failed:', e && e.message); }
+        };
+        setInterval(fleetHealthTick, FH_MIN * 60 * 1000);
+        setTimeout(fleetHealthTick, 2 * 60 * 1000);
+        console.log(`Crawl-fleet health watch: ON, every ${FH_MIN} min (live-fleet, sitemap-sweep, childmaps-load).`);
+      }
       // Keep OpenSearch current with the processing DB: stream fleet-ingested/edited contacts across.
       // Only meaningful when the source of truth is Postgres (DATABASE_URL); SQLite fallback has no fleet.
       if (process.env.DATABASE_URL && process.env.OS_SYNC !== '0') {

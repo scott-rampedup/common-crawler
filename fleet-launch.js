@@ -135,7 +135,44 @@ async function reapFleet(o = {}) {
   return n;
 }
 
-module.exports = { launchFleet, reapFleet, currentImage };
+/**
+ * Health of a running fleet, over the Machines API rather than by shelling out to flyctl.
+ *
+ * fleet-health.js exists but is CLI-only (no exports) and shells to flyctl, which is not in the app image
+ * — so nothing has ever watched a fleet automatically. That is not a cosmetic gap: Fly reports a machine
+ * that died from a V8 heap abort as `stopped`, which is indistinguishable from a shard that finished its
+ * slice. Four of eight shards were lost that way on an earlier run and the drain reported success.
+ *
+ * A shard is FAILED if it stopped with a non-zero exit code (134 = V8 abort, 137 = OOM-kill) or was
+ * oom_killed. Everything else stopped is treated as finished.
+ */
+async function fleetStatus(o = {}) {
+  const token = o.token || process.env.FLY_API_TOKEN;
+  if (!token) return { ok: false, reason: 'no FLY_API_TOKEN', shards: [] };
+  const app = o.app || APP;
+  const prefix = o.namePrefix || 'live-fleet';
+  const machines = await flyApi(`/apps/${app}/machines`, 'GET', null, token);
+  const shards = [];
+  for (const m of (machines || [])) {
+    if (!String(m.name || '').startsWith(prefix)) continue;
+    let exitCode = null, oom = false;
+    for (const ev of (m.events || [])) {
+      if (ev.type === 'exit' && ev.request && ev.request.exit_event) {
+        exitCode = ev.request.exit_event.exit_code;
+        oom = !!ev.request.exit_event.oom_killed;
+        break;
+      }
+    }
+    const state = m.state;
+    const failed = state !== 'started' && (oom || (exitCode !== null && exitCode !== 0));
+    shards.push({ id: m.id, name: m.name, state, exitCode, oom, failed });
+  }
+  const running = shards.filter((s) => s.state === 'started').length;
+  const failed = shards.filter((s) => s.failed);
+  return { ok: true, total: shards.length, running, done: shards.length - running - failed.length, failed, shards };
+}
+
+module.exports = { launchFleet, reapFleet, currentImage, fleetStatus };
 
 if (require.main === module) {
   const arg = (n, d) => { const i = process.argv.indexOf('--' + n); return i > 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : d; };
