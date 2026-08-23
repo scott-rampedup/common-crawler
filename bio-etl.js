@@ -304,11 +304,11 @@ async function alreadyConsumed(keys) {
     console.error('\nno pointers to extract (everything already in the Master DB).');
   }
 
-  // ---------------------------------------------------------------- live remainder (opt-in)
-  if (MODE === 'urls' && LIVE && summary.miss) {
-    step(`live-crawl the ${summary.miss.toLocaleString()} page(s) Common Crawl lacks`, 'extract-from-pointers.js',
-      ['--live', F.miss, '--tag', RUN]);
-  }
+  // The live remainder used to be crawled HERE, inline, BEFORE the remainder was saved to S3 or a fleet
+  // was launched. Two consequences: 595,968 URLs crawled one machine at a time (~12h at ~14/s) when 24
+  // shards do it in about half an hour, and the miss list lived only in that machine's memory until it
+  // finished -- a crash lost the lot. It now runs after the remainder is durable, and only when no fleet
+  // took it. See the fleet block below.
 
   // ---------------------------------------------------------------- filter the remainder too
   // The same skip-known filter was applied to the CC pointer list only, which is backwards: a pointer
@@ -400,6 +400,7 @@ async function alreadyConsumed(keys) {
   // Requires FLY_API_TOKEN. Without it the run still succeeds and prints the command, so a missing token
   // degrades to the manual path rather than silently dropping the work.
   const FLEET_SHARDS = Number(process.env.FLEET_SHARDS || 0);
+  let fleetTook = false;
   if (FLEET_SHARDS > 0 && missSaved && summary.miss && process.env.FLY_API_TOKEN) {
     try {
       const { launchFleet, reapFleet } = require('./fleet-launch');
@@ -407,6 +408,9 @@ async function alreadyConsumed(keys) {
       const started = await launchFleet({
         in: `s3://${BUCKET}/${missKey}`, shards: FLEET_SHARDS, tag: RUN, log: (m) => console.error(m),
       });
+      // Only a launch that actually started shards counts. Setting this after the try/catch meant a
+      // FAILED launch still suppressed the inline fallback and the remainder went uncrawled.
+      fleetTook = started.length > 0;
       console.error(`\nfleet: ${started.length} shard(s) crawling ${summary.miss.toLocaleString()} URL(s)`);
       console.error(`  watch: node fleet-health.js --prefix live-fleet --watch 300`);
     } catch (e) {
@@ -414,6 +418,13 @@ async function alreadyConsumed(keys) {
     }
   } else if (FLEET_SHARDS > 0 && summary.miss && !process.env.FLY_API_TOKEN) {
     console.error('\nFLEET_SHARDS is set but FLY_API_TOKEN is not — not launching; the remainder is saved above.');
+  }
+
+  // Inline live crawl is the FALLBACK now, not the default: it runs only when no fleet took the
+  // remainder. One machine at ~14/s against 595,968 URLs is ~12 hours; 24 shards is ~30 minutes.
+  if (MODE === 'urls' && LIVE && summary.miss && !fleetTook) {
+    step(`live-crawl the ${summary.miss.toLocaleString()} page(s) Common Crawl lacks (no fleet - inline)`,
+      'extract-from-pointers.js', ['--live', F.miss, '--tag', RUN]);
   }
 
   console.error(`\n══════ BIO ETL DONE · ${Math.round((Date.now() - t0) / 1000)}s ══════`);
