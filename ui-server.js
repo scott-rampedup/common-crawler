@@ -111,13 +111,14 @@ async function releaseBioEtlLease() {
 }
 
 async function runBioEtlDrainGuarded(reason) {
-  if (bioEtlRunning) { console.log('[bio-etl] already running on this machine — skipping this tick'); return; }
+  if (bioEtlRunning) { console.log('[bio-etl] already running on this machine — skipping this tick'); return false; }
   const client = reader && reader.client;
-  if (!client) { console.log('[bio-etl] no OpenSearch client yet — skipping this tick'); return; }
+  if (!client) { console.log('[bio-etl] no OpenSearch client yet — skipping this tick'); return false; }
   let got = false;
   try { got = await takeBioEtlLease(client); }
-  catch (e) { console.error('[bio-etl] lease check failed, NOT draining (a duplicate run is worse than a missed one):', e.message); return; }
-  if (got) runBioEtlDrain(reason);
+  catch (e) { console.error('[bio-etl] lease check failed, NOT draining (a duplicate run is worse than a missed one):', e.message); return false; }
+  if (got) { runBioEtlDrain(reason); return true; }
+  return false;
 }
 
 function runBioEtlDrain(reason) {
@@ -2723,9 +2724,13 @@ pruneOldJobs();
             }
             const dueMs = BD_HOURS * 3600 * 1000;
             if (last && Date.now() - last < dueMs) return;
+            // Stamp last_run only when a drain ACTUALLY started. Stamping before the guard recorded a
+            // refusal as a success: bio_etl_drain_state showed last_run 16:12:59 while bio_etl_lease was
+            // absent, meaning nothing ran -- and the tick then treated the work as done for another 6h.
+            const started = await runBioEtlDrainGuarded('scheduled tick');
+            if (!started) { console.log('[bio-etl] tick: drain did not start; leaving last_run alone so the next tick retries'); return; }
             await reader.client.index({ index: CFG_I, id: DRAIN_STATE_ID, refresh: true,
               body: { last_run: new Date().toISOString(), by: process.env.FLY_MACHINE_ID || 'local' } });
-            runBioEtlDrainGuarded('scheduled tick');
           } catch (e) { console.error('[bio-etl] tick error:', e && e.message); }
         }
         setInterval(drainTick, 60 * 60 * 1000);          // survives restarts: the due-check is persisted
