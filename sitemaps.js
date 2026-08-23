@@ -152,7 +152,7 @@ async function monitoredBatch(client, size = 50000, kind = 'People') {
   const bool = { filter, must_not: [{ term: { monitored: false } }, { term: { status: 'inactive' } }] };
   const r = await client.search({ index: INDEX, body: {
     size: Math.min(50000, size), query: { bool },
-    sort: [{ last_checked: { order: 'asc', missing: '_first' } }, { sitemap_url: 'asc' }],
+    sort: [{ last_checked: { order: 'asc', missing: 0 } }, { sitemap_url: 'asc' }],   // see monitoredCursor: '_first' emits an unparseable sentinel
   } });
   return ((r.body || r).hits.hits || []).map((h) => h._source);
 }
@@ -423,8 +423,19 @@ async function* monitoredCursor(client, { kind = 'People', type = '', page = 500
   const bool = { filter, must_not };
   let after = null;
   for (;;) {
+    // missing: 0, not '_first'.
+    //
+    // With '_first' OpenSearch returns Long.MIN_VALUE (-9223372036854775808) as the sort value for a doc
+    // that has no last_checked, and feeding that back as search_after fails with
+    // "failed to parse date field [-9223372036854776000]". It never surfaced while every sitemap in the
+    // Library had been swept at least once; the 123,918 rows added by the Child Sitemaps 2 load had never
+    // been checked, so the first page came back with the sentinel and the nightly sweep died at exactly
+    // the page boundary -- 5,000 of 287,470 sitemaps in.
+    //
+    // Epoch 0 is a real date, sorts before every genuine last_checked, and round-trips through
+    // search_after unchanged.
     const body = { size: page, query: { bool },
-      sort: [{ last_checked: { order: 'asc', missing: '_first' } }, { sitemap_url: 'asc' }] };
+      sort: [{ last_checked: { order: 'asc', missing: 0 } }, { sitemap_url: 'asc' }] };
     if (after) body.search_after = after;
     const r = await client.search({ index: INDEX, body }, { requestTimeout: 120000 });
     const hits = ((r.body || r).hits.hits || []);
