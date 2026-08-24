@@ -124,24 +124,42 @@ async function filterList(inPath, outPath, opts = {}) {
  * fetched fine and simply had no person on it produces no contact, so a contacts-only check re-fetches it
  * forever. bio-etl needs this per queue object to decide whether an object is genuinely finished.
  */
+// The ledger index only has to be ensured ONCE per process. Doing it inside knownSet meant an index
+// round-trip on every call: the backlog count made 3,447 of them and took 2,299s where the actual lookups
+// are a few minutes' work. Cached as a promise so concurrent callers share one check.
+let _ledgerReady = null;
+function getLedger(client) {
+  if (/^(0|false|no|off)$/i.test(process.env.CRAWL_LEDGER || '1')) return Promise.resolve(null);
+  if (!_ledgerReady) {
+    _ledgerReady = (async () => {
+      try { const l = require('./crawl-ledger'); await l.ensureIndex(client); return l; }
+      catch (e) { return null; }
+    })();
+  }
+  return _ledgerReady;
+}
+
 async function knownSet(urls, opts = {}) {
   const client = opts.client || os.makeClient(process.env.OPENSEARCH_ENDPOINT);
   const out = new Set();
   const list = [...new Set((urls || []).filter(Boolean))];
   if (!list.length) return out;
-  let ledger = null;
-  if (!/^(0|false|no|off)$/i.test(process.env.CRAWL_LEDGER || '1')) {
-    try { ledger = require('./crawl-ledger'); await ledger.ensureIndex(client); } catch (e) { ledger = null; }
-  }
-  for (let i = 0; i < list.length; i += 1024) {
-    const chunk = list.slice(i, i + 1024);
+  const ledger = await getLedger(client);
+  const CONC = Math.max(1, Number(process.env.KNOWN_CONC) || 6);
+
+  // Chunks ran strictly in series, so a 4,000-URL object cost 8 sequential round-trips. They are
+  // independent lookups; run a few at a time.
+  const chunks = [];
+  for (let i = 0; i < list.length; i += 1024) chunks.push(list.slice(i, i + 1024));
+  const one = async (chunk) => {
     try {
       const r = await client.search({ index: os.INDEX, body: { size: 0, query: { terms: { web_source_url: chunk } },
         aggs: { u: { terms: { field: 'web_source_url', size: chunk.length } } } } }, { requestTimeout: 120000 });
       for (const b of (((r.body || r).aggregations.u.buckets) || [])) out.add(b.key);
     } catch (e) { /* unfiltered URL costs a fetch, not correctness */ }
     if (ledger) { try { for (const u of await ledger.skipSet(client, chunk)) out.add(u); } catch (e) { /* */ } }
-  }
+  };
+  for (let i = 0; i < chunks.length; i += CONC) await Promise.all(chunks.slice(i, i + CONC).map(one));
   return out;
 }
 
