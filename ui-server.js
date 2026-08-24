@@ -1831,12 +1831,40 @@ const server = http.createServer(async (req, res) => {
         if (!oldest || k < oldest) oldest = k;
         if (!newest || k > newest) newest = k;
       }
+      // The headline is the MEASURED outstanding count, not the object arithmetic.
+      //
+      // Counting every URL in every not-yet-retired object reads 13,495,935 when the genuine remaining work
+      // is ~4,000,000: most of those URLs are individually known (a contact exists, or the crawl ledger says
+      // the page was fetched and had no person on it) while the OBJECT they sit in is not yet 100% done and
+      // is therefore still counted whole. A figure that overstates the work 3x is not progress reporting.
+      // This project has already been here once -- the counter showed 10,398,933 when 97,504 were left.
+      //
+      // The true number needs a per-URL check, which is minutes, so bio-backlog-count.js computes it out of
+      // band and caches it. Serve that, say when it was measured, and keep the raw arithmetic as secondary
+      // so the two can be compared rather than one quietly replacing the other.
+      let measured = null;
+      try {
+        const g = await reader.client.get({ index: process.env.CC_CONFIG_INDEX || 'cc_config', id: 'bio_backlog_count' });
+        measured = (g.body || g)._source || null;
+      } catch (e) { /* not computed yet -> fall back to the arithmetic, clearly labelled */ }
+
       // An oldest entry far behind the newest means the drain is not keeping up — surface the age rather
       // than only the size, because a small queue that never empties is the worse failure.
       const parseStamp = (k) => { const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})/.exec(k || ''); return m ? Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`) : 0; };
       const oldestMs = parseStamp(oldest);
       sendJson(res, {
-        objects, urls, bytes, unnamed,
+        // `urls` is now the MEASURED outstanding count when one has been computed, so the panel shows real
+        // remaining work. urlsCounted keeps the old object arithmetic alongside it, and measuredAt says how
+        // fresh the measurement is -- an unlabelled stale number would be its own kind of lie.
+        objects,
+        urls: measured ? measured.urls_outstanding : urls,
+        urlsCounted: urls,
+        urlsUnique: measured ? measured.urls_unique : null,
+        urlsKnown: measured ? measured.urls_known : null,
+        measuredAt: measured ? measured.computed_at : null,
+        measuredSeconds: measured ? measured.seconds : null,
+        estimate: !measured,          // true = falling back to arithmetic, treat as an upper bound
+        bytes, unnamed,
         consumed: consumedSet.size, listed: allKeys.length,
         oldest: oldest ? oldest.slice(0, 19).replace(/-(\d{2})-(\d{2})-(\d{2})$/, ' $1:$2:$3') : null,
         newest: newest ? newest.slice(0, 19).replace(/-(\d{2})-(\d{2})-(\d{2})$/, ' $1:$2:$3') : null,
@@ -2732,6 +2760,20 @@ pruneOldJobs();
             await reader.client.index({ index: CFG_I, id: DRAIN_STATE_ID, refresh: true,
               body: { last_run: new Date().toISOString(), by: process.env.FLY_MACHINE_ID || 'local' } });
           } catch (e) { console.error('[bio-etl] tick error:', e && e.message); }
+        }
+        // Recompute the true backlog hourly. It is the number the Data Importer shows, and a figure that
+        // only moves when someone remembers to run a script is how a stale count becomes a wrong one.
+        if (process.env.BACKLOG_COUNT !== '0') {
+          const countTick = async () => {
+            if (!reader || !reader.client || bioEtlRunning) return;   // don't compete with a running drain
+            try {
+              const { computeBacklog } = require('./bio-backlog-count');
+              const r = await computeBacklog({ client: reader.client, log: () => {} });
+              console.log(`[backlog] outstanding ${r.urls_outstanding.toLocaleString()} of ${r.urls_unique.toLocaleString()} unique (${r.urls_known.toLocaleString()} known), ${r.seconds}s`);
+            } catch (e) { console.error('[backlog] count failed:', e && e.message); }
+          };
+          setInterval(countTick, 60 * 60 * 1000);
+          setTimeout(countTick, 8 * 60 * 1000);
         }
         setInterval(drainTick, 60 * 60 * 1000);          // survives restarts: the due-check is persisted
         setTimeout(drainTick, 4 * 60 * 1000);            // and shortly after boot, so a restart resumes
