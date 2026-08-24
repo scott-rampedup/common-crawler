@@ -191,11 +191,21 @@ async function alreadyConsumed(keys) {
         console.error(`  ${done.size} verified-complete by an earlier run -- ${keys.length} to check`);
         if (!keys.length) { console.error('  everything under this prefix is converted; nothing to do.'); process.exit(0); }
       }
+      // Filtering is the dominant cost of a drain, so it runs CONCURRENTLY.
+      //
+      // This loop was serial: one object at a time, each doing ~6 sequential OpenSearch round-trips (three
+      // 1024-URL chunks x contacts + crawl-ledger). Across ~11,000 queue objects that is ~66,000 requests in
+      // series -- roughly 2-3 hours before a single URL reaches Common Crawl, which resolves at 3,872/s.
+      // The filter was taking longer than the work it was filtering for.
       const { knownSet } = require('./skip-known');
+      const FILTER_CONC = Math.max(1, Number(process.env.FILTER_CONC) || 16);
       const nowComplete = [];
-      let objUrls = 0, objKnown = 0;
-      for (const k of keys) {
-        const urls = (await getText(k)).split('\n').map((x) => x.trim()).filter(Boolean);
+      let objUrls = 0, objKnown = 0, filtered = 0;
+      const tFilter = Date.now();
+      const filterOne = async (k) => {
+        let urls;
+        try { urls = (await getText(k)).split('\n').map((x) => x.trim()).filter(Boolean); }
+        catch (e) { console.error(`  read failed ${k}: ${e.message}`); return; }
         objUrls += urls.length;
         let have;
         try { have = await knownSet(urls); }
@@ -204,8 +214,16 @@ async function alreadyConsumed(keys) {
         const todo = urls.filter((u) => !have.has(u));
         for (const line of todo) addLine(line);
         if (urls.length && !todo.length) nowComplete.push(k);
+      };
+      for (let i = 0; i < keys.length; i += FILTER_CONC) {
+        await Promise.all(keys.slice(i, i + FILTER_CONC).map(filterOne));
+        filtered = Math.min(i + FILTER_CONC, keys.length);
+        if (filtered % 2000 < FILTER_CONC) {
+          const rate = Math.round(filtered / Math.max(1, (Date.now() - tFilter) / 1000));
+          console.error(`  filtered ${filtered.toLocaleString()}/${keys.length.toLocaleString()} objects | ${objKnown.toLocaleString()} already done | ${rate} obj/s | ETA ${Math.round((keys.length - filtered) / Math.max(1, rate) / 60)}m`);
+        }
       }
-      console.error(`  ${objUrls.toLocaleString()} URL(s) across ${keys.length} object(s); ${objKnown.toLocaleString()} already done`);
+      console.error(`  ${objUrls.toLocaleString()} URL(s) across ${keys.length} object(s); ${objKnown.toLocaleString()} already done (filter ${Math.round((Date.now() - tFilter) / 1000)}s at conc ${FILTER_CONC})`);
       if (nowComplete.length) {
         try { const n = await markConsumed(nowComplete); console.error(`  ${n.toLocaleString()} object(s) fully converted -> ledger`); }
         catch (e) { console.error('  could not record completed objects:', e.message); }
