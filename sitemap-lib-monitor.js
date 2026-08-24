@@ -30,18 +30,22 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
     log = () => {} } = deps;
   let running = false;
 
-  // Of these page URLs, which do we already have a contact for (exact web_source_url, keyword field)?
+  // Which of these page URLs do we already know about?
+  //
+  // This used to ask the contacts index alone: "is there a contact whose web_source_url is this?" That
+  // misses the largest category by far -- a page that was fetched successfully and simply had no person on
+  // it produces no contact, so it looked unseen and was re-queued every single night, forever. Measured on
+  // 73,068 queued URLs: 67,997 (93%) were already known once the crawl ledger is consulted, and the sweep
+  // was re-discovering essentially all of them. That is why 23 Aug produced 6,326,337 "new" URLs.
+  //
+  // skip-known.knownSet applies both tests -- contacts AND the crawl ledger of pages already attempted --
+  // which is the same gate the drain uses. Using a different definition of "known" in the producer than in
+  // the consumer is what let the queue compound.
+  const { knownSet } = require('./skip-known');
   async function haveSet(urls) {
-    const have = new Set();
-    if (!contactsClient || !urls.length) return have;
-    for (let i = 0; i < urls.length; i += 1024) {
-      const chunk = urls.slice(i, i + 1024);
-      try {
-        const r = await contactsClient.search({ index: contactsIndex, body: { size: 0, query: { terms: { web_source_url: chunk } }, aggs: { u: { terms: { field: 'web_source_url', size: chunk.length } } } } });
-        for (const b of (((r.body || r).aggregations.u.buckets) || [])) have.add(b.key);
-      } catch (e) { /* best-effort */ }
-    }
-    return have;
+    if (!contactsClient || !urls.length) return new Set();
+    try { return await knownSet(urls, { client: contactsClient }); }
+    catch (e) { return new Set(); }   // unknown -> re-queue: costs a fetch, never loses a page
   }
 
   const peopleUrls = (watches) => [...new Set((watches || []).filter((w) => w.kind === 'People').flatMap((w) => (w.urls || []).map((u) => u.url)))];

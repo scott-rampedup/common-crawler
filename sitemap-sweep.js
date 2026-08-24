@@ -31,6 +31,7 @@ const MAX_SITEMAPS = num('--max-sitemaps', 0);
 const KIND = arg('--kind', 'People');
 const TYPE = arg('--type', process.env.SWEEP_TYPE || '');
 const NO_EMAIL = process.argv.includes('--no-email');
+const DRAIN_AFTER = !/^(0|false|no|off)$/i.test(process.env.SWEEP_DRAIN_AFTER || '1');
 const QUEUE_PREFIX = process.env.MONITOR_QUEUE_PREFIX || 'monitor-queue/pending/';
 
 function loadNames(file) {
@@ -112,6 +113,29 @@ async function queueBioUrls(urls, label) {
   if (!NO_EMAIL) {
     try { await report.sendSweepReport(summary, { client: contactsClient }); }
     catch (e) { console.error('[sweep] report failed:', e.message); }
+  }
+
+  // Hand the night's finds to Common Crawl immediately rather than waiting for the drain's 6-hourly tick.
+  // CC resolves at ~3,872 pages/s through the Lambda fan-out and covered 77% of the last work list; the
+  // live crawl manages ~14 URLs/s per shard. Every hour a newly-found URL sits in the queue is an hour of
+  // the cheap, fast path going unused -- and the sweep is what knows the work exists.
+  if (!DRAIN_AFTER || DRY || !summary.newUrls) {
+    if (summary.newUrls && !DRAIN_AFTER) console.error('[sweep] SWEEP_DRAIN_AFTER=0 — not launching a drain');
+  } else if (!process.env.FLY_API_TOKEN) {
+    console.error('[sweep] FLY_API_TOKEN not set — cannot launch the drain; the next scheduled tick will pick it up');
+  } else {
+    try {
+      const { launchFleet, reapFleet } = require('./fleet-launch');
+      const region = process.env.AWS_REGION || 'us-east-1';
+      const bucket = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${region}`;
+      await reapFleet({ namePrefix: 'sweep-drain', log: (m) => console.error(m) });
+      const started = await launchFleet({
+        shards: 1, namePrefix: 'sweep-drain', memoryMb: 16384, cpus: 8,
+        cmd: () => ['node', '/app/bio-etl.js', '--mode', 'urls', '--in', `s3://${bucket}/${QUEUE_PREFIX}`],
+        log: (m) => console.error(m),
+      });
+      console.error(`[sweep] drain launched for ${summary.newUrls.toLocaleString()} new URL(s): ${started.map((m) => m.id).join(', ') || 'NONE'}`);
+    } catch (e) { console.error('[sweep] could not launch the drain:', e.message, '- the scheduled tick will pick it up'); }
   }
   process.exit(summary.ok ? 0 : 1);                 // non-zero so a failed sweep is visible to the launcher
 })().catch((e) => { console.error('SWEEP CRASHED', e && e.stack || e); process.exit(2); });

@@ -72,6 +72,7 @@ const MAPPING = {
     // field was dynamically mapped when a value was written before this declaration existed, and a mapper
     // type cannot be changed in place. Filter and aggregate on status.keyword, as with email_type.
     status:         { type: 'text', fields: { keyword: { type: 'keyword', ignore_above: 256 } } },
+    pp_priority:    { type: 'integer' },   // 1 gender+position, 2 gender, 3 position, 4 neither
     type:           { type: 'keyword' },
     score:          { type: 'integer' },
     time_stamp:     { type: 'keyword' },
@@ -81,7 +82,10 @@ const MAPPING = {
 
 // Fields added after the index was first created. ensureIndex only ever CREATED an index, so a new field
 // in MAPPING never reached the 14.4M-document production index and silently stayed unmapped/dynamic.
-const ADDED_FIELDS = { status: { type: 'text', fields: { keyword: { type: 'keyword', ignore_above: 256 } } } };
+const ADDED_FIELDS = {
+  status: { type: 'text', fields: { keyword: { type: 'keyword', ignore_above: 256 } } },
+  pp_priority: { type: 'integer' },
+};
 
 async function ensureIndex(client) {
   const exists = await client.indices.exists({ index: INDEX });
