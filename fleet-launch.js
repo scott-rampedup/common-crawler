@@ -68,6 +68,36 @@ async function currentImage(token, app = APP) {
  * @param {string} o.tag      run tag (also the S3 output prefix for extracted JSONL)
  * @returns {Promise<Array<{shard:number,id:string,name:string}>>}
  */
+// Crawl tuning a launched machine must carry EXPLICITLY.
+//
+// Machines created through the Machines API inherit the app's SECRETS but NOT fly.toml's [env]. Every
+// value tuned there therefore reverted to its code default on a shard, and the defaults are an order of
+// magnitude lower: DOMAIN_CONCURRENCY 48 -> 6, CC_MAX_SOCKETS 512 -> 64. The fleet asked each shard for
+// LIVE_CONC=96 while the socket pool capped it at 64, so shards measured ~14 URLs/s and 24 of them totalled
+// 336/s. That is not a resource limit, it is a config that never arrived.
+//
+// This gap has now cost three separate things: it throttled the nightly sweep, it made the scheduler
+// request an 8-cpu/8GB guest that Fly rejects outright, and it held the crawl fleet at an eighth of its
+// intended concurrency. So the values live here, in the launcher, and travel with every machine.
+//
+// HOST_CONCURRENCY stays at 3 deliberately — throughput comes from many hosts at once, not from hammering
+// one. Raising it would make us rude, not fast.
+const TUNING_DEFAULTS = {
+  DOMAIN_CONCURRENCY: '48',     // total domains/URLs in flight per machine (code default: 6)
+  IN_SITE_CONCURRENCY: '4',
+  HOST_CONCURRENCY: '3',        // politeness — do not raise
+  CC_CONCURRENCY: '1',
+  HTML_MAX_KB: '1024',
+  LIVE_MAX_PAGES: '300',
+  CC_MAX_SOCKETS: '1024',       // must exceed LIVE_CONC or it silently caps it (code default: 64)
+};
+// The launcher's own env wins when set, so a machine that DOES have fly.toml values passes its own through.
+function TUNING() {
+  const out = {};
+  for (const k of Object.keys(TUNING_DEFAULTS)) out[k] = String(process.env[k] || TUNING_DEFAULTS[k]);
+  return out;
+}
+
 async function launchFleet(o) {
   const token = o.token || process.env.FLY_API_TOKEN;
   if (!token) throw new Error('no FLY_API_TOKEN — cannot launch a fleet');
@@ -92,7 +122,7 @@ async function launchFleet(o) {
       image,
       restart: { policy: 'no' },
       guest: { cpu_kind: 'performance', cpus, memory_mb: memMb },
-      env: Object.assign({
+      env: Object.assign({}, TUNING(), {
         LIVE_CONC: String(o.liveConc || process.env.FLEET_LIVE_CONC || 96),
         CONC: String(o.conc || process.env.FLEET_CONC || 64),
         NODE_OPTIONS: `--max-old-space-size=${heapMb}`,

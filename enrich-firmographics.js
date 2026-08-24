@@ -23,16 +23,52 @@ const firmo = (c) => ({
 });
 
 // batch-resolve domains -> firmographics from the LIVE companies index (msearch, retry+reconnect)
-async function resolveDomains(coClient, domains) {
-  const map = new Map();
-  for (let i = 0; i < domains.length; i += 300) {
-    const chunk = domains.slice(i, i + 300);
+// A contact on a subdomain belongs to the company filed under its ROOT domain. Matching only the exact
+// domain meant `ai2.uni-bayreuth.de` never found "university of bayreuth" at `uni-bayreuth.de`, so the
+// contact kept showing its website where a company name belongs -- the record looks unenriched even though
+// the company is plainly there when you search for it.
+//
+// Measured on 650 domains that had no company_name: 0 matched exactly, 124 (19%) matched on the root.
+// The remaining 526 genuinely have no company record, which is a coverage gap rather than a join bug.
+//
+// Two-label roots only. Stripping to two labels is wrong for co.uk / com.au / uni-graz.at style suffixes,
+// so a second-level suffix keeps three labels: news.budderfly.com -> budderfly.com, but
+// team.example.co.uk -> example.co.uk rather than the unusable co.uk.
+const SECOND_LEVEL = new Set(['co', 'com', 'org', 'net', 'gov', 'edu', 'ac', 'gob', 'mil']);
+function rootDomain(d) {
+  const p = String(d || '').toLowerCase().replace(/^www\./, '').split('.').filter(Boolean);
+  if (p.length <= 2) return p.join('.');
+  return SECOND_LEVEL.has(p[p.length - 2]) && p.length >= 3 ? p.slice(-3).join('.') : p.slice(-2).join('.');
+}
+
+async function lookup(coClient, keys) {
+  const found = new Map();
+  for (let i = 0; i < keys.length; i += 300) {
+    const chunk = keys.slice(i, i + 300);
     const body = []; for (const d of chunk) { body.push({ index: co.INDEX }); body.push({ size: 1, query: { term: { domain: d } }, _source: CO_SRC }); }
     for (let a = 0; a < 6; a++) { try {
       const r = await coClient.msearch({ body }); const resp = (r.body || r).responses || [];
-      for (let j = 0; j < chunk.length; j++) { const h = resp[j] && resp[j].hits && resp[j].hits.hits && resp[j].hits.hits[0]; if (h) map.set(chunk[j], h._source); }
+      for (let j = 0; j < chunk.length; j++) { const h = resp[j] && resp[j].hits && resp[j].hits.hits && resp[j].hits.hits[0]; if (h) found.set(chunk[j], h._source); }
       break;
     } catch (e) { if (a === 5) throw e; if (a === 2) coClient = co.makeClient(process.env.OPENSEARCH_ENDPOINT); await sleep(Math.min(8000, 300 * 2 ** a)); } }
+  }
+  return found;
+}
+
+async function resolveDomains(coClient, domains) {
+  const map = new Map();
+  const exact = await lookup(coClient, domains);
+  for (const [d, doc] of exact) map.set(d, doc);
+  // Only the ones the exact pass missed, and only where the root actually differs.
+  const needRoot = [...new Set(domains.filter((d) => !map.has(d)).map((d) => rootDomain(d)).filter(Boolean))]
+    .filter((r) => !map.has(r));
+  if (needRoot.length) {
+    const byRoot = await lookup(coClient, needRoot);
+    for (const d of domains) {
+      if (map.has(d)) continue;
+      const doc = byRoot.get(rootDomain(d));
+      if (doc) map.set(d, doc);
+    }
   }
   return map;
 }
@@ -70,7 +106,7 @@ async function enrichMissing({ client, coClient, endpoint, limit = 0, dry = fals
   await processBatch();
   return { scanned, matched, updated };
 }
-module.exports = { enrichMissing };
+module.exports = { enrichMissing, resolveDomains, rootDomain };
 
 if (require.main === module) (async () => {
   if (!process.env.OPENSEARCH_ENDPOINT) { console.error('need OPENSEARCH_ENDPOINT'); process.exit(1); }
