@@ -119,7 +119,7 @@ async function queueBioUrls(urls, label) {
   // CC resolves at ~3,872 pages/s through the Lambda fan-out and covered 77% of the last work list; the
   // live crawl manages ~14 URLs/s per shard. Every hour a newly-found URL sits in the queue is an hour of
   // the cheap, fast path going unused -- and the sweep is what knows the work exists.
-  if (!DRAIN_AFTER || DRY || !summary.newUrls) {
+  if (!DRAIN_AFTER || !summary.newUrls) {
     if (summary.newUrls && !DRAIN_AFTER) console.error('[sweep] SWEEP_DRAIN_AFTER=0 — not launching a drain');
   } else if (!process.env.FLY_API_TOKEN) {
     console.error('[sweep] FLY_API_TOKEN not set — cannot launch the drain; the next scheduled tick will pick it up');
