@@ -349,6 +349,43 @@ function getLibMonitor() {   // lazy: sitemapsClient + reader are set in startup
   }
   return libMonitor;
 }
+// ---- editing must work on anything the UI can show ----
+//
+// db.updateRecord reads POSTGRES and returns not_found before writing anything, but the UI reads
+// OPENSEARCH, and the two have diverged badly: 14,672,268 contacts visible, 3,987,906 in Postgres. 72.8%
+// of what a user can see could not be edited at all, and which ones worked depended on the pipeline that
+// produced them -- Sitemap Monitor and Webpage records saved fine, Live Crawl saved 11 times in 150,
+// Google Maps "Employee" records 1 in 150. Every drain and every Google Maps import widens the gap,
+// because load-extracted writes OpenSearch only.
+//
+// getRecordAnywhere / updateRecordAnywhere fall back to the store that HAS the record, and upsert it into
+// Postgres on the way through so the next edit takes the normal path. Used by every edit route.
+async function getRecordAnywhere(email) {
+  const rec = await db.getByEmail(email);
+  if (rec) return rec;
+  const id = String(email || '').trim().toLowerCase();
+  if (!id || !reader._os) return null;
+  try {
+    const g = await reader.client.get({ index: openSearch.INDEX, id });
+    const src = (g.body || g)._source;
+    return src ? openSearch.docToRecord(src) : null;
+  } catch (e) { return null; }
+}
+
+async function updateRecordAnywhere(email, updates) {
+  const r = await db.updateRecord(email, updates || {});
+  if (r.ok || r.error !== 'not_found') return r;
+  const base = await getRecordAnywhere(email);
+  if (!base) return { ok: false, error: 'not_found' };
+  const merged = { ...base, ...(updates || {}) };
+  if (!String(merged['Email Address'] || '').trim()) return { ok: false, error: 'email_required' };
+  // Mirror into Postgres. Failure is not fatal -- the caller's OpenSearch write-through still applies the
+  // edit -- but it keeps the record on this fallback path, so log it rather than hide it.
+  try { await db.upsertMany([merged]); }
+  catch (e) { console.error(`[edit] applied in OpenSearch but NOT mirrored to Postgres for ${email}: ${e.message}`); }
+  return { ok: true, record: merged, via: 'opensearch-fallback' };
+}
+
 let monitorRunning = false;
 // Single guard shared by the scheduled tick AND the manual /api/monitor/run endpoint, so two passes
 // never overlap.
@@ -2303,7 +2340,9 @@ const server = http.createServer(async (req, res) => {
         const payload = JSON.parse(body || '{}');
         const edits = Array.isArray(payload.edits) ? payload.edits : [];
         const results = await Promise.all(edits.map(async (e) => {
-          try { return { email: e.email, ...(await db.updateRecord(e.email, e.updates || {})) }; }
+          try {
+            return { email: e.email, ...(await updateRecordAnywhere(e.email, e.updates || {})) };
+          }
           catch (err) { return { email: e.email, ok: false, error: err.message || 'update failed' }; }
         }));
         // Write-through edits to OpenSearch so they reflect immediately (authoritative, bypasses the
@@ -2364,7 +2403,7 @@ const server = http.createServer(async (req, res) => {
             const recs = [], dels = [];                                         // dels = old email _ids to remove (email changed)
             await Promise.all(emails.slice(i, i + 150).map(async (email) => {
               try {
-                const rec = await db.getByEmail(email);
+                const rec = await getRecordAnywhere(email);
                 if (!rec) { errors++; return; }
                 const cur = String(rec['Email Address'] || '').trim();
                 if (cur && String(rec['Email Type'] || '').trim().toLowerCase() !== 'modelled') { protectedCnt++; return; }
@@ -2376,7 +2415,7 @@ const server = http.createServer(async (req, res) => {
                 const dom = field === 'Email Domain' ? newDomain : (curDomain || contactDomain);
                 const local = field === 'Email Pattern' ? renderEmailLocal(pattern, first, last) : curLocal;
                 if (!dom || !local) { skipped++; return; }
-                const r = await db.updateRecord(email, { 'Email Address': `${local}@${dom}`, 'Email Type': 'Modelled' });
+                const r = await updateRecordAnywhere(email, { 'Email Address': `${local}@${dom}`, 'Email Type': 'Modelled' });
                 if (r && r.ok && r.record) {
                   updated++; recs.push(r.record);
                   const newKey = String(r.record['Email Address'] || '').trim().toLowerCase();
@@ -2432,7 +2471,7 @@ const server = http.createServer(async (req, res) => {
         for (let i = 0; i < emails.length; i += 200) {
           const recs = [];
           await Promise.all(emails.slice(i, i + 200).map(async (email) => {
-            try { const r = await db.updateRecord(email, { [field]: value }); if (r && r.ok && r.record) { updated++; recs.push(r.record); } else errors++; }
+            try { const r = await updateRecordAnywhere(email, { [field]: value }); if (r && r.ok && r.record) { updated++; recs.push(r.record); } else errors++; }
             catch (e) { errors++; }
           }));
           if (reader._os && recs.length) { try { await reader.put(recs.map((rec) => openSearch.recordToDoc(rec, nowIso))); } catch (e) { console.error('bulk-update OpenSearch write-through failed:', e.message); } }
@@ -2495,7 +2534,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         // Load fresh records from the DB (don't trust client-sent field values).
-        const records = (await Promise.all(emails.map((e) => db.getByEmail(e)))).filter(Boolean);
+        const records = (await Promise.all(emails.map((e) => getRecordAnywhere(e)))).filter(Boolean);
         const enriched = await aiEnrich.enrichMany(records, { concurrency: 4 });
         const results = [];
         for (let k = 0; k < records.length; k++) {
@@ -2506,7 +2545,7 @@ const server = http.createServer(async (req, res) => {
           const fields = Object.keys(en.updates || {});
           if (!fields.length) { results.push({ email, ok: true, changed: 0, changes: {} }); continue; }
           try {
-            const upd = await db.updateRecord(email, en.updates);   // auto-apply
+            const upd = await updateRecordAnywhere(email, en.updates);   // auto-apply
             results.push({
               email, ok: upd.ok, changed: fields.length, changes: en.changes,
               newEmail: en.updates['Email Address'] || undefined,
