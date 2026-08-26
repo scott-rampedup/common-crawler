@@ -428,6 +428,29 @@ async function updateRecordAnywhere(email, updates) {
   return { ok: true, record: merged, via: 'opensearch-fallback' };
 }
 
+// A drain lease naming THIS machine but taken by a previous process is stale: that process is dead, so
+// its drain is dead too. The 8h expiry exists as a crash backstop, but waiting it out blocks every tick in
+// between -- today the app aborted at 18:12 holding a lease taken at 12:55, and no drain could start for
+// nearly eight hours. Clear our own orphans on boot; leases held by OTHER machines are left alone.
+async function releaseOrphanedDrainLease() {
+  try {
+    if (!reader || !reader.client) return;
+    const CONFIG_INDEX = process.env.CC_CONFIG_INDEX || 'cc_config';
+    const g = await reader.client.get({ index: CONFIG_INDEX, id: BIO_ETL_LEASE_ID });
+    const src = (g.body || g)._source || {};
+    const holder = String(src.holder || '');
+    const me = String(process.env.FLY_MACHINE_ID || 'local');
+    if (!holder.startsWith(me + ':')) return;                       // someone else's lease: not ours to clear
+    if (holder === `${me}:${process.pid}`) return;                  // our own live run
+    if (Date.parse(src.expires_at || 0) <= Date.now()) return;      // already expired; nothing to do
+    await releaseBioEtlLease();
+    console.log(`[bio-etl] released a stale lease from a previous process (${holder}, taken ${src.taken_at})`);
+  } catch (e) {
+    const code = e && (e.statusCode || (e.meta && e.meta.statusCode));
+    if (!(code === 404)) console.error('[bio-etl] orphan lease check failed:', e && e.message);
+  }
+}
+
 let monitorRunning = false;
 // Single guard shared by the scheduled tick AND the manual /api/monitor/run endpoint, so two passes
 // never overlap.
@@ -2853,15 +2876,32 @@ pruneOldJobs();
             if (!reader || !reader.client || bioEtlRunning || countTickRunning) return;
             countTickRunning = true;
             try {
-              const { computeBacklog } = require('./bio-backlog-count');
-              const r = await computeBacklog({ client: reader.client, log: () => {} });
-              console.log(`[backlog] outstanding ${r.urls_outstanding.toLocaleString()} of ${r.urls_unique.toLocaleString()} unique (${r.urls_known.toLocaleString()} known), ${r.seconds}s`);
+              // On its own machine. computeBacklog holds one hash per unique URL -- 6,830,762 and growing --
+              // and running that inside the web server is what aborted the app with exit_code=134 twice
+              // today. Same mistake as the drain: a job that scans the whole queue does not belong in the
+              // process serving the UI.
+              if (process.env.FLY_API_TOKEN && process.env.BACKLOG_ON_MACHINE !== '0') {
+                const { launchFleet, reapFleet } = require('./fleet-launch');
+                await reapFleet({ namePrefix: 'backlog-count', log: () => {} });
+                const m = await launchFleet({
+                  shards: 1, namePrefix: 'backlog-count', memoryMb: 16384, cpus: 4,
+                  env: { NODE_OPTIONS: '--max-old-space-size=12288' },
+                  cmd: () => ['node', '/app/bio-backlog-count.js', '--conc', '24', '--quiet'],
+                  log: () => {},
+                });
+                console.log(`[backlog] count launched on ${m.map((x) => x.id).join(', ') || 'NOTHING'}`);
+              } else {
+                const { computeBacklog } = require('./bio-backlog-count');
+                const r = await computeBacklog({ client: reader.client, log: () => {} });
+                console.log(`[backlog] outstanding ${r.urls_outstanding.toLocaleString()} of ${r.urls_unique.toLocaleString()} unique (${r.urls_known.toLocaleString()} known), ${r.seconds}s`);
+              }
             } catch (e) { console.error('[backlog] count failed:', e && e.message); }
             finally { countTickRunning = false; }
           };
           setInterval(countTick, 60 * 60 * 1000);
           setTimeout(countTick, 8 * 60 * 1000);
         }
+        releaseOrphanedDrainLease();                     // a restart means any lease we held is dead
         setInterval(drainTick, 60 * 60 * 1000);          // survives restarts: the due-check is persisted
         setTimeout(drainTick, 4 * 60 * 1000);            // and shortly after boot, so a restart resumes
         console.log(`Bio-URL queue drain: ON, due every ${BD_HOURS}h, checked hourly against persisted state (s3://…/${MONITOR_QUEUE_PREFIX}).`);
