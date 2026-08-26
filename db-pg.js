@@ -16,6 +16,11 @@ const { Pool } = require('pg');
 const { typeForDomain } = require('./tld-lookup');
 const { normalizeContact } = require('./normalize');
 
+// Public Prospects sightings spool. ON by default — every batch that runs without it permanently
+// discards citable sightings — but SPOOL_SIGHTINGS=0 is a kill switch if the spool ever misbehaves
+// in production. The spool MUST be drained (see drain-sightings.js); it is not a store.
+const SPOOL_SIGHTINGS = process.env.SPOOL_SIGHTINGS !== '0';
+
 // --- field mapping (kept in lockstep with db.js) ---
 const FIELDS = ['Time Stamp', 'Source', 'Web Source URL', 'Directory', 'Path ID', 'Last Path',
   'Bio Check', 'First', 'Last', 'Gender', 'Title', 'Position', 'Description', 'Image URL',
@@ -93,6 +98,30 @@ async function makeDb(opts = {}) {
   await q(`CREATE INDEX IF NOT EXISTS idx_contacts_search_trgm ON contacts USING gin (search gin_trgm_ops)`);
   await q(`CREATE INDEX IF NOT EXISTS idx_contacts_updated_at ON contacts(updated_at)`);   // default sort: newest first
 
+  // --- sightings spool (Public Prospects) -------------------------------------------------------
+  // `contacts` is email-keyed, so every page BEYOND the first that an address appears on is thrown
+  // away: once by the in-batch Map dedupe in upsertMany, again by ON CONFLICT ... WHERE score >=.
+  // Each discarded row carried its own 'Web Source URL' + 'Time Stamp' — i.e. a citable sighting.
+  // Those are exactly the evidence Public Prospects needs and they are unrecoverable once dropped.
+  //
+  // This is a SPOOL, not a store. Rows are drained into the public-prospects-db ledger and deleted;
+  // it must never grow unbounded inside the production DB. Deliberately constraint-free (no PK, no
+  // unique index, everything nullable) so an append can't fail and roll back the contacts write.
+  await q(`CREATE TABLE IF NOT EXISTS sightings_spool (
+    id          BIGSERIAL,
+    email       TEXT,
+    page_url    TEXT,
+    captured_at TEXT,
+    source      TEXT,
+    domain      TEXT,
+    payload     JSONB,
+    spooled_at  TIMESTAMPTZ DEFAULT now(),
+    synced_at   TIMESTAMPTZ
+  )`);
+  // Partial index: the drain only ever looks for unsynced rows, and this keeps it cheap as the
+  // spool churns.
+  await q(`CREATE INDEX IF NOT EXISTS idx_spool_unsynced ON sightings_spool(id) WHERE synced_at IS NULL`);
+
   // --- WHERE builder (PG $N placeholders); mirrors db.js whereFor ---
   function whereFor(o = {}) {
     const where = []; const params = [];
@@ -136,10 +165,19 @@ async function makeDb(opts = {}) {
   // ON CONFLICT DO UPDATE ... WHERE EXCLUDED.score >= contacts.score. `added` = true inserts (xmax=0).
   async function upsertMany(records) {
     const byEmail = new Map();
+    const sightings = [];                      // every record, BEFORE the dedupe below discards them
     for (const r of (records || [])) {
       normalizeContact(r);
       const v = rowValues(r);
       if (!v) continue;
+      // Spool the sighting first. This has to happen HERE, ahead of the byEmail Map, because the
+      // Map is itself a loss point: an address found on three pages in one batch keeps only the
+      // highest-scoring row and the other two never reach SQL at all.
+      if (SPOOL_SIGHTINGS) {
+        sightings.push([v[0], r['Web Source URL'] || null, r['Time Stamp'] || null,
+                        r['Source'] || null, rootDomain(r['Web Source URL']) || null,
+                        JSON.stringify(r)]);
+      }
       const prev = byEmail.get(v[0]);
       const sIdx = INSERT_COLS.indexOf('score');
       if (!prev || v[sIdx] >= prev[sIdx]) byEmail.set(v[0], v);
@@ -174,6 +212,19 @@ async function makeDb(opts = {}) {
             const res = await client.query(sql, values);
             processed += chunk.length;
             for (const r of res.rows) if (r.inserted) added++;
+          }
+          // Append every sighting in the SAME transaction as the contacts write, so the two can
+          // never disagree about what this batch saw. 6 params/row against PG's 65535 cap.
+          if (sightings.length) {
+            const per = 6, maxS = Math.floor(60000 / per);
+            for (let i = 0; i < sightings.length; i += maxS) {
+              const chunk = sightings.slice(i, i + maxS);
+              const vals = [];
+              const tup = chunk.map((row) => '(' + row.map((v) => { vals.push(v); return '$' + vals.length; }).join(', ') + ')');
+              await client.query(
+                `INSERT INTO sightings_spool (email, page_url, captured_at, source, domain, payload)
+                 VALUES ${tup.join(', ')}`, vals);
+            }
           }
           await client.query('COMMIT');
           break;

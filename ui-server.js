@@ -121,15 +121,59 @@ async function runBioEtlDrainGuarded(reason) {
   return false;
 }
 
+// Run the drain on its OWN machine, not as a child of the web server.
+//
+// It was spawned here with child_process on the app box: a full ETL -- Athena, a Lambda fan-out, then
+// load-extracted indexing at concurrency 8 -- sharing four CPUs with the UI. Search requests time out while
+// it runs, which is what a user hit. Every other heavy job in this system was moved to a dedicated machine
+// for exactly this reason (the sweep, after it took the app down with a heap abort; the child-sitemap load;
+// the work-list rebuild). The scheduled drain was the one that never was.
+//
+// If a machine cannot be launched we fall back to the in-process child rather than skipping: a slow UI is
+// bad, not draining at all is worse. Duplicate runs are prevented by the cc_config lease, not by the
+// in-process flag, so releasing the flag once the machine is away is safe.
 function runBioEtlDrain(reason) {
-  if (bioEtlRunning) { console.log('[bio-etl] already running — skipping this tick'); return; }
+  if (bioEtlRunning) { console.log('[bio-etl] already running - skipping this tick'); return; }
   const region = process.env.AWS_REGION || 'us-east-1';
   const bucket = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${region}`;
   const args = ['--mode', 'urls', '--in', `s3://${bucket}/${MONITOR_QUEUE_PREFIX}`, '--drain'];
   if (!/^(0|false|no|off)$/i.test(process.env.BIO_ETL_LIVE || '1')) args.push('--live');
-  bioEtlRunning = true;
   const started = new Date().toISOString();
-  console.log(`[bio-etl] drain start (${reason}): node bio-etl.js ${args.join(' ')}`);
+
+  if (process.env.FLY_API_TOKEN && process.env.BIO_ETL_ON_MACHINE !== '0') {
+    bioEtlRunning = true;
+    (async () => {
+      try {
+        const { launchFleet, reapFleet } = require('./fleet-launch');
+        await reapFleet({ namePrefix: 'bio-etl-run', log: (m) => console.log(m) });
+        const machines = await launchFleet({
+          shards: 1, namePrefix: 'bio-etl-run',
+          memoryMb: Number(process.env.BIO_ETL_MEMORY_MB) || 16384,
+          cpus: Number(process.env.BIO_ETL_CPUS) || 8,
+          env: { FILTER_CONC: String(Number(process.env.FILTER_CONC) || 24) },
+          cmd: () => ['node', '/app/bio-etl.js', ...args],
+          log: (m) => console.log(m),
+        });
+        if (!machines.length) throw new Error('no machine started');
+        console.log(`[bio-etl] drain launched on its own machine (${reason}): ${machines.map((m) => m.id).join(', ')}`);
+        BIO_ETL_LAST = { started, finished: null, machine: machines[0].id, via: 'machine' };
+        bioEtlRunning = false;
+        // The machine holds the lease for its own run; release ours so a stuck flag cannot block the tick.
+        releaseBioEtlLease().catch((e) => console.error('[bio-etl] lease release failed:', e.message));
+      } catch (e) {
+        bioEtlRunning = false;
+        console.error(`[bio-etl] could not launch a drain machine (${e.message}) - falling back to in-process`);
+        spawnBioEtlChild(reason, args, started);
+      }
+    })();
+    return;
+  }
+  spawnBioEtlChild(reason, args, started);
+}
+
+function spawnBioEtlChild(reason, args, started) {
+  bioEtlRunning = true;
+  console.log(`[bio-etl] drain start IN-PROCESS (${reason}): node bio-etl.js ${args.join(' ')}`);
   const child = require('child_process').spawn(process.execPath, [path.join(__dirname, 'bio-etl.js'), ...args], {
     cwd: __dirname, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -139,8 +183,6 @@ function runBioEtlDrain(reason) {
     bioEtlRunning = false;
     BIO_ETL_LAST = { started, finished: new Date().toISOString(), code };
     console.log(`[bio-etl] drain finished with code ${code}`);
-    // Release the lease. Its expiry (8h) is only a crash backstop; holding it to term would block the
-    // next 6h tick and quietly halve the drain rate.
     releaseBioEtlLease().catch((e) => console.error('[bio-etl] lease release failed:', e.message));
   });
   child.on('error', (e) => { bioEtlRunning = false; console.error('[bio-etl] spawn failed:', e.message); });
@@ -2802,14 +2844,20 @@ pruneOldJobs();
         }
         // Recompute the true backlog hourly. It is the number the Data Importer shows, and a figure that
         // only moves when someone remembers to run a script is how a stale count becomes a wrong one.
+        let countTickRunning = false;
         if (process.env.BACKLOG_COUNT !== '0') {
           const countTick = async () => {
-            if (!reader || !reader.client || bioEtlRunning) return;   // don't compete with a running drain
+            // Never run this on the web server while a drain is in flight, and never more than one at a
+            // time. It reads ~11,000 S3 objects and have-checks every URL in them; alongside the UI that is
+            // enough to make search requests time out.
+            if (!reader || !reader.client || bioEtlRunning || countTickRunning) return;
+            countTickRunning = true;
             try {
               const { computeBacklog } = require('./bio-backlog-count');
               const r = await computeBacklog({ client: reader.client, log: () => {} });
               console.log(`[backlog] outstanding ${r.urls_outstanding.toLocaleString()} of ${r.urls_unique.toLocaleString()} unique (${r.urls_known.toLocaleString()} known), ${r.seconds}s`);
             } catch (e) { console.error('[backlog] count failed:', e && e.message); }
+            finally { countTickRunning = false; }
           };
           setInterval(countTick, 60 * 60 * 1000);
           setTimeout(countTick, 8 * 60 * 1000);
