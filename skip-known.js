@@ -139,8 +139,23 @@ function getLedger(client) {
   return _ledgerReady;
 }
 
+/**
+ * @param opts.preProcessCountsAsKnown  Does a Pre-Process placeholder count as "we already did this"?
+ *
+ * The two callers need OPPOSITE answers from the same question, and getting it backwards silently stops
+ * the pipeline:
+ *
+ *   the SWEEP wants true  -- a placeholder exists, so do not re-queue this URL. That is the entire point
+ *                            of pre-processing: it is what stops the same pages being re-discovered nightly.
+ *   the DRAIN wants false -- a placeholder is a promise, not a contact. If the drain treated it as done it
+ *                            would skip the URL forever and no placeholder would ever become a real record.
+ *
+ * The default is FALSE, deliberately. Getting it wrong in that direction costs a redundant queue entry;
+ * getting it wrong the other way costs the work itself, with nothing to show that anything stopped.
+ */
 async function knownSet(urls, opts = {}) {
   const client = opts.client || os.makeClient(process.env.OPENSEARCH_ENDPOINT);
+  const preOk = opts.preProcessCountsAsKnown === true;
   const out = new Set();
   const list = [...new Set((urls || []).filter(Boolean))];
   if (!list.length) return out;
@@ -153,7 +168,12 @@ async function knownSet(urls, opts = {}) {
   for (let i = 0; i < list.length; i += 1024) chunks.push(list.slice(i, i + 1024));
   const one = async (chunk) => {
     try {
-      const r = await client.search({ index: os.INDEX, body: { size: 0, query: { terms: { web_source_url: chunk } },
+      // Unless the caller says otherwise, a Pre-Process placeholder does NOT satisfy "we have this".
+      const q = preOk
+        ? { terms: { web_source_url: chunk } }
+        : { bool: { filter: [{ terms: { web_source_url: chunk } }],
+                    must_not: [{ term: { 'status.keyword': os.PRE_STATUS } }] } };
+      const r = await client.search({ index: os.INDEX, body: { size: 0, query: q,
         aggs: { u: { terms: { field: 'web_source_url', size: chunk.length } } } } }, { requestTimeout: 120000 });
       for (const b of (((r.body || r).aggregations.u.buckets) || [])) out.add(b.key);
     } catch (e) { /* unfiltered URL costs a fetch, not correctness */ }

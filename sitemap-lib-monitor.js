@@ -44,7 +44,9 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
   const { knownSet } = require('./skip-known');
   async function haveSet(urls) {
     if (!contactsClient || !urls.length) return new Set();
-    try { return await knownSet(urls, { client: contactsClient }); }
+    // preProcessCountsAsKnown: a placeholder means we have already recorded this URL, so the sweep must
+    // not queue it again. This is what ends the nightly re-discovery loop.
+    try { return await knownSet(urls, { client: contactsClient, preProcessCountsAsKnown: true }); }
     catch (e) { return new Set(); }   // unknown -> re-queue: costs a fetch, never loses a page
   }
 
