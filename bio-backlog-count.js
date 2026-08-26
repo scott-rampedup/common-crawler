@@ -97,8 +97,20 @@ async function computeBacklog({ client, log = () => {} } = {}) {
     urls_outstanding: outstanding,  // THE number: genuine remaining work
     read_errors: readErrors,
   };
-  try { await c.index({ index: CFG, id: DOC_ID, body: result, refresh: true }); }
-  catch (e) { log(`  could not cache the count: ${e.message}`); }
+  // Keep a HISTORY, not just the latest reading.
+  //
+  // A single number answers none of the questions a queue counter exists for. "2,168,551" looks identical
+  // whether the queue is draining, growing or frozen, which is exactly how a seven-hour drain outage went
+  // unnoticed. With a series we can report the direction and the rate, which is what actually tells you
+  // whether the pipeline is working.
+  try {
+    let history = [];
+    try { const g = await c.get({ index: CFG, id: DOC_ID }); history = ((g.body || g)._source || {}).history || []; }
+    catch (e) { /* first run */ }
+    history.unshift({ at: result.computed_at, unique: result.urls_unique, known: result.urls_known, outstanding: result.urls_outstanding });
+    result.history = history.slice(0, 180);            // ~a week of hourly readings
+    await c.index({ index: CFG, id: DOC_ID, body: result, refresh: true });
+  } catch (e) { log(`  could not cache the count: ${e.message}`); }
   return result;
 }
 

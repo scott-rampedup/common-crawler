@@ -451,6 +451,66 @@ async function releaseOrphanedDrainLease() {
   }
 }
 
+// Direction and rate from the stored history, plus a plain-language read on whether the queue is clearing.
+function backlogTrend(measured) {
+  const h = Array.isArray(measured.history) ? measured.history : [];
+  const now = h[0] || { outstanding: measured.urls_outstanding, at: measured.computed_at };
+  const at = (hoursAgo) => {
+    const cutoff = Date.now() - hoursAgo * 3600 * 1000;
+    for (const p of h) if (Date.parse(p.at) <= cutoff) return p;
+    return h.length ? h[h.length - 1] : null;
+  };
+  const d24 = at(24), d1 = at(1);
+  const delta = (past) => (past ? now.outstanding - past.outstanding : null);
+  const per24 = delta(d24);
+  // "Falling" has to mean falling in a way that matters. A fixed 1,000/day threshold called a drift of
+  // -1,200 on a 2,168,551 queue "falling" and projected a clear date 1,808 days out -- technically true,
+  // practically a lie, and the same species of misleading number as the 13.7M headline. So the change must
+  // be at least 1% of the queue (floor 5,000), and a projection is only offered when it is inside a
+  // horizon anyone would act on. Beyond that, saying "not clearing at this rate" is the honest answer.
+  const MEANINGFUL = Math.max(5000, Math.round(now.outstanding * 0.01));
+  const HORIZON_DAYS = 180;
+  let clearsInDays = null, direction = 'unknown';
+  if (per24 !== null) {
+    if (per24 <= -MEANINGFUL) {
+      direction = 'falling';
+      const days = Math.ceil(now.outstanding / Math.abs(per24));
+      clearsInDays = days <= HORIZON_DAYS ? days : null;
+    } else if (per24 >= MEANINGFUL) direction = 'growing';
+    else direction = 'flat';
+  }
+  return {
+    trend: {
+      direction,                                   // falling | flat | growing | unknown
+      changeLastHour: delta(d1),
+      change24h: per24,
+      clearsInDays,                                // null unless genuinely draining
+      readings: h.length,
+      oldestReading: h.length ? h[h.length - 1].at : null,
+    },
+  };
+}
+
+// Cheap, cached check for "is a drain running right now". The UI cannot answer this today, so a healthy
+// drain and a dead one look the same from outside -- which is most of why the pipeline felt unsustainable.
+let _drainProbe = { at: 0, live: false };
+let drainMachineLive = false;
+async function refreshDrainProbe() {
+  if (Date.now() - _drainProbe.at < 60000) return _drainProbe.live;
+  _drainProbe.at = Date.now();
+  try {
+    const { fleetStatus } = require('./fleet-launch');
+    let live = false;
+    for (const p of ['bio-etl-run', 'sweep-drain']) {
+      const st = await fleetStatus({ namePrefix: p });
+      if (st.ok && st.running > 0) { live = true; break; }
+    }
+    _drainProbe.live = live;
+  } catch (e) { /* leave the previous value */ }
+  drainMachineLive = _drainProbe.live;
+  return _drainProbe.live;
+}
+
 let monitorRunning = false;
 // Single guard shared by the scheduled tick AND the manual /api/monitor/run endpoint, so two passes
 // never overlap.
@@ -1944,6 +2004,7 @@ const server = http.createServer(async (req, res) => {
       // The true number needs a per-URL check, which is minutes, so bio-backlog-count.js computes it out of
       // band and caches it. Serve that, say when it was measured, and keep the raw arithmetic as secondary
       // so the two can be compared rather than one quietly replacing the other.
+      await refreshDrainProbe();
       let measured = null;
       try {
         const g = await reader.client.get({ index: process.env.CC_CONFIG_INDEX || 'cc_config', id: 'bio_backlog_count' });
@@ -1955,9 +2016,14 @@ const server = http.createServer(async (req, res) => {
       const parseStamp = (k) => { const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})/.exec(k || ''); return m ? Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`) : 0; };
       const oldestMs = parseStamp(oldest);
       sendJson(res, {
-        // `urls` is now the MEASURED outstanding count when one has been computed, so the panel shows real
-        // remaining work. urlsCounted keeps the old object arithmetic alongside it, and measuredAt says how
-        // fresh the measurement is -- an unlabelled stale number would be its own kind of lie.
+        // A queue counter has to answer "is this getting better or worse", not just "how big is it".
+        //
+        // A bare 2,168,551 reads identically whether the queue is draining, growing or frozen -- which is
+        // how a seven-hour drain outage went unnoticed, and why the number looked stuck when it was in fact
+        // being recomputed hourly and genuinely not moving. Direction, rate, when the last drain ran and
+        // whether one is running now are the things that make it judgeable without reading machine logs.
+        ...(measured ? backlogTrend(measured) : { trend: null }),
+        drainRunning: !!drainMachineLive,
         objects,
         urls: measured ? measured.urls_outstanding : urls,
         urlsCounted: urls,
