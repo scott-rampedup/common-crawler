@@ -220,10 +220,14 @@ async function alreadyConsumed(keys) {
         filtered = Math.min(i + FILTER_CONC, keys.length);
         if (filtered % 2000 < FILTER_CONC) {
           const rate = Math.round(filtered / Math.max(1, (Date.now() - tFilter) / 1000));
-          console.error(`  filtered ${filtered.toLocaleString()}/${keys.length.toLocaleString()} objects | ${objKnown.toLocaleString()} already done | ${rate} obj/s | ETA ${Math.round((keys.length - filtered) / Math.max(1, rate) / 60)}m`);
+          // Report the de-duplicated figure too. objKnown counts URL OCCURRENCES across objects -- the same
+          // URL queued on five nights counts five times -- while the Data Importer's backlog counts unique
+          // URLs. Printing only the occurrence count made the drain look like it was working on 9,257,625
+          // URLs while the panel said 2,168,551, which reads as a contradiction rather than two units.
+          console.error(`  filtered ${filtered.toLocaleString()}/${keys.length.toLocaleString()} objects | ${objKnown.toLocaleString()} known occurrences (${seen.size.toLocaleString()} unique still to do) | ${rate} obj/s | ETA ${Math.round((keys.length - filtered) / Math.max(1, rate) / 60)}m`);
         }
       }
-      console.error(`  ${objUrls.toLocaleString()} URL(s) across ${keys.length} object(s); ${objKnown.toLocaleString()} already done (filter ${Math.round((Date.now() - tFilter) / 1000)}s at conc ${FILTER_CONC})`);
+      console.error(`  ${objUrls.toLocaleString()} URL occurrence(s) across ${keys.length} object(s); ${objKnown.toLocaleString()} known, ${seen.size.toLocaleString()} unique to process (filter ${Math.round((Date.now() - tFilter) / 1000)}s at conc ${FILTER_CONC})`);
       if (nowComplete.length) {
         try { const n = await markConsumed(nowComplete); console.error(`  ${n.toLocaleString()} object(s) fully converted -> ledger`); }
         catch (e) { console.error('  could not record completed objects:', e.message); }
