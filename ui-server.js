@@ -3274,18 +3274,37 @@ server.listen(PORT, async () => {
       } catch (e) { console.error('Remax loc-fix failed:', e.message); }
     }
 
-    // resume interrupted jobs (a job that was running when the server restarted) so long crawls finish
+    // Resuming interrupted jobs is OFF by default, and bounded when on.
+    //
+    // This resumed EVERY interrupted job on every boot. Interrupted jobs accumulate -- any restart marks
+    // whatever was mid-crawl as interrupted -- so the pile only grows, and by 27 Aug there were 1,001 of
+    // them, the oldest from 18 Aug. Each boot re-started all 1,001 at once; they then competed for the 48
+    // global crawl slots, none of them finished, and the next restart resumed the same pile again.
+    //
+    // The visible symptom was that the Data Importer stopped working: a freshly submitted job queued behind
+    // a week's worth of zombies and never got a slot. Submissions were accepted, reported "running", and
+    // did nothing -- indefinitely.
+    //
+    // A job whose records are already in the central DB is not worth auto-restarting at scale. Resume is
+    // now opt-in (JOBS_AUTO_RESUME=1) and capped (JOBS_RESUME_MAX, default 5, newest first), so a restart
+    // can never again flood the crawler with work nobody asked for.
     try {
-      let resumed = 0;
-      for (const job of jobs.values()) {
-        if (job.status === 'interrupted') {
+      const AUTO = /^(1|true|yes|on)$/i.test(process.env.JOBS_AUTO_RESUME || '');
+      const interrupted = [...jobs.values()].filter((j) => j.status === 'interrupted')
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      if (!AUTO) {
+        if (interrupted.length) console.log(`${interrupted.length} interrupted job(s) left alone (set JOBS_AUTO_RESUME=1 to resume; they can also be resumed individually from the UI).`);
+      } else {
+        const cap = Math.max(1, Number(process.env.JOBS_RESUME_MAX) || 5);
+        let resumed = 0;
+        for (const job of interrupted.slice(0, cap)) {
           const remaining = job.domains.filter((d) => !job.doneDomains.includes(d)).length;
           resumeJob(job.id);
           resumed++;
           console.log(`Resumed interrupted job ${job.id}: ${remaining}/${job.domains.length} domain(s) remaining.`);
         }
+        if (interrupted.length > cap) console.log(`${interrupted.length - cap} older interrupted job(s) NOT resumed (cap ${cap}).`);
       }
-      if (resumed) console.log(`Auto-resumed ${resumed} interrupted job(s).`);
     } catch (e) { console.error('Resume interrupted jobs failed:', e.message); }
   })();
 });
