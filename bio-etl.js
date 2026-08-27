@@ -322,6 +322,47 @@ async function alreadyConsumed(keys) {
   if (nPtr) {
     step(`extract ${nPtr.toLocaleString()} page(s) across the Lambda fleet`, 'lambda-drive.js', [F.ptr], { RUN });
     step('index the extracted JSONL', 'load-extracted.js', [`cc-extracted/${RUN}/`]);
+
+    // Record EVERY page Common Crawl extraction attempted, whatever came of it.
+    //
+    // crawl-ledger exists precisely for this -- its own header says a page fetched successfully with no
+    // person on it "left no trace at all, so the next drain treated it as new and fetched it again" -- but
+    // record() was only ever called from extract-from-pointers, the LIVE path. The Common Crawl path
+    // handles 99.7% of the volume and wrote nothing.
+    //
+    // The consequence is the backlog floor. A CC page with no person produces no contact and no ledger
+    // entry, so it is invisible: the sweep re-queues it nightly, every drain re-resolves and re-extracts
+    // it, and it never leaves the queue. That is why 2.1M URLs resolved at a 99.7% hit rate yielded 6,523
+    // contacts while outstanding sat at ~2.15M and would not move.
+    try {
+      const ledger = require('./crawl-ledger');
+      const osx = require('./opensearch');
+      const lclient = osx.makeClient(process.env.OPENSEARCH_ENDPOINT);
+      await ledger.ensureIndex(lclient);
+      const rlp = readline.createInterface({ input: fs.createReadStream(F.ptr), crlfDelay: Infinity });
+      let batch = [], recorded = 0, lerrs = 0;
+      const flushLedger = async () => {
+        if (!batch.length) return;
+        const b = batch; batch = [];
+        const r = await ledger.record(lclient, b);
+        recorded += r.indexed; lerrs += r.errors;
+      };
+      for await (const line of rlp) {
+        if (!line.trim()) continue;
+        let u = ''; try { u = JSON.parse(line).url || ''; } catch (e) { /* skip unparseable */ }
+        if (!u) continue;
+        // 'extracted' is the honest outcome for the attempt: the page was read from the archive. Whether a
+        // person was found is a separate question and not knowable per-URL here -- what matters is that the
+        // page was ATTEMPTED, so it is never silently re-queued.
+        batch.push({ url: u, outcome: 'extracted', source: 'Common Crawl' });
+        if (batch.length >= 2000) await flushLedger();
+      }
+      await flushLedger();
+      console.error(`  crawl ledger: recorded ${recorded.toLocaleString()} CC attempt(s)${lerrs ? `, ${lerrs} error(s)` : ''}`);
+    } catch (e) {
+      console.error('  crawl ledger write FAILED:', e.message, '- these URLs will be re-queued until this succeeds');
+    }
+
   } else {
     console.error('\nno pointers to extract (everything already in the Master DB).');
   }
