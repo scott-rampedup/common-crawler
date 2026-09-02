@@ -32,8 +32,16 @@ const { intlMobileType } = require("./intl-mobile");
 const { modelEmail, templateFor } = require("./email-pattern");
 
 // ---------------------------------------------------------------- config
+// Free / consumer mailbox providers: an address here belongs to the PERSON, not to the company whose page
+// it was found on. The legacy ISP mailboxes below behave identically -- they routinely outlive the
+// broadband contract that issued them and are carried around as personal addresses for decades.
+// Note classifyEmail checks ROLE_LOCALS first, so info@att.net stays Role-Based rather than Personal.
 const FREE_DOMAINS = new Set(["gmail.com","yahoo.com","hotmail.com","outlook.com",
-  "icloud.com","aol.com","proton.me","protonmail.com","gmx.com","mail.com","live.com","msn.com"]);
+  "icloud.com","aol.com","proton.me","protonmail.com","gmx.com","mail.com","live.com","msn.com",
+  "adelphia.net","att.net","bellsouth.net","charter.net","comcast.net","cox.net","earthlink.com",
+  "earthlink.net","frontiernet.net","juno.com","mac.com","me.com","mindspring.com","netscape.net",
+  "optonline.net","pacbell.net","roadrunner.com","rocketmail.com","rr.com","sbcglobal.net","shaw.ca",
+  "verizon.net","yahoo.in","ymail.com"]);
 const ROLE_LOCALS = new Set(["info","sales","support","admin","contact","hello","hr","billing",
   "careers","office","team","marketing","help","service","press","media","jobs","accounts",
   "webmaster","postmaster","abuse","noreply","no-reply","enquiries","inquiries"]);
