@@ -42,6 +42,7 @@ const FREE_DOMAINS = new Set(["gmail.com","yahoo.com","hotmail.com","outlook.com
   "earthlink.net","frontiernet.net","juno.com","mac.com","me.com","mindspring.com","netscape.net",
   "optonline.net","pacbell.net","roadrunner.com","rocketmail.com","rr.com","sbcglobal.net","shaw.ca",
   "verizon.net","yahoo.in","ymail.com"]);
+const FREE_SUFFIXES = [".rr.com"];
 const ROLE_LOCALS = new Set(["info","sales","support","admin","contact","hello","hr","billing",
   "careers","office","team","marketing","help","service","press","media","jobs","accounts",
   "webmaster","postmaster","abuse","noreply","no-reply","enquiries","inquiries"]);
@@ -589,6 +590,11 @@ function classifyEmail(email){
   if(ROLE_LOCALS.has(local) || ROLE_LOCALS.has(base)) return "Role-Based";
   if(ROLE_LOCALS_ADMIN.has(local) || ROLE_LOCALS_ADMIN.has(base)) return "Role-Based";
   if(FREE_DOMAINS.has(domain)) return "Personal";
+  // Road Runner never issued mail at the bare apex -- every consumer address is regional
+  // (tampabay.rr.com, austin.rr.com, woh.rr.com). An exact-match set catches ~none of them, so the
+  // whole tree is matched by suffix. Kept as its own list because widening FREE_DOMAINS to suffix
+  // matching would wrongly swallow corporate subdomains of the other providers (mail.acme-att.net).
+  for(const suf of FREE_SUFFIXES) if(domain.endsWith(suf)) return "Personal";
   return "Professional";
 }
 
