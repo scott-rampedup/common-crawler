@@ -82,7 +82,11 @@ async function readSheetRows(ref){
 const norm = (h) => String(h || "").trim().toLowerCase().replace(/\s+/g, " ");
 function headerIndex(headerRow){
   const idx = {};
+  // Sheets in the wild squash or punctuate their headers ("EmailAddress", "E-mail", "Phone_2"). Register a
+  // punctuation-free alias for each column so a lookup for "email address" still resolves. Two passes, so an
+  // exact header match anywhere in the row always claims the slot before any alias is allowed to fill it.
   headerRow.forEach((h, i) => { const k = norm(h); if(k && !(k in idx)) idx[k] = i; });
+  headerRow.forEach((h, i) => { const t = norm(h).replace(/[^a-z0-9]/g, ""); if(t && !(t in idx)) idx[t] = i; });
   return idx;
 }
 
@@ -141,20 +145,24 @@ async function buildRecords(ref, { genderMap = {} } = {}){
   if(!rows.length) return { records: [], stats: { read: 0, mapped: 0, unique: 0, skipped: 0 } };
   const idx = headerIndex(rows[0]);
   const today = new Date().toISOString().slice(0, 10);
-  const byUrl = new Map();                                     // bio URL -> { rec, ts }
+  const byKey = new Map();                                     // dedupe key -> record
   let mapped = 0, skipped = 0;
   for(let r = 1; r < rows.length; r++){
     const row = rows[r];
     if(!row || !row.length) continue;
-    const get = (label) => { const i = idx[label]; return i == null ? "" : (row[i] || ""); };
+    const get = (label) => { let i = idx[label]; if(i == null) i = idx[String(label).replace(/[^a-z0-9]/g, "")]; return i == null ? "" : (row[i] || ""); };
     const rec = rowToRecord(get, genderMap, today);
     if(!rec){ skipped++; continue; }
     mapped++;
-    const key = rec["Web Source URL"].toLowerCase();
-    const prev = byUrl.get(key);
-    if(!prev || rec["Time Stamp"] > prev["Time Stamp"]) byUrl.set(key, rec);   // newest scan wins
+    // Dedupe on EMAIL, not URL. The destination store is email-keyed, and one team page legitimately
+    // carries many people: keying on the URL silently discarded 747 real contacts from a single 63k-row
+    // sheet, where 25 shared "/team" pages each collapsed to one person. Rows with no email fall back to
+    // the URL so they still collapse per page instead of multiplying.
+    const key = rec["Email Address"] ? rec["Email Address"].toLowerCase() : "url:" + rec["Web Source URL"].toLowerCase();
+    const prev = byKey.get(key);
+    if(!prev || rec["Time Stamp"] > prev["Time Stamp"]) byKey.set(key, rec);   // newest scan wins
   }
-  const records = [...byUrl.values()];
+  const records = [...byKey.values()];
   return { records, stats: { read: rows.length - 1, mapped, unique: records.length, skipped } };
 }
 
