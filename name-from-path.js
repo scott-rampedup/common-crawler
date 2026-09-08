@@ -12,6 +12,10 @@
 const STRIP_TERMS = new Set([
   'bio', 'biography', 'about', 'dr', 'mr', 'mrs', 'ms', 'hon', 'rev', 'prof',
   'phd', 'md', 'esq', 'cpa', 'facs', 'sr', 'jr', 'ii', 'iii', 'iv', 'mba',
+  // Directory/role words that prefix a profile slug ("/realtor-jane-smith-jane/"). None of these is ever
+  // a given name, but they sit in first position, so the parser read them as one: 2,715 contacts were
+  // stored as First="Realtor" / "Agent" / "Broker" / "Profile", 1,868 on myrealtor.nz alone.
+  'realtor', 'realtors', 'agent', 'agents', 'broker', 'brokers', 'profile', 'profiles',
 ]);
 
 const properCase = (s) =>
@@ -32,6 +36,12 @@ function nameFromPath(lastPath) {
   let toks = pathNameTokens(lastPath);
   // drop a leading single-letter initial when a fuller name follows: "m-spencer-cook" -> Spencer Cook
   if (toks.length >= 3 && toks[0].length === 1) toks = toks.slice(1);
+  // Some directories append the given name again after the full name:
+  // "realtor-christine-vivienne-tallott-christine" -> Christine Vivienne Tallott. Taking the last token
+  // as the surname yields "Christine Christine". When the final token merely repeats the first and a
+  // real surname sits between them, drop the repeat. Requires 3+ tokens, so a genuine "morgan-morgan"
+  // is left alone.
+  if (toks.length >= 3 && toks[0].toLowerCase() === toks[toks.length - 1].toLowerCase()) toks = toks.slice(0, -1);
   if (!toks.length) return { first: '', last: '' };
   return {
     first: properCase(toks[0]),
