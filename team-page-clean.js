@@ -25,9 +25,18 @@ const SAMPLE = process.argv.includes('--sample');     // random order, for an un
 const LIMIT = Number(arg('--limit', '0')) || 0;
 const PAGE = 2000;
 
+// Words that only name people when they ARE the whole segment. As loose tokens they match a subject
+// rather than a group: "management" kept /blog/weight-management and /warehousing-inventory-management,
+// and "leadership" would keep /thought-leadership. "management-team" and "leadership-team" still pass
+// below, on the "team" token.
+const TEAM_SEGMENTS = new Set([
+  'management', 'leadership', 'senior-leadership', 'executive-leadership', 'our-leadership',
+  'our-management', 'the-management', 'seniorleadership', 'ourleadership', 'ourmanagement',
+]);
+
 // A path segment naming a group of people at the company.
 const TEAM_TOKENS = new Set([
-  'team', 'teams', 'staff', 'people', 'personnel', 'leadership', 'leaders', 'management',
+  'team', 'teams', 'staff', 'people', 'personnel', 'leaders',
   'executives', 'directors', 'board', 'trustees', 'officers', 'principals', 'partners',
   'associates', 'employees', 'faculty', 'crew', 'roster', 'members',
   'agents', 'attorneys', 'lawyers', 'solicitors', 'barristers', 'advisors', 'advisers',
@@ -64,6 +73,7 @@ function isTeamPage(url) {
   for (const seg of segs) {
     const bare = seg.toLowerCase().replace(/\.(html?|php|aspx?|jsp)$/, '');
     const tokens = bare.split(/[-_+.]+/).filter(Boolean);
+    if (TEAM_SEGMENTS.has(bare)) hit = true;          // whole-segment-only words
     // the whole segment as one token too, so "meetourteam" matches without separators
     for (const t of [bare, ...tokens]) {
       if (DENY_TOKENS.has(t)) return false;
@@ -73,7 +83,7 @@ function isTeamPage(url) {
   return hit;
 }
 
-module.exports = { isTeamPage, pathOf, TEAM_TOKENS, DENY_TOKENS };
+module.exports = { isTeamPage, pathOf, TEAM_TOKENS, TEAM_SEGMENTS, DENY_TOKENS };
 
 if (require.main === module) (async () => {
   if (!process.env.OPENSEARCH_ENDPOINT) { console.error('need OPENSEARCH_ENDPOINT'); process.exit(1); }
