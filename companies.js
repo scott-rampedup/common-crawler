@@ -111,6 +111,14 @@ function buildQuery(f) {
     else if (et === 'none') filter.push({ bool: { must_not: [nonEmpty] } });
     else filter.push({ terms: { 'email_type.keyword': multi(et) } });
   }
+  // Has a team page. team_page is a text field, and an EMPTY STRING still satisfies `exists` on it --
+  // that is how a "has team page" count once read 5,861,666 against a true 2,230,565. Test the .keyword
+  // subfield and exclude '' explicitly, the same way emailType above does.
+  if (f.teamPage) {
+    const has = { bool: { filter: [{ exists: { field: 'team_page.keyword' } }], must_not: [{ term: { 'team_page.keyword': '' } }] } };
+    if (String(f.teamPage) === 'no') filter.push({ bool: { must_not: [has] } });
+    else filter.push(has);
+  }
   if (f.companyType) filter.push({ term: { 'company_type.keyword': String(f.companyType) } });   // HQ | Location (Google Maps)
   if (f.websiteType) filter.push({ match_phrase: { website_type: String(f.websiteType) } });      // People | Location | BIO URL | Company | … (case-insensitive)
   if (f.naics) { const s = String(f.naics).trim(); filter.push({ bool: { should: [   // NAICS code (exact) OR title (phrase)

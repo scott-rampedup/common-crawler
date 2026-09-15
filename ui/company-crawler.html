@@ -195,6 +195,7 @@
             <input id="fSitemap" type="search" placeholder="e.g. compass.com" />
           </label>
           <label class="checkbox-label"><input id="fLinkedin" type="checkbox" /> Must have LinkedIn URL</label>
+          <label class="checkbox-label"><input id="fTeamPage" type="checkbox" /> Must have Team Page</label>
         </div>
 
         <div class="search-actions">
@@ -358,6 +359,7 @@
         websiteType: $('fWebsiteType').value.trim(),
         naics: naicsParam(),
         linkedin: $('fLinkedin').checked ? 'yes' : '',
+        teamPage: $('fTeamPage').checked ? 'yes' : '',
       };
     }
     function qs(extra) {
@@ -517,6 +519,7 @@
       if (f.contactMin) add('contactMin', 'Min contacts', '≥ ' + f.contactMin, () => { $('fContactMin').value = ''; });
       if (f.sitemap) add('sitemap', 'Sitemap', f.sitemap, () => { $('fSitemap').value = ''; });
       if (f.linkedin) add('linkedin', 'Has LinkedIn', 'yes', () => { $('fLinkedin').checked = false; });
+      if (f.teamPage) add('teamPage', 'Has Team Page', 'yes', () => { $('fTeamPage').checked = false; });
 
       const box = $('ccChips');
       if (!chips.length) { box.hidden = true; box.innerHTML = ''; return; }
@@ -553,6 +556,7 @@
       $('fCompanyType').value = '';
       $('fEmailType').value = '';
       $('fLinkedin').checked = false;
+      $('fTeamPage').checked = false;
       sel.industry.clear(); sel.size.clear(); sel.country.clear();
       sortState.col = ''; sortState.dir = 'asc'; selected.clear(); updateSel();
       $('ccBody').innerHTML = ''; $('ccPager').style.display = 'none';
@@ -757,6 +761,7 @@
       const set = (key, id) => { const v = p.get(key); if (v != null && v !== '') { $(id).value = v; any = true; } };
       set('domain', 'fDomain'); set('name', 'fName'); set('region', 'fRegion'); set('locality', 'fLocality');
       if (p.get('companyType')) { $('fCompanyType').value = p.get('companyType'); any = true; }
+      if (p.get('teamPage')) { $('fTeamPage').checked = p.get('teamPage') !== 'no'; any = true; }
       if (any) search(0);
     })();
   </script>

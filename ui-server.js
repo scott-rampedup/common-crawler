@@ -1877,6 +1877,7 @@ const server = http.createServer(async (req, res) => {
     founded_min: q.get('founded_min'), founded_max: q.get('founded_max'), linkedin: q.get('linkedin'),
     contactMin: q.get('contactMin'), sitemap: q.get('sitemap'), companyType: q.get('companyType'),
     websiteType: q.get('websiteType'), naics: q.get('naics'), emailType: q.get('emailType'),
+    teamPage: q.get('teamPage'),
     ids: q.get('ids') ? q.get('ids').split(',').filter(Boolean) : undefined,
   });
   // Sitemap Library (discovery hub): read + facets. analyst+ (it's a build/crawl-origin tool).
