@@ -22,12 +22,16 @@
  *   - the slug is 2-3 alphabetic tokens sitting directly under a strong bio directory (/team/jane-smith)
  * The first rule is the same corroboration that cleaned up the myrealtor.nz names.
  *
- * EXPECT A LOW FETCH RATE. On a random 80, only 30% of team pages loaded at all -- the Maps data is
- * stale and many of these businesses are gone. That is not a bug in the fetcher (example.com and
- * apache.org fetch fine through the same call); it is the shape of the source. Run the output through
- * bio-etl's CC-first path rather than assuming a live crawl will reach them.
+ * WHY COMMON CRAWL FIRST. Measured on a random 624 team pages, only 14% still answer a live request --
+ * the Maps data is stale and most of these businesses are gone. That is not the fetcher (example.com and
+ * apache.org fetch fine through the same call), it is the source. The archive still holds those pages as
+ * they were, so resolving against Common Crawl is the only way to reach the dead majority; the live walk
+ * is opt-in (--live) and runs only over what CC could not supply.
  */
 const fs = require('fs');
+const path = require('path');
+const readline = require('readline');
+const { spawnSync } = require('child_process');
 const co = require('./companies');
 const cc = require('./cc-engine');
 const { classifyDirectory, loadGenderMap } = require('./extractor');
@@ -41,6 +45,14 @@ const CONC = Number(arg('--conc', '')) || 64;
 const REGION = process.env.AWS_REGION || 'us-east-1';
 const OUT = arg('--out', `s3://${process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${REGION}`}/bio-worklist/team-harvest-${new Date().toISOString().slice(0, 10)}.txt`);
 const TMP = '/tmp/team-harvest.txt';
+// Same default corpus set bio-etl resolves against, so a page missing from one crawl can still be found
+// in an older one -- which matters here, where most of these sites are already gone.
+const CRAWLS = arg('--crawls', '') || process.env.CRAWLS || 'CC-MAIN-2026-30,CC-MAIN-2026-25,CC-MAIN-2026-21,CC-MAIN-2026-17';
+const LIVE = process.argv.includes('--live');      // also walk the CC misses over the proxy
+const NO_CC = process.argv.includes('--no-cc');    // skip the archive (live only)
+const SCRATCH = process.env.SCRATCH || '/tmp/_team-harvest';
+const F = { urls: path.join(SCRATCH, 'pages.txt'), ptr: path.join(SCRATCH, 'ptr.jsonl') };
+try { fs.mkdirSync(SCRATCH, { recursive: true }); } catch (e) { /* */ }
 
 // Directory segments strong enough that a 2-3 token slug beneath one is a person even when the gender
 // map does not know the given name (international names are under-represented in it).
@@ -84,72 +96,145 @@ function bioLinksFrom(html, pageUrl, domain) {
   return [...out];
 }
 
-module.exports = { looksLikePerson, bioLinksFrom, STRONG_DIR };
+// Read one archived page out of Common Crawl.
+//
+// NOT cc-engine.fetchWarc: that pulls a byte range over HTTPS from data.commoncrawl.org, which answers
+// 403 to this box (every one of a 32-record test failed that way). The Lambda extractor never hit this
+// because it reads the same bytes from S3, so do the same here -- the `commoncrawl` bucket serves ranged
+// GETs with the machine's own credentials and returned the full HTML for every record tested.
+const zlib = require('zlib');
+let _s3 = null;
+async function warcHtml(rec) {
+  const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+  if (!_s3) _s3 = new S3Client({ region: REGION });
+  const start = Number(rec.offset), end = start + Number(rec.length) - 1;
+  const r = await _s3.send(new GetObjectCommand({ Bucket: 'commoncrawl', Key: rec.filename, Range: `bytes=${start}-${end}` }));
+  const chunks = [];
+  for await (const c of r.Body) chunks.push(c);
+  return cc.warcToHtml(zlib.gunzipSync(Buffer.concat(chunks)));
+}
+
+module.exports = { looksLikePerson, bioLinksFrom, warcHtml, STRONG_DIR };
+
+function step(label, script, args) {
+  console.error(`\n====== ${label} · ${new Date().toISOString().slice(11, 19)} ======`);
+  const r = spawnSync(process.execPath, [path.join(__dirname, script), ...args], { stdio: 'inherit', cwd: __dirname, env: process.env });
+  if (r.status !== 0) throw new Error(`${script} exited ${r.status}`);
+}
 
 if (require.main === module) (async () => {
   if (!process.env.OPENSEARCH_ENDPOINT) { console.error('need OPENSEARCH_ENDPOINT'); process.exit(1); }
-  try { GENDER = loadGenderMap(require('path').join(__dirname, 'names-genders.csv')); }
+  try { GENDER = loadGenderMap(path.join(__dirname, 'names-genders.csv')); }
   catch (e) { console.error('gender map unavailable:', e.message); }
   console.error(`gender map: ${Object.keys(GENDER).length.toLocaleString()} names`);
 
   const client = co.makeClient(process.env.OPENSEARCH_ENDPOINT);
   const t0 = Date.now();
-  const query = { wildcard: { 'team_page.keyword': { value: '?*' } } };
-  const sort = SAMPLE
-    ? [{ _doc: 'asc' }]
-    : [{ 'team_page.keyword': 'asc' }];
+  // _doc order clusters by insertion, which on this index means alphabetically-adjacent domains -- a
+  // "sample" taken that way is 3,000 near-identical tiny sites and tells you nothing about the corpus.
+  // --sample therefore randomises; the full run keeps the stable keyword sort for search_after.
+  const base = { wildcard: { 'team_page.keyword': { value: '?*' } } };
+  const query = SAMPLE ? { function_score: { query: base, random_score: {} } } : base;
+  const sort = SAMPLE ? undefined : [{ 'team_page.keyword': 'asc' }];
 
-  const out = DRY ? null : fs.createWriteStream(TMP);
+  // ---- 1. collect the team pages we are going to open
+  const pages = new Map();                       // url -> domain
+  let after = null;
+  while (!LIMIT || pages.size < LIMIT) {
+    const body = { size: 2000, query, _source: ['domain', 'team_page'] };
+    if (sort) body.sort = sort;
+    if (after && sort) body.search_after = after;
+    const hits = ((await client.search({ index: co.INDEX, body })).body || {}).hits.hits;
+    if (!hits || !hits.length) break;
+    for (const h of hits) {
+      const u = String(h._source.team_page || '').trim();
+      if (/^https?:\/\//i.test(u) && !pages.has(u)) pages.set(u, String(h._source.domain || '').replace(/^www\./, ''));
+      if (LIMIT && pages.size >= LIMIT) break;
+    }
+    if (!sort) break;                       // random sample: one page only, no stable cursor
+    after = hits[hits.length - 1].sort;
+  }
+  console.error(`team pages to open : ${pages.size.toLocaleString()}`);
+  if (!pages.size) { console.error('nothing to do.'); return; }
+
+  fs.writeFileSync(F.urls, [...pages.keys()].join('\n') + '\n');
+
+  // ---- 2. Common Crawl first. 86% of these pages no longer answer a live request (measured on a random
+  // 624: only 14% fetched), but the archive still holds the page as it was. This is the same CC-first
+  // order bio-etl uses, and it is the only way to reach the dead majority.
   const seen = new Set();
-  let scanned = 0, fetched = 0, dead = 0, productive = 0, bios = 0, dupes = 0;
+  let ccPages = 0, ccBios = 0, livePages = 0, liveBios = 0, dead = 0, warcErr = 0;
   const examples = [];
-
-  const one = async (row) => {
-    const page = String(row.team_page || '');
-    if (!page) return;
-    let html = '';
-    try {
-      html = await cc.fetchDoc(page, { timeout: 10000, fallbackStatus: [403, 429, 503], maxBytes: 8 * 1024 * 1024 });
-    } catch (e) { /* counted as dead below */ }
-    if (!html) { dead++; return; }
-    fetched++;
-    const dom = String(row.domain || '').replace(/^www\./, '');
-    const found = bioLinksFrom(html, page, dom);
-    if (!found.length) return;
-    productive++;
-    for (const u of found) {
-      if (seen.has(u)) { dupes++; continue; }
-      seen.add(u); bios++;
+  const out = DRY ? null : fs.createWriteStream(TMP);
+  const emit = (urls, from) => {
+    let n = 0;
+    for (const u of urls) {
+      if (seen.has(u)) continue;
+      seen.add(u); n++;
       if (examples.length < 10) examples.push(u);
       if (out) out.write(u + '\n');
     }
+    if (from === 'cc') ccBios += n; else liveBios += n;
+    return n;
   };
 
-  let after = null;
-  outer:
-  for (;;) {
-    const body = { size: 1000, query, _source: ['domain', 'team_page'], sort };
-    if (after) body.search_after = after;
-    const hits = ((await client.search({ index: co.INDEX, body })).body || {}).hits.hits;
-    if (!hits || !hits.length) break;
-    for (let i = 0; i < hits.length; i += CONC) {
-      await Promise.all(hits.slice(i, i + CONC).map((h) => { scanned++; return one(h._source); }));
-      if (LIMIT && scanned >= LIMIT) { after = hits[hits.length - 1].sort; break outer; }
-    }
-    after = hits[hits.length - 1].sort;
-    const s = Math.max(1, (Date.now() - t0) / 1000);
-    console.error(`  ${scanned.toLocaleString()} pages | ${fetched.toLocaleString()} fetched | ${bios.toLocaleString()} bio URL(s) | ${Math.round(scanned / s)}/s`);
-  }
-  if (out) await new Promise((r) => out.end(r));
+  if (!NO_CC) {
+    step('resolve the team pages in Common Crawl', 'cc-athena-miner.js',
+      ['--resolve-urls', F.urls, '--warc-out', F.ptr, '--crawls', CRAWLS,
+       '--resolve-tag', 'tph' + Date.now().toString(36)]);
 
+    const ptrs = [];
+    if (fs.existsSync(F.ptr)) {
+      const rl = readline.createInterface({ input: fs.createReadStream(F.ptr), crlfDelay: Infinity });
+      for await (const l of rl) { if (l.trim()) { try { ptrs.push(JSON.parse(l)); } catch (e) { /* */ } } }
+    }
+    console.error(`  resolved in CC : ${ptrs.length.toLocaleString()} of ${pages.size.toLocaleString()}`);
+
+    const oneWarc = async (rec) => {
+      let html = '';
+      try { html = await warcHtml(rec); } catch (e) { warcErr++; return; }
+      if (!html) { warcErr++; return; }
+      ccPages++;
+      const dom = pages.get(rec.url) || (() => { try { return new URL(rec.url).hostname.replace(/^www\./, ''); } catch (e) { return ''; } })();
+      emit(bioLinksFrom(html, rec.url, dom), 'cc');
+    };
+    for (let i = 0; i < ptrs.length; i += CONC) {
+      await Promise.all(ptrs.slice(i, i + CONC).map(oneWarc));
+      if (i && i % 20000 < CONC) console.error(`  WARC ${i.toLocaleString()}/${ptrs.length.toLocaleString()} | ${ccBios.toLocaleString()} bio URL(s)`);
+    }
+    for (const r of ptrs) pages.delete(r.url);       // leave only the CC misses
+    console.error(`  CC harvest     : ${ccPages.toLocaleString()} page(s) read, ${ccBios.toLocaleString()} bio URL(s), ${warcErr.toLocaleString()} WARC error(s)`);
+  }
+
+  // ---- 3. live-fetch only what Common Crawl did not have, and only when asked
+  if (LIVE && pages.size) {
+    console.error(`\n====== live-fetch the ${pages.size.toLocaleString()} CC miss(es) ======`);
+    const entries = [...pages.entries()];
+    const oneLive = async ([page, dom]) => {
+      let html = '';
+      try { html = await cc.fetchDoc(page, { timeout: 10000, fallbackStatus: [403, 429, 503], maxBytes: 8 * 1024 * 1024 }); }
+      catch (e) { /* dead */ }
+      if (!html) { dead++; return; }
+      livePages++;
+      emit(bioLinksFrom(html, page, dom), 'live');
+    };
+    for (let i = 0; i < entries.length; i += CONC) {
+      await Promise.all(entries.slice(i, i + CONC).map(oneLive));
+      if (i && i % 20000 < CONC) console.error(`  live ${i.toLocaleString()}/${entries.length.toLocaleString()} | ${liveBios.toLocaleString()} bio URL(s)`);
+    }
+  } else if (pages.size) {
+    console.error(`\n(${pages.size.toLocaleString()} CC miss(es) left alone; pass --live to walk them)`);
+  }
+
+  if (out) await new Promise((r) => out.end(r));
+  const total = seen.size;
   console.error(`\n====== ${DRY ? 'DRY RUN' : 'DONE'} · ${Math.round((Date.now() - t0) / 1000)}s ======`);
-  console.error(`  team pages read     : ${scanned.toLocaleString()}`);
-  console.error(`  fetched OK          : ${fetched.toLocaleString()} (${(100 * fetched / Math.max(1, scanned)).toFixed(0)}%)   dead/unreachable ${dead.toLocaleString()}`);
-  console.error(`  pages yielding bios : ${productive.toLocaleString()} (${(100 * productive / Math.max(1, fetched)).toFixed(0)}% of fetched)`);
-  console.error(`  BIO URLs (distinct) : ${bios.toLocaleString()}   (${dupes.toLocaleString()} duplicate(s) dropped)`);
+  console.error(`  from Common Crawl : ${ccPages.toLocaleString()} page(s) -> ${ccBios.toLocaleString()} bio URL(s)`);
+  console.error(`  from live crawl   : ${livePages.toLocaleString()} page(s) -> ${liveBios.toLocaleString()} bio URL(s)   (${dead.toLocaleString()} dead)`);
+  console.error(`  BIO URLs distinct : ${total.toLocaleString()}`);
   console.error('  examples:');
   for (const e of examples) console.error('    ' + e);
-  if (DRY || !bios) { console.error('\n(dry run or nothing found: no upload)'); return; }
+  if (DRY || !total) { console.error('\n(dry run or nothing found: no upload)'); return; }
 
   const m = /^s3:\/\/([^/]+)\/(.+)$/i.exec(OUT);
   if (!m) { console.error(`\nwritten locally: ${TMP}`); return; }
