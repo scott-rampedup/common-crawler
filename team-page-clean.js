@@ -32,6 +32,13 @@ const PAGE = 2000;
 const TEAM_SEGMENTS = new Set([
   'management', 'leadership', 'senior-leadership', 'executive-leadership', 'our-leadership',
   'our-management', 'the-management', 'seniorleadership', 'ourleadership', 'ourmanagement',
+  // Staff directories and "who we are" pages. Whole-segment only for the same reason: "directory" as a
+  // loose token would take /directory/products and /business-directory, and "employee" would take
+  // /employee-benefits. As complete segments these are rosters -- 2,400 of them arrived in the first
+  // supplied list and were being rejected.
+  'directory', 'staff-directory', 'staffdirectory', 'employee-directory', 'employeedirectory',
+  'team-directory', 'teamdirectory', 'agent-directory', 'physician-directory', 'provider-directory',
+  'who-we-are', 'whoweare', 'our-vets', 'ourvets',
 ]);
 
 // A path segment naming a group of people at the company.
@@ -70,10 +77,12 @@ function isTeamPage(url) {
   const segs = path.split('/').filter(Boolean);
   if (!segs.length) return false;                       // bare host = homepage
   let hit = false;
-  for (const seg of segs) {
-    const bare = seg.toLowerCase().replace(/\.(html?|php|aspx?|jsp)$/, '');
+  for (let i = 0; i < segs.length; i++) {
+    const bare = segs[i].toLowerCase().replace(/\.(html?|php|aspx?|jsp)$/, '');
     const tokens = bare.split(/[-_+.]+/).filter(Boolean);
-    if (TEAM_SEGMENTS.has(bare)) hit = true;          // whole-segment-only words
+    // The ambiguous words count only as the LAST segment, i.e. the page itself. As an interior segment
+    // they name a section you are passing through, not a roster: /directory/products is a product list.
+    if (i === segs.length - 1 && TEAM_SEGMENTS.has(bare)) hit = true;
     // the whole segment as one token too, so "meetourteam" matches without separators
     for (const t of [bare, ...tokens]) {
       if (DENY_TOKENS.has(t)) return false;
