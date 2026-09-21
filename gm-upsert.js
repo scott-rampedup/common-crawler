@@ -14,6 +14,7 @@ const readline = require('readline');
 const co = require('./companies');
 const os = require('./opensearch');
 const naics = require('./naics');
+const { classifyEmail } = require('./extractor');   // Employee contacts need an Email Type like any other
 
 const arg = (f, d) => { const i = process.argv.indexOf(f); return i > -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : d; };
 const IN = arg('--in', ''); const now = new Date().toISOString();
@@ -70,7 +71,7 @@ async function loadFile(file, toActions, label) {
       let buf = [], n = 0; const flush = async () => { if (!buf.length) return; const b = buf.splice(0); try { await withRetry(() => os.bulkUpsert(client, b)); } catch (e) {} };
       for await (const l of rl) { if (!l.trim()) continue; let c; try { c = JSON.parse(l); } catch { continue; }
         if (!c.email) continue;
-        const doc = os.recordToDoc({ 'Time Stamp': now.slice(0, 10), 'Source': 'Employee', 'Web Source URL': c.bio || '', 'Domain': (c.email || '').split('@')[1] || '', 'First': c.first, 'Last': c.last, 'Gender': c.gender, 'Email Address': c.email, 'LinkedIn URL': c.linkedin }, now);
+        const doc = os.recordToDoc({ 'Time Stamp': now.slice(0, 10), 'Source': 'Employee', 'Web Source URL': c.bio || '', 'Domain': (c.email || '').split('@')[1] || '', 'First': c.first, 'Last': c.last, 'Gender': c.gender, 'Email Address': c.email, 'Email Type': classifyEmail(c.email), 'LinkedIn URL': c.linkedin }, now);
         if (doc.email) { buf.push(doc); n++; } if (buf.length >= 2000) await flush(); }
       await flush(); console.error(`  employees: ${n.toLocaleString()} upserted to Master DB (Source="Employee")`); }
     else console.error('  (no gm-contacts.ndjson)'); }
