@@ -231,6 +231,11 @@ async function suppressedSet(client) {
 // Pre-Process placeholder that was standing in for it, in the same bulk. This is what makes "overwrite on
 // processing" an overwrite rather than a second copy of the person. Deleting a placeholder that was never
 // created is a no-op, so it is safe to leave on; pass false for bulk historical loads that can't have one.
+// Enrichment fields the crawl path must never clobber. They are written only by the firmographic join
+// (partial updates) and read back by docToRecord, which documents them as read-only here.
+const FIRMO_KEEP = ['industry', 'company_size', 'company_hq', 'company_country', 'company_founded',
+  'company_linkedin', 'company_name'];
+
 async function bulkUpsert(client, docs, { clearPlaceholder = true } = {}) {
   const sup = await suppressedSet(client);
   const body = [];
@@ -253,9 +258,26 @@ async function bulkUpsert(client, docs, { clearPlaceholder = true } = {}) {
       // Lucene rewrite is a delete + insert, which is what then drives merges. The cluster had logged
       // 159M index ops for 13.4M docs (~11.9 writes per stored doc), with merge time at 2.6x and refresh
       // time at 1.4x total indexing time. Re-crawls that can't improve a record are now free.
+      // The winning branch REPLACES the document, and recordToDoc does not emit firmographics -- so every
+      // crawl that won this gate silently wiped industry / company_size / company_hq / company_founded /
+      // company_linkedin / company_name off the record. docToRecord already declares those fields
+      // read-only on this path; the replace was quietly contradicting it. Measured: a single import blanked
+      // 28,028 contacts, and index-wide industry coverage had drifted 92.2% -> 61.8%, needing five separate
+      // repair passes. They are carried across the replace here instead.
+      //
+      // `company` is carried too, but only when it is not just the domain: recordToDoc sets it to the
+      // domain by default, while the company-name waterfall fills in the real registered name. Keeping a
+      // domain-valued `company` would pin the placeholder forever, so that case is left to be overwritten.
       script: { lang: 'painless',
-        source: "if (params.doc.score >= ctx._source.score) { ctx._source = params.doc } else { ctx.op = 'none' }",
-        params: { doc: d } },
+        source: "if (params.doc.score >= ctx._source.score) {"
+          + " def keep = [:];"
+          + " for (f in params.keep) { if (ctx._source.containsKey(f) && ctx._source[f] != null) { keep[f] = ctx._source[f]; } }"
+          + " def co = ctx._source.company; def dom = ctx._source.domain;"
+          + " ctx._source = params.doc;"
+          + " for (e in keep.entrySet()) { ctx._source[e.getKey()] = e.getValue(); }"
+          + " if (co != null && co != '' && co != dom) { ctx._source.company = co; }"
+          + " } else { ctx.op = 'none' }",
+        params: { doc: d, keep: FIRMO_KEEP } },
     });
   }
   // Report skipped here too. Returning a bare {indexed:0} made "every document was unstorable" look
