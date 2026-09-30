@@ -134,6 +134,39 @@ const BIO_DIR_RAW = [
 ];
 const BIO_DIRS = new Set(BIO_DIR_RAW.map((s) => normalizeForMatching(s)).filter(Boolean));
 
+// Domains whose every page is a BIO URL, from data/bio-domain-allotments.txt. For sites that publish
+// person pages with no directory term in the path at all -- a Mary Kay consultant is a bare slug on the
+// root ("marykay.com/lisabarber68"), which otherwise classifies as "Company". Loaded once, lazily, and a
+// missing file is simply an empty allotment.
+let _BIO_DOMAINS = null;
+function bioAllotmentDomains(){
+  if(_BIO_DOMAINS) return _BIO_DOMAINS;
+  _BIO_DOMAINS = new Set();
+  try {
+    const txt = require("fs").readFileSync(require("path").join(__dirname, "data", "bio-domain-allotments.txt"), "utf8");
+    for(const line of txt.split(String.fromCharCode(10))){
+      const d = line.trim().toLowerCase();
+      if(!d || d.startsWith("#")) continue;
+      _BIO_DOMAINS.add(d.replace(/^www\./, ""));
+    }
+  } catch(e){ /* no allotments configured */ }
+  return _BIO_DOMAINS;
+}
+
+// Is this URL on an allotted domain (that domain itself, or any subdomain of it)? Matching is exact on
+// the registrable domain and never a substring: "marykay" as a substring also matches unrelated sites
+// (marykaygreenforjudge.com is a person's campaign page), which must not inherit the allotment.
+function isBioAllottedDomain(url){
+  const set = bioAllotmentDomains();
+  if(!set.size) return false;
+  let host = "";
+  try { host = new URL(url).hostname.toLowerCase().replace(/^www\./, ""); } catch { return false; }
+  if(!host) return false;
+  if(set.has(host)) return true;
+  for(const d of set) if(host.endsWith("." + d)) return true;
+  return false;
+}
+
 // ---------------------------------------------------------------- text utils
 const fromCP = (n, fallback) => { try{ return (n > 0 && n <= 0x10FFFF) ? String.fromCodePoint(n) : fallback; }catch{ return fallback; } };
 const decode = s => String(s||"")
@@ -453,6 +486,9 @@ function looksLikePersonSlug(slug, genderMap = {}){
 
 // ---------------------------------------------------------------- classification
 function classifyDirectory(url, html = "", rules = {}, genderMap = {}){
+  // Allotted domains first: their person pages carry no directory term, so every other test below would
+  // fall through to "Company". Deliberately unconditional for these domains -- see the data file.
+  if(isBioAllottedDomain(url)) return "BIO URL";
   const segs = pathSegments(url);
   let nIdx = segs.length - 1;                                   // index of the name-bearing segment…
   while(nIdx >= 1 && isIdSegment(segs[nIdx])) nIdx -= 1;       // …skip trailing record id(s) (/First-Last/71955 or /Name/<uuid>/<uuid>)
@@ -1258,7 +1294,8 @@ function loadDirectoryRules(filePath){
   return rules;
 }
 
-module.exports = { extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules,
+module.exports = {
+  isBioAllottedDomain, bioAllotmentDomains, extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules,
   cleanEmail, setEmailBlocklist, loadEmailBlocklist, setAdminRoleTerms, getAdminRoleTerms, getBuiltInRoleTerms, analyzePhones, splitExtension,
   geocodeRecords, geocodePhone, findPosition,
   toE164, countryCodeFromDomain, pathIdFromUrl, getBaseDomain, nameSlugFromUrl, lastPathSeg, lastPathFromUrl, structuredFromHtml, findSocials };   // reused by the Sheet importer + Site Search + DB normalizer

@@ -1,0 +1,25 @@
+# bio-domain-allotments.txt — domains where EVERY page is treated as a BIO URL.
+#
+# Normally a page is classified a BIO URL because its path carries a directory term
+# (/agents/jane-smith, /our-team/john). Some sites publish person pages with no such term at all:
+# Mary Kay consultant pages are a bare slug on the domain root ("marykay.com/lisabarber68") or sit
+# under a generic segment ("/en-us/site/jsmith"), so they classified as "Company" and never counted
+# as bios.
+#
+# A domain listed here short-circuits that test: any URL on it, or on any of its subdomains, is a
+# BIO URL. That is deliberately blunt — it is an allotment for sites whose person pages cannot be
+# recognised from the path, and it applies to every page on the domain, including non-person ones.
+# Only add a domain whose crawlable surface is person pages, or one you feed from a curated list.
+#
+# Matched on the registrable domain, so "marykay.com" also covers "www.marykay.com" and
+# "site.marykay.com". Matching is EXACT on that domain — never a substring — because "marykay" as a
+# substring also hits unrelated sites: marykaygreenforjudge.com and marykayeholt.com are personal
+# pages of people named Mary Kay, and the marykaybc.com subdomains in our index look hijacked
+# (their path IDs read "Gaming Platform" and "Buy Ball"). Those must not inherit the allotment.
+#
+# One domain per line. Blank lines and #-comments ignored.
+
+marykay.com
+marykay.ca
+marykay.co.uk
+marykayintouch.com
