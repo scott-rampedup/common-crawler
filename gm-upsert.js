@@ -27,6 +27,9 @@ const CC = (g) => ({ name: g.name || '', website: g.website || '', category: g.c
   whatsapp: g.whatsapp || '', cid: g.cid || '', team_page: g.team_page || '', bio_url: g.bio_url || '',
   linkedin_contact: g.linkedin_contact || '', linkedin_url: g.linkedin_url || '',   // /in vs /company kept distinct
   email: g.email || '', email_type: g.email_type || '',
+  // per-LOCATION closure status from the Maps export (Open / Temporarily closed / blank). Only set on
+  // Location records -- an HQ is an aggregate over a domain, where a closure would be meaningless.
+  company_status: g.company_status || '',
   // componentized geo (Bing UK carries these) + provenance; Google leaves them blank and keeps full_address
   ...(g.locality ? { locality: g.locality } : {}), ...(g.region ? { region: g.region } : {}), ...(g.country ? { country: g.country } : {}),
   ...(g.time_stamp ? { time_stamp: g.time_stamp } : {}), ...(g.source_map ? { source_map: g.source_map } : {}) });

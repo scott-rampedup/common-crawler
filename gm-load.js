@@ -109,14 +109,20 @@ async function eachRecord(file, onRec) {
   console.error(`source CSVs: ${files.length}${oneFile ? ` (${path.basename(oneFile)})` : ''} | out: ${OUT}`);
   const locOut = fs.createWriteStream(path.join(OUT, 'gm-locations.ndjson'));
   const bioSet = new Set();
-  let seen = 0, kept = 0, skippedClosed = 0, skippedNoWeb = 0; const t0 = Date.now();
+  let seen = 0, kept = 0, skippedClosed = 0, skippedNoWeb = 0, unparseable = 0; const t0 = Date.now();
+  const byStatus = new Map();          // what we actually kept, by company_status
 
   for (const file of files) {
     await eachRecord(file, (r) => {
       seen++;
       if (LIMIT && kept >= LIMIT) return false;
       const f = fields(r);
-      if (!f || f.status !== 'Open') { skippedClosed++; return; }  // skip unparseable + non-Open
+      if (!f) { unparseable++; return; }                           // no locatable status block
+      // Only PERMANENTLY closed is a dead business. This previously dropped every non-Open row, which
+      // threw away two things that are not closed: "Temporarily closed" (16,443 in the 05-10 export --
+      // live businesses that reopen) and a BLANK status (61,792 -- unknown, not closed). 78k a run.
+      const status = f.status || "";
+      if (/^permanently closed$/i.test(status)) { skippedClosed++; return; }
       const webLoc = f.website_location || f.website_url;
       const dom = co.normDomain(webLoc) || rootDomain(webLoc);
       if (co.isBadCompanyDomain(dom)) { skippedNoWeb++; return; }  // skip website-less + free-mail/social/shared (domain must be the real web source)
@@ -132,6 +138,10 @@ async function eachRecord(file, onRec) {
       const email = emails[0] || '';
       const out = {
         company_type: 'Location', root_domain: dom, cid: f.cid,
+        // Closure is a PER-LOCATION fact, never per-domain: one branch of a chain closing says nothing
+        // about the chain -- coldwellbanker.com carries 67,339 contacts behind closed listings. Stored
+        // on the location record so it can be filtered without condemning the whole domain.
+        company_status: status,
         name: f.name, full_address: f.address,
         website: 'https://' + dom + '/', website_type: websiteType(webLoc),
         category: f.category,
@@ -144,12 +154,14 @@ async function eachRecord(file, onRec) {
         time_stamp: f.xb_crawled_at,
       };
       locOut.write(JSON.stringify(out) + '\n');
+      byStatus.set(status || '(blank)', (byStatus.get(status || '(blank)') || 0) + 1);
       kept++;
       if (kept % 50000 === 0) console.error(`  seen ${seen.toLocaleString()} | kept ${kept.toLocaleString()} | ${Math.round(kept / ((Date.now() - t0) / 1000))}/s`);
     });
     if (LIMIT && kept >= LIMIT) break;
   }
+  console.error('  kept by status: ' + [...byStatus].sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ' ' + v.toLocaleString()).join(' | '));
   fs.writeFileSync(path.join(OUT, 'gm-bio-urls.txt'), [...bioSet].join('\n') + '\n');
   locOut.end();
-  console.error(`DONE: ${seen.toLocaleString()} seen -> ${kept.toLocaleString()} Location records | skipped ${skippedClosed.toLocaleString()} closed + ${skippedNoWeb.toLocaleString()} no-website | ${bioSet.size.toLocaleString()} bio URLs | ${Math.round((Date.now() - t0) / 1000)}s`);
+  console.error(`DONE: ${seen.toLocaleString()} seen -> ${kept.toLocaleString()} Location records | skipped ${skippedClosed.toLocaleString()} permanently-closed + ${skippedNoWeb.toLocaleString()} no-website + ${unparseable.toLocaleString()} unparseable | ${bioSet.size.toLocaleString()} bio URLs | ${Math.round((Date.now() - t0) / 1000)}s`);
 })().catch((e) => { console.error('ERR', e && e.stack || e); process.exit(1); });
