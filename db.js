@@ -199,6 +199,7 @@ function makeDb(dir) {
       if (parts.length) where.push('(' + parts.join(' OR ') + ')');
     }
     if (opts.linkedin) where.push(`linkedin_url <> ''`);
+    if (opts.whatsapp) where.push(`whatsapp <> ''`);
     switch (opts.gender) {
       case 'male': where.push(`upper(gender) = 'M'`); break;
       case 'female': where.push(`upper(gender) = 'F'`); break;

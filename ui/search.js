@@ -181,6 +181,7 @@ function initElements() {
   el.fFoundedMin = $('f-foundedMin');
   el.fFoundedMax = $('f-foundedMax');
   el.fLinkedin = $('f-linkedin');
+  el.fWhatsapp = $('f-whatsapp');
   el.fNewHire = $('f-newhire');
   el.applyBtn = $('applyBtn');
   el.clearBtn = $('clearBtn');
@@ -606,6 +607,7 @@ function buildParams(extra) {
   const fmax = el.fFoundedMax && el.fFoundedMax.value.trim();
   if (fmax) p.set('foundedMax', fmax);
   if (el.fLinkedin.checked) p.set('linkedin', '1');
+  if (el.fWhatsapp && el.fWhatsapp.checked) p.set('whatsapp', '1');
   if (el.fNewHire && el.fNewHire.checked) p.set('newHire', '1');
   if (state.sort.column) { p.set('sort', state.sort.column); p.set('dir', String(state.sort.dir)); }
   if (extra) for (const k of Object.keys(extra)) p.set(k, extra[k]);
@@ -1032,6 +1034,7 @@ function clearFilters() {
   if (el.fFoundedMin) el.fFoundedMin.value = '';
   if (el.fFoundedMax) el.fFoundedMax.value = '';
   el.fLinkedin.checked = false;
+  if (el.fWhatsapp) el.fWhatsapp.checked = false;
   state.selected.clear();
   updateSelectedInfo();
   runSearch();
@@ -1053,6 +1056,7 @@ function attachEvents() {
   el.fType.addEventListener('change', runSearch);
   el.fGender.addEventListener('change', runSearch);
   el.fLinkedin.addEventListener('change', runSearch);
+  if (el.fWhatsapp) el.fWhatsapp.addEventListener('change', runSearch);
   if (el.fNewHire) el.fNewHire.addEventListener('change', runSearch);
   el.applyBtn.addEventListener('click', runSearch);
   el.clearBtn.addEventListener('click', clearFilters);
@@ -1080,6 +1084,7 @@ function applyUrlParams() {
   setVal('foundedMin', el.fFoundedMin); setVal('foundedMax', el.fFoundedMax);
   if (p.get('domain') && el.fDomains) el.fDomains.value = p.get('domain');
   if ((p.get('linkedin') === '1' || p.get('linkedin') === 'yes') && el.fLinkedin) el.fLinkedin.checked = true;
+  if ((p.get('whatsapp') === '1' || p.get('whatsapp') === 'yes') && el.fWhatsapp) el.fWhatsapp.checked = true;
 }
 
 document.addEventListener('DOMContentLoaded', async () => {

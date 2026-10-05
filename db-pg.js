@@ -140,6 +140,7 @@ async function makeDb(opts = {}) {
       if (parts.length) where.push('(' + parts.join(' OR ') + ')');
     }
     if (o.linkedin) where.push(`linkedin_url <> ''`);
+    if (o.whatsapp) where.push(`whatsapp <> '' AND whatsapp IS NOT NULL`);
     switch (o.gender) {
       case 'male': where.push(`upper(gender) = 'M'`); break;
       case 'female': where.push(`upper(gender) = 'F'`); break;

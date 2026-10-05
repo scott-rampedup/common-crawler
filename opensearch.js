@@ -369,6 +369,9 @@ function buildQuery(o = {}) {
     if (should.length) filter.push({ bool: { minimum_should_match: 1, should } });
   }
   if (o.linkedin) filter.push({ bool: { must_not: [{ term: { linkedin_url: '' } }] } });
+  // whatsapp is only ever present or absent on a record, so the same present-and-not-empty test
+  // applies. `exists` alone would pass an empty string, as it does on every text field here.
+  if (o.whatsapp) filter.push({ bool: { filter: [{ exists: { field: 'whatsapp' } }], must_not: [{ term: { whatsapp: '' } }] } });
   if (o.newHire) filter.push(ciTerm('source', 'Sitemap Monitor'));   // NEW HIRE = detected by the Sitemap Monitor
   switch (o.gender) {
     case 'male': filter.push(ciTerm('gender', 'M')); break;

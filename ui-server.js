@@ -2435,7 +2435,7 @@ const server = http.createServer(async (req, res) => {
       type: q.get('type') || '',
       industry: q.get('industry') || '', companySize: q.get('companySize') || '',
       companyLocation: q.get('companyLocation') || '', foundedMin: q.get('foundedMin') || '', foundedMax: q.get('foundedMax') || '',
-      linkedin: q.get('linkedin') === '1', newHire: q.get('newHire') === '1', sort: q.get('sort') || '', dir: q.get('dir'),
+      linkedin: q.get('linkedin') === '1', whatsapp: q.get('whatsapp') === '1', newHire: q.get('newHire') === '1', sort: q.get('sort') || '', dir: q.get('dir'),
     }));
     return;
   }
@@ -2449,7 +2449,7 @@ const server = http.createServer(async (req, res) => {
       type: q.get('type') || '',
       industry: q.get('industry') || '', companySize: q.get('companySize') || '',
       companyLocation: q.get('companyLocation') || '', foundedMin: q.get('foundedMin') || '', foundedMax: q.get('foundedMax') || '',
-      linkedin: q.get('linkedin') === '1', newHire: q.get('newHire') === '1',
+      linkedin: q.get('linkedin') === '1', whatsapp: q.get('whatsapp') === '1', newHire: q.get('newHire') === '1',
     };
     res.writeHead(200, {
       'Content-Type': 'text/csv; charset=utf-8',
