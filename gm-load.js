@@ -27,9 +27,13 @@ const clean0 = (s) => String(s == null ? '' : s).trim();
 // status value ("Open"/"Closed"/…) — website/category/phone sit at fixed offsets around it — and read the
 // xb_* enrichment fields from FIXED offsets off the END of the row (identical tail in both layouts).
 const STATUS_RE = /^(Open|Closed|Permanently closed|Temporarily closed)$/i;
-function fields(r) {
+function fields(r, siHint) {
   const len = r.length;
-  const si = r.findIndex((v) => STATUS_RE.test(clean0(v)));
+  // Prefer the status column the HEADER declares. Scanning for the first cell matching Open|Closed|...
+  // cannot see a BLANK status, so those rows were discarded as unparseable -- 25,616 of them in the
+  // 08-10 export. Both known layouts (37 and 43 columns) put website_url/category/phone at the same
+  // offsets around the status column, so only si differs between them.
+  const si = (siHint != null && siHint >= 0) ? siHint : r.findIndex((v) => STATUS_RE.test(clean0(v)));
   if (si < 3 || si + 4 >= len) return null;                         // couldn't locate the status block
   let name = '';
   for (let i = 4; i < si - 1; i++) { const v = clean0(r[i]); if (v && v !== '#N/A' && !/^\d+$/.test(v) && !/^(m|f|male|female|unisex)$/i.test(v) && !/^https?:/i.test(v) && v.length > name.length) name = v; }
@@ -80,12 +84,12 @@ function websiteType(websiteLocation) {
 const isBio = (u) => { try { return ccEngine ? ccEngine.isBioOrContactUrl(abs(u), dirRules, genderMap) : /\/(team|people|our-team|staff|attorney|agent|advisor|profile|bio|about-us)\//i.test(u); } catch (e) { return false; } };
 
 // ---- streaming CSV state-machine parser (quotes + embedded newlines) ----
-async function eachRecord(file, onRec) {
+async function eachRecord(file, onRec, onHeader) {
   return new Promise((resolve, reject) => {
     const stream = fs.createReadStream(file, { encoding: 'utf8' });
     let field = '', row = [], q = false, header = false, stopped = false;
     const endField = () => { row.push(field); field = ''; };
-    const endRow = () => { endField(); if (!header) header = true; else if (!stopped) { if (onRec(row) === false) { stopped = true; stream.destroy(); } } row = []; };
+    const endRow = () => { endField(); if (!header) { header = true; if (onHeader) onHeader(row); } else if (!stopped) { if (onRec(row) === false) { stopped = true; stream.destroy(); } } row = []; };
     stream.on('data', (chunk) => {
       if (stopped) return;
       for (let i = 0; i < chunk.length; i++) {
@@ -113,16 +117,17 @@ async function eachRecord(file, onRec) {
   const byStatus = new Map();          // what we actually kept, by company_status
 
   for (const file of files) {
+    let siHint = -1;                 // company_status column, straight from this file's header
     await eachRecord(file, (r) => {
       seen++;
       if (LIMIT && kept >= LIMIT) return false;
-      const f = fields(r);
+      const f = fields(r, siHint);
       if (!f) { unparseable++; return; }                           // no locatable status block
       // Only PERMANENTLY closed is a dead business. This previously dropped every non-Open row, which
       // threw away two things that are not closed: "Temporarily closed" (16,443 in the 05-10 export --
       // live businesses that reopen) and a BLANK status (61,792 -- unknown, not closed). 78k a run.
       const status = f.status || "";
-      if (/^permanently closed$/i.test(status)) { skippedClosed++; return; }
+      if (/^(permanently closed|closed)$/i.test(status)) { skippedClosed++; return; }   // bare "Closed" too
       const webLoc = f.website_location || f.website_url;
       const dom = co.normDomain(webLoc) || rootDomain(webLoc);
       if (co.isBadCompanyDomain(dom)) { skippedNoWeb++; return; }  // skip website-less + free-mail/social/shared (domain must be the real web source)
@@ -157,7 +162,7 @@ async function eachRecord(file, onRec) {
       byStatus.set(status || '(blank)', (byStatus.get(status || '(blank)') || 0) + 1);
       kept++;
       if (kept % 50000 === 0) console.error(`  seen ${seen.toLocaleString()} | kept ${kept.toLocaleString()} | ${Math.round(kept / ((Date.now() - t0) / 1000))}/s`);
-    });
+    }, (hdr) => { siHint = hdr.findIndex((h) => String(h || '').trim().toLowerCase() === 'company_status'); });
     if (LIMIT && kept >= LIMIT) break;
   }
   console.error('  kept by status: ' + [...byStatus].sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ' ' + v.toLocaleString()).join(' | '));
