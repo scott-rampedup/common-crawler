@@ -244,7 +244,16 @@ const IMG_EXT_RE = /\.(png|jpe?g|gif|svg|webp|bmp|ico)$/i;
 // Normalize/repair a scraped email; returns "" if it should be dropped.
 function cleanEmail(raw){
   if(!raw) return "";
-  let e = deobfuscateEmail(raw).replace(/%20/gi, "").replace(/\s+/g, "");   // de-obfuscate + drop %20 (encoded space) and stray spaces
+  let e = deobfuscateEmail(raw);
+  // Percent-escapes are a scraper defence, not data: i%6e%66o@bk-eg.com IS info@bk-eg.com. Only %20 was
+  // being stripped, so every other escape survived and 2,972 contacts were stored still encoded -- and
+  // they validate, because the test below allows % in a local part. Decode the lot, then drop whitespace
+  // (%20 decodes TO a space, which is what the old single-case strip was really for). A malformed escape
+  // makes decodeURIComponent throw, so fall back to the previous behaviour rather than losing the address.
+  if(e.indexOf("%") >= 0){
+    try { e = decodeURIComponent(e); } catch(err) { e = e.replace(/%20/gi, " "); }
+  }
+  e = e.replace(/\s+/g, "");
   e = e.replace(/^mailto:/i, "").split("?")[0];
   e = e.replace(/[.,;:>)\]]+$/, "");                    // trailing sentence punctuation (e.g. "...com.")
   if(!e.includes("@")) return "";

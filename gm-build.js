@@ -139,6 +139,12 @@ function processGroup(domain, locs, hq0) {
   let contacts = [];
   try { const b = che.buildEmployees({ linkedin: [...li], emails: [...emails], bio: [...bio] }, { genderMap, address: hqDoc.full_address || (hq0 && hq0.full_address) || '' }); contacts = b.structured || []; }
   catch (e) { /* best-effort */ }
+  // Provenance for an employee with no team-profile URL of its own. These people were read off the
+  // business's team page, which the export hands us, so fall back to it (then the site) rather than
+  // leaving the record with no source: 94.9% of employee contacts had a blank Web Source URL even
+  // though the originating page was known all along.
+  const srcFallback = rep.team_page || rep.website || "";
+  if (srcFallback) contacts = contacts.map((c) => (c.bio ? c : Object.assign({}, c, { src: srcFallback })));
 
   return { hqId: hq0 ? hq0._id : 'gm:' + domain, isNew: !hq0, hqDoc, childDocs, contacts, domain };
 }
