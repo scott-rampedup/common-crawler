@@ -261,6 +261,16 @@ function cleanEmail(raw){
     try { e = decodeURIComponent(e); } catch(err) { e = e.replace(/%20/gi, " "); }
   }
   e = e.replace(/\s+/g, "");
+  // A JSON \uXXXX escape that lost its backslash, leaking the literal text into the address:
+  // u003eprivacy@afternic.com is >privacy@..., u002F413c69a2...@sentry.io is a DSN fragment.
+  //
+  // Only these codes, and only leading. "u00" plus digits is overwhelmingly a REAL university username --
+  // u0000006@utah.edu and anju0001@umn.edu are student IDs, and sethu0022@gmail.com / yyuu0026@163.com
+  // merely contain the sequence. Stripping on "u00XX" generally would have broken 195 valid addresses.
+  e = e.replace(/^(u00(?:3c|3e|26|2f|a0|20))+/i, "");
+  // The quote escapes collide with those IDs (u0027826@utah.edu is u+0027826), so for those require the
+  // remainder to hold a non-digit before treating the prefix as an artifact.
+  e = e.replace(/^(u00(?:22|27|3d))+(?=[^@]*[A-Za-z])/i, "");
   e = e.replace(/^mailto:/i, "").split("?")[0];
   e = e.replace(/[.,;:>)\]]+$/, "");                    // trailing sentence punctuation (e.g. "...com.")
   if(!e.includes("@")) return "";
