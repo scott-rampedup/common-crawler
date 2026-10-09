@@ -45,7 +45,7 @@ function fields(r, siHint) {
     cid, address: clean0(r[3]), name,
     status: clean0(r[si]), website_url: clean0(r[si + 1]), website_location: clean0(r[si + 2]),
     category: clean0(r[si + 4]), phone: clean0(r[si - 1]),
-    xb_emails: end(18), xb_whatsapp: end(14), xb_facebook: end(13), xb_instagram: end(12),
+    xb_emails: end(18), xb_phones: end(16), xb_phone_details: end(15), xb_whatsapp: end(14), xb_facebook: end(13), xb_instagram: end(12),
     xb_linkedin_company: end(9), xb_linkedin_profile: end(8), xb_team_profile_urls: end(5), xb_team_page: end(3), xb_crawled_at: end(1),
   };
 }
@@ -55,6 +55,20 @@ try { ex.loadEmailBlocklist(path.join(__dirname, 'email-blocklist.txt')); consol
 const wbc = require('./wireless-block-classifier');
 let wireless = null; try { wireless = wbc.loadWirelessBlocks(wbc.PHONE_BLOCKS_CSV); console.error('phone-blocks loaded for line-type classification'); } catch (e) { console.error('phone-blocks not loaded -> phone_type blank'); }
 const phoneType = (p) => { if (!wireless || !p) return ''; try { const t = wbc.classifyLineType(p, wireless); return (t && t.type && t.type !== 'Unknown') ? t.type : ''; } catch (e) { return ''; } };
+// xb_phone_details is "<number>|<Type> || <number>|<Type> || ..." and mixes the real line with mangled
+// variants of itself: +16463510882 arrives alongside +100386463510882 and +64635108822, and the junk
+// gets a type too ("Fixed Line", "Other"). So prefer a Mobile, then a Fixed Line, never "Other", and
+// require a plausible E.164 length -- 10 to 13 digits -- which is what separates the real number from
+// the digit-shifted noise. Returns the business line, which for these one- and two-person businesses
+// is usually the owner's; for a larger company it is the shared number, not a personal DDI.
+function bestPhone(details) {
+  const rank = (t) => (/^mobile$/i.test(t) ? 0 : /^fixed line$/i.test(t) ? 1 : 9);
+  const items = splitMulti(details)
+    .map((s) => { const p = String(s).split("|"); return { num: (p[0] || "").trim(), type: (p[1] || "").trim() }; })
+    .filter((x) => { const d = x.num.replace(/[^0-9]/g, ""); return d.length >= 10 && d.length <= 13 && rank(x.type) < 9; })
+    .sort((a, b) => rank(a.type) - rank(b.type) || a.num.length - b.num.length);
+  return items[0] || null;
+}
 let dirRules = {}; try { dirRules = ex.loadDirectoryRules(path.join(__dirname, 'data', 'directory-rules.json')); } catch (e) { /* built-in BIO_DIRS still apply */ }
 
 const clean = (s) => String(s == null ? '' : s).trim();
@@ -152,6 +166,9 @@ async function eachRecord(file, onRec, onHeader) {
         category: f.category,
         email, emails, email_type: email ? ex.classifyEmail(email) : '',
         phone: f.phone, phone_type: phoneType(f.phone),
+        // the enrichment phone, kept separate from the listing phone above so neither overwrites the other
+        xb_phone: (bestPhone(f.xb_phone_details) || {}).num || "",
+        xb_phone_type: (bestPhone(f.xb_phone_details) || {}).type || "",
         whatsapp: f.xb_whatsapp, facebook: f.xb_facebook, instagram: f.xb_instagram,
         linkedin_contact: liProfiles(f.xb_linkedin_profile).join('; '),   // personal profiles (linkedin.com/in)
         linkedin_url: liCompanies(f.xb_linkedin_company).join('; '),      // company page (linkedin.com/company)

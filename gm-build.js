@@ -145,6 +145,11 @@ function processGroup(domain, locs, hq0) {
   // though the originating page was known all along.
   const srcFallback = rep.team_page || rep.website || "";
   if (srcFallback) contacts = contacts.map((c) => (c.bio ? c : Object.assign({}, c, { src: srcFallback })));
+  // The enrichment phone for the business, with the line type the export already classified. This is
+  // the company line shared by everyone at it -- for the one- and two-person businesses that dominate
+  // this data it is effectively the person's, but for a larger employer it is the switchboard, not a DDI.
+  const phoneF = rep.xb_phone || "", phoneTypeF = rep.xb_phone_type || "";
+  if (phoneF) contacts = contacts.map((c) => Object.assign({}, c, { phone: phoneF, phone_type: phoneTypeF }));
 
   return { hqId: hq0 ? hq0._id : 'gm:' + domain, isNew: !hq0, hqDoc, childDocs, contacts, domain };
 }

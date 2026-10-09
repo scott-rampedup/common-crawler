@@ -240,7 +240,14 @@ function loadEmailBlocklist(filePath){
   return EMAIL_BLOCKLIST;
 }
 
-const IMG_EXT_RE = /\.(png|jpe?g|gif|svg|webp|bmp|ico)$/i;
+const IMG_EXT_RE = /\.(png|jpe?g|gif|svg|webp|bmp|ico|avif|tiff?|heic|heif)$/i;
+// Asset and code extensions that are not TLDs. An <img src> or <script src> parsed as an address gives
+// e.g. eden-youtube-player@2.0.4.js -- the "@" is a version separator, not a mailbox.
+const NON_TLD_EXT_RE = /\.(js|mjs|cjs|ts|css|scss|json|xml|map|woff2?|ttf|otf|eot|mp4|webm|ogg|mp3|wav|zip|gz|rar|psd|sketch|pdf|docx?|xlsx?|pptx?)$/i;
+// A domain label that is only a dimension token ("2x.ai", "3x.png", "2x-150x150.png") is a retina/sprite
+// asset, never a real host. This is the discriminator rather than the extension, because .ai IS a valid
+// TLD that real companies use -- saylor_kolodsick_logo-cpa_cfp@2x.ai must go, someone@studio.ai must not.
+const ASSET_DIM_RE = /^\d+x(\b|[.\-_])/i;
 // Normalize/repair a scraped email; returns "" if it should be dropped.
 function cleanEmail(raw){
   if(!raw) return "";
@@ -261,6 +268,8 @@ function cleanEmail(raw){
   const domain = rest.join("@").toLowerCase();
   if(!local || !domain || !domain.includes(".")) return "";
   if(IMG_EXT_RE.test(domain)) return "";               // e.g. logo@2x.png
+  if(NON_TLD_EXT_RE.test(domain)) return "";          // e.g. player@2.0.4.js -- a version, not a mailbox
+  if(ASSET_DIM_RE.test(domain)) return "";            // e.g. logo@2x.ai / @2x-150x150.png -- a sprite
   if(domain === "example.com") return "";              // placeholder domain
 
   // leading digits = a phone number misread into the address: drop everything before the 1st letter
