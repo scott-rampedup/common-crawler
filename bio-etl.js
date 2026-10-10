@@ -39,7 +39,13 @@ const BUCKET = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-
 const RUN = arg('run', '') || process.env.RUN || `bio-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}`;
 const SCRATCH = arg('scratch', '') || process.env.SCRATCH || '/tmp/_bio-etl';
 const CRAWL = arg('crawl', '') || process.env.CRAWL || '';
-const CRAWLS = arg('crawls', '') || process.env.CRAWLS || 'CC-MAIN-2026-30,CC-MAIN-2026-25,CC-MAIN-2026-21,CC-MAIN-2026-17';
+// Which corpora to resolve a URL list against. Left EMPTY so it is resolved from collinfo.json at run
+// time: this was a hardcoded April-July 2026 list, so once August (CC-MAIN-2026-34) and September
+// (CC-MAIN-2026-39) were published, every resolution silently skipped the two freshest archives --
+// exactly the ones holding recently-discovered pages. --crawls or CRAWLS still pins it explicitly.
+let CRAWLS = arg('crawls', '') || process.env.CRAWLS || '';
+const CRAWLS_N = Number(arg('crawls-n', '')) || Number(process.env.CRAWLS_N) || 4;
+const CRAWLS_FALLBACK = ['CC-MAIN-2026-39', 'CC-MAIN-2026-34', 'CC-MAIN-2026-30', 'CC-MAIN-2026-25'];
 const PER_DOMAIN = arg('per-domain', '') || process.env.PER_DOMAIN || '3';
 const LIMIT = arg('limit', '') || process.env.LIMIT || '0';
 const IN = arg('in', '') || process.env.IN || '';
@@ -245,6 +251,13 @@ async function alreadyConsumed(keys) {
     console.error(`  ${seen.size.toLocaleString()} unique URL(s) -> ${F.urls}`);
     if (!seen.size) { console.error('nothing to do.'); process.exit(0); }
 
+    if (!CRAWLS) {
+      let ids = CRAWLS_FALLBACK;
+      try { ids = await require('./cc-athena-miner').latestCrawls(CRAWLS_N, CRAWLS_FALLBACK); }
+      catch (e) { console.error('  collinfo lookup failed (' + e.message + '); using the pinned fallback'); }
+      CRAWLS = ids.join(',');
+    }
+    console.error('  corpora: ' + CRAWLS);
     step('resolve them in Common Crawl', 'cc-athena-miner.js',
       ['--resolve-urls', F.urls, '--warc-out', F.ptr, '--crawls', CRAWLS, '--resolve-tag', RUN.replace(/[^a-z0-9]/gi, '').slice(0, 24)]);
 
