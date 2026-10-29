@@ -1,5 +1,8 @@
 // Full record schema (order matches the engine / CSV download). "Image URL" is NOT
 // here — it only powers the row thumbnail.
+// Jobs that finished before this date carry no merge result, because nothing recorded one.
+// They are shown as "merge unknown" rather than failing loudly for something we never measured.
+const MERGE_TRACKING_SINCE = '2026-10-26';
 const CSV_COLUMNS = [
   'Time Stamp',
   'Source',
@@ -792,9 +795,14 @@ async function fetchBacklog() {
 
     const num = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
     num('backlogUrls', Number(b.urls || 0).toLocaleString());
-    num('backlogObjects', Number(b.objects || 0).toLocaleString());
+    // The three stages a queued URL passes through, so a stuck one says WHERE it is stuck rather than
+    // just how many there are. A single total hid a 54-day-stale cache behind a plausible-looking number.
+    num('backlogResolve', Number(b.awaitingResolve || 0).toLocaleString());
+    num('backlogExtract', Number(b.awaitingExtract || 0).toLocaleString());
+    num('backlogLive', Number(b.awaitingLive || 0).toLocaleString());
     num('backlogAge', b.oldestAgeHours == null ? '—' : (b.oldestAgeHours < 1 ? '<1h' : `${b.oldestAgeHours}h`));
-    num('backlogState', b.draining ? 'running' : (b.queueEnabled ? 'idle' : 'off'));
+    num('backlogState', b.inFlight ? `${Number(b.inFlight).toLocaleString()} in flight`
+                                   : (b.queueEnabled ? 'idle' : 'off'));
 
     // "Behind" is about AGE, not size: a queue drained every 6h should never hold work older than that.
     panel.classList.toggle('is-draining', !!b.draining);
@@ -803,15 +811,24 @@ async function fetchBacklog() {
 
     const note = document.getElementById('backlogNote');
     if (note) {
+      // A held gate goes FIRST, ahead of the counts. "1,500 waiting" invites you to hunt for a fault;
+      // "1,500 waiting, bio-live wakes at 2,000, 500 more needed" is the same pipeline with nothing
+      // wrong with it, and the difference between those two readings is the whole trust problem.
+      const held = (b.gates || []).map((g) => `HELD (${g.stage}): ${g.reason}`
+        + (g.need ? ` - ${Number(g.need).toLocaleString()} more needed` : '')
+        + (g.override ? `; ${g.override}` : '') + '.');
       const bits = [];
-      if (b.urls) bits.push(`${Number(b.objects).toLocaleString()} batch${b.objects === 1 ? '' : 'es'}, ${(b.bytes / 1e6).toFixed(1)}MB, oldest ${escapeHtml(b.oldest || '')}`);
+      if (b.urls) bits.push(`${Number(b.objects).toLocaleString()} batch${b.objects === 1 ? '' : 'es'}, ${((b.bytes || 0) / 1e6).toFixed(1)}MB, oldest ${escapeHtml(b.oldest || '')}`);
       else bits.push('Queue is empty — everything discovered has been extracted.');
       // The prefix keeps every object forever (no delete permission), so say plainly how much of the
       // listing is already done. Without this the raw object count reads as an enormous backlog.
       if (b.consumed) bits.push(`${Number(b.consumed).toLocaleString()} of ${Number(b.listed).toLocaleString()} batches already processed (kept in S3, skipped on every run).`);
+      // Which end of the queue the pending rows are at. Only worth saying when there is a mix.
+      const pbp = (b.pendingByPriority || []).filter((x) => x && x.n);
+      if (pbp.length > 1) bits.push('Pending by priority: '
+        + pbp.map((x) => `p${x.priority} ${Number(x.n).toLocaleString()}`).join(', ') + ' (highest goes first).');
       if (b.liveJobs) bits.push('Inline live crawling is ON as well, which is slower than the queue drain and is lost on restart.');
-      if (b.lastDrain) bits.push(`Last drain finished ${escapeHtml(String(b.lastDrain.finished || '').slice(0, 19).replace('T', ' '))} (exit ${b.lastDrain.code}).`);
-      note.textContent = bits.join(' · ');
+      note.textContent = held.concat(bits).join(' · ');
     }
     const drain = document.getElementById('drainButton');
     if (drain) { drain.hidden = false; drain.disabled = !!b.draining; drain.textContent = b.draining ? 'Draining…' : 'Drain now'; }
@@ -874,22 +891,78 @@ function renderJobs() {
     const liveOnlyBit = job.liveOnly ? ' <span class="job-meta">· live-only</span>' : '';
     const errorBit = job.error ? `<span class="job-meta" style="color:#b91c1c">${escapeHtml(job.error)}</span>` : '';
 
+    // "Merged" is deliberately separate from the status. A job's status says whether the CRAWL
+    // stopped; only the merge puts records in the Master DB, and the two are not the same event —
+    // a job can read Completed with every record still sitting in its own file and nowhere else.
+    // Three distinct states, because "not merged yet" and "merged nothing" mean different things:
+    //   merged      the merge ran: how many rows went in, how many were new
+    //   NOT MERGED  the merge never ran (stalled, interrupted, or restarted mid-flight)
+    //   failed      the merge ran and threw — the reason is on the job
+    let mergeBit;
+    // A pushed BIO URL list is a receipt: the URLs went straight into the queue and the pump turns
+    // them into contacts on its own schedule. There is no merge step to report, and showing
+    // "NOT MERGED" here would invent a problem that does not exist.
+    if (job.type === 'BIO URL List') {
+      const n = (job.bioList && job.bioList.count) || job.total || 0;
+      // Priority is worth showing, not hiding: "queued" on its own says nothing about WHERE in the
+      // queue, and the difference between the front and the back of a Maps backlog is days.
+      const prio = (job.bioList && job.bioList.priority) || 0;
+      mergeBit = `<span class="job-merge queued" data-list-id="${escapeHtml(job.id)}" style="color:#1d4ed8;font-weight:600;cursor:pointer;text-decoration:underline dotted" title="${escapeHtml((job.bioList && job.bioList.source) || '')} — pushed straight to the queue; the pump drains it continuously. Click to see what became of these URLs.">${n} URL(s) sent to the crawler</span>`
+        + (prio ? ` <span class="job-merge" style="color:#b45309;font-weight:600" title="Priority ${prio}: claimed before any bulk backlog, and a URL already in the queue was moved up to match">front of queue</span>` : '');
+    } else if (job.merge && job.merge.error) {
+      mergeBit = `<span class="job-merge bad" style="color:#b91c1c;font-weight:600" title="${escapeHtml(job.merge.error)}">merge failed</span>`;
+    } else if (job.merge) {
+      const added = job.merge.added || 0;
+      // `partial` means the incremental drain has sent some of it but the job has not finished, so
+      // the count is a floor, not a total. Saying "merged 3,200" on a job still running would read
+      // as done.
+      const partial = job.merge.partial;
+      mergeBit = `<span class="job-merge ok" style="color:${partial ? '#92400e' : '#15803d'};font-weight:600" title="${partial ? 'Merged so far; the job has not finished.' : 'All of this job is in the Master DB.'} Last merge ${escapeHtml(job.merge.at || '')}">`
+        + `merged ${partial ? '' : ''}${job.merge.processed}${partial ? ' so far' : ''}${added ? ` · ${added} new` : ''}</span>`;
+    } else if (job.status === 'running') {
+      mergeBit = `<span class="job-merge pending" style="color:#92400e">not merged yet</span>`;
+    } else if (job.finishedAt && job.finishedAt < MERGE_TRACKING_SINCE) {
+      // Finished before this was recorded, so we genuinely do not know. Saying NOT MERGED here would
+      // put a red flag on every historical job including the ones that merged perfectly well, and a
+      // warning that cries wolf is worth less than no warning at all.
+      mergeBit = `<span class="job-merge unknown" style="color:#6b7280" title="This job finished before merge results were recorded. Its records may or may not be in the Master DB.">merge unknown</span>`;
+    } else {
+      mergeBit = `<span class="job-merge none" style="color:#b91c1c;font-weight:600" title="The merge step never ran, so this job's records are NOT in the Master DB — they exist only in the job file.">NOT MERGED</span>`;
+    }
+
+    // A BIO URL List receipt has no coverage figures and no record count of its own. The crawling
+    // happens minutes later, on other machines, against a queue and a live fleet that hold no
+    // reference back to this row, so `coverage` and `recordCount` are set to zero when the receipt is
+    // created and nothing ever revisits them. They are struct padding -- the receipt borrows the job
+    // object's shape so it can appear in the same list -- and this template rendered all four of them
+    // as findings: a push that had just crawled 13 pages read "0 CC · 0 live · 0 none · 0 people".
+    // Print only what this row genuinely knows. The badge fetches the real outcome on click.
+    const isReceipt = job.type === 'BIO URL List';
+    const pushed = Number((job.bioList && job.bioList.count) || job.totalOverride || 0);
+    const prio = job.bioList && job.bioList.priority;
+    const coverageBit = isReceipt
+      ? `<span class="job-coverage"><span class="live">${pushed.toLocaleString()} URL(s) pushed</span>`
+        + `${prio ? ` · <span class="cc">priority ${prio}</span>` : ''}`
+        + ` · <span class="none">click the badge for what became of them</span></span>`
+      : `<span class="job-coverage">
+            <span class="cc">${cov.found} CC</span> ·
+            <span class="live">${cov.live} live</span> ·
+            <span class="none">${cov.empty} none</span> ·
+            <strong>${job.recordCount} people</strong>
+          </span>`;
+
     card.innerHTML = `
       <div class="job-main">
         <div class="job-line">
           <span class="badge ${job.status}">${job.status}</span>
+          ${mergeBit}
           <span class="job-type">${escapeHtml(job.type || '')}</span>
           <strong class="job-name">${escapeHtml(job.name || shortJobLabel(job))}</strong>
           <button class="job-rename" type="button" title="Rename job" aria-label="Rename job">✎</button>${liveOnlyBit}
         </div>
         <div class="job-line">
           ${progressBit}
-          <span class="job-coverage">
-            <span class="cc">${cov.found} CC</span> ·
-            <span class="live">${cov.live} live</span> ·
-            <span class="none">${cov.empty} none</span> ·
-            <strong>${job.recordCount} people</strong>
-          </span>
+          ${coverageBit}
           ${errorBit}
         </div>
       </div>
@@ -916,6 +989,29 @@ function renderJobs() {
         stopBtn.classList.add('danger');
         stopBtn.addEventListener('click', () => stopJobUI(job.id));
         actions.appendChild(stopBtn);
+      }
+
+      // Merge what this job already found into the Master DB, without re-crawling it. Shown whenever
+      // a job holds records that are not recorded as merged — a stalled or restarted job otherwise has
+      // no way out of its own file.
+      if (job.recordCount > 0 && (!job.merge || job.merge.partial || job.merge.error)) {
+        const mergeBtn = document.createElement('button');
+        mergeBtn.textContent = 'Merge';
+        mergeBtn.title = 'Add the records this job found to the Master DB (duplicates are skipped)';
+        mergeBtn.addEventListener('click', async () => {
+          mergeBtn.disabled = true; mergeBtn.textContent = 'Merging…';
+          try {
+            const r = await fetch(`/api/jobs/${job.id}/merge`, { method: 'POST' });
+            const j = await r.json();
+            if (!r.ok) throw new Error(j.error || 'merge failed');
+            mergeBtn.textContent = `merged ${j.merged}`;
+            await fetchJobs();
+          } catch (e) {
+            mergeBtn.disabled = false; mergeBtn.textContent = 'Merge';
+            alert('Merge failed: ' + e.message);
+          }
+        });
+        actions.appendChild(mergeBtn);
       }
 
       if (job.recordCount > 0) {
@@ -1322,4 +1418,96 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   jobsPollTimer = setInterval(pollJobs, 1500);   // keep jobs + the viewed job live
+});
+
+// ---- what became of a BIO URL push ----
+// The badge says how many URLs went in. This says what came out, which the dashboard could not answer
+// before: a bio page with no email address is discarded at the store, so a push could crawl perfectly
+// and produce nobody while every status on screen said success. Fetched on click, not with every row,
+// because it is a primary-key read over that push's own URL list and most rows are never asked about.
+//
+// Rendered into a box attached to document.body, NOT into the badge: the jobs list re-renders on a
+// timer, so an answer written into the row would appear and then silently vanish.
+function listOutcomePop(html, anchor) {
+  let box = document.getElementById('list-outcome-pop');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'list-outcome-pop';
+    box.style.cssText = 'position:fixed;z-index:9999;max-width:520px;background:#fff;color:#0f172a;'
+      + 'border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);'
+      + 'padding:10px 12px;font:13px/1.5 system-ui,-apple-system,sans-serif';
+    box.addEventListener('click', (ev) => {
+      if (ev.target && ev.target.getAttribute && ev.target.getAttribute('data-close')) box.remove();
+    });
+    document.body.appendChild(box);
+  }
+  const r = anchor.getBoundingClientRect();
+  box.style.top = Math.max(8, Math.min(window.innerHeight - 160, r.bottom + 6)) + 'px';
+  box.style.left = Math.max(8, Math.min(window.innerWidth - 540, r.left)) + 'px';
+  box.innerHTML = html
+    + ' <span data-close="1" style="cursor:pointer;color:#64748b;font-weight:700;margin-left:8px">&times;</span>';
+  return box;
+}
+
+document.addEventListener('click', async (e) => {
+  const el = e.target && e.target.closest ? e.target.closest('.job-merge[data-list-id]') : null;
+  if (!el || el.dataset.busy) return;
+  const id = el.getAttribute('data-list-id');
+  if (!id) return;
+  el.dataset.busy = '1';
+  listOutcomePop('Checking what became of these URLs&hellip;', el);
+  try {
+    const res = await fetch('/api/list-outcome?listId=' + encodeURIComponent(id), { credentials: 'same-origin' });
+    const o = await res.json().catch(() => null);
+    if (!res.ok || !o) {
+      listOutcomePop(escapeHtml((o && o.error) || ('Could not check (HTTP ' + res.status + ')')), el);
+    } else if (o.available === false) {
+      listOutcomePop(escapeHtml(o.note || 'No URL list was kept for this push.'), el);
+    } else {
+      const st = o.byStatus || {};
+      const n = (v) => Number(v || 0).toLocaleString();
+      const ind = (s) => '<span style="padding-left:12px;color:#64748b">' + s + '</span>';
+      const rows = [];
+      rows.push(['URLs sent', n(o.urls)]);
+
+      // Two paths, reported separately, because they are genuinely different machinery and lumping
+      // them together is what made the first version of this panel lie.
+      if (o.known) {
+        rows.push(['<b>Via the crawl queue</b> (page was in the archive)', '<b>' + n(o.known) + '</b>']);
+        if (st.pending) rows.push([ind('still waiting'), n(st.pending)]);
+        if (st.claimed) rows.push([ind('being crawled now'), n(st.claimed)]);
+        if (st.done) rows.push([ind('crawled'), n(st.done)]);
+        if (st.error) rows.push([ind('failed to fetch'), n(st.error)]);
+        rows.push([ind('found a person'), n(o.withPerson)]);
+        rows.push([ind('discarded &mdash; no email address'),
+          o.noEmailTracked === false ? '<em>not tracked yet</em>' : n(o.noEmail)]);
+      }
+
+      const led = o.ledger && !o.ledger.error ? o.ledger : null;
+      if (o.liveSeen) {
+        rows.push(['<b>Via the live fleet</b> (not in the archive)', '<b>' + n(o.liveSeen) + '</b>']);
+        const by = (led && led.byOutcome) || {};
+        if (by.extracted) rows.push([ind('found a person'), n(by.extracted)]);
+        if (by['no-record']) rows.push([ind('fetched, but no person in the page&rsquo;s HTML'), n(by['no-record'])]);
+        if (by.empty) rows.push([ind('page was empty'), n(by.empty)]);
+        if (by.error) rows.push([ind('fetch failed'), n(by.error)]);
+      }
+      if (o.ledger && o.ledger.error) {
+        rows.push(['Live-crawl ledger', '<em>unreachable &mdash; live results unknown, not zero</em>']);
+      }
+      if (o.unseen) rows.push(['Not yet seen by either path', n(o.unseen)]);
+      let html = '<div style="font-weight:600;margin-bottom:6px">What became of this push</div>'
+        + '<table style="border-collapse:collapse;font-variant-numeric:tabular-nums">'
+        + rows.map(([k, v]) => '<tr><td style="padding:1px 10px 1px 0;color:#475569">' + k + '</td>'
+            + '<td style="padding:1px 0;text-align:right">' + v + '</td></tr>').join('')
+        + '</table>';
+      if (o.truncated) html += '<div style="margin-top:6px;color:#92400e">URL list was capped, so these '
+        + 'counts cover only the first part of this push.</div>';
+      listOutcomePop(html, el);
+    }
+  } catch (err) {
+    listOutcomePop(escapeHtml('Could not check: ' + ((err && err.message) || 'error')), el);
+  } finally {
+    delete el.dataset.busy;
+  }
 });

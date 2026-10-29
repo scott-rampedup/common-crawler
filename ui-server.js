@@ -30,7 +30,11 @@ const MONITOR_QUEUE = !/^(0|false|no|off)$/i.test(process.env.MONITOR_QUEUE || '
 const MONITOR_LIVE_JOBS = !/^(0|false|no|off)$/i.test(process.env.MONITOR_LIVE_JOBS || '1');
 const MONITOR_QUEUE_PREFIX = process.env.MONITOR_QUEUE_PREFIX || 'monitor-queue/pending/';
 let _qs3 = null;
-async function queueBioUrls(urls, label) {
+// `priority` (0-9) rides in the OBJECT KEY, not in the body, so the feed can order a pass by it from
+// the S3 listing alone — no extra GET per object just to find out whether something is urgent, and no
+// sidecar file to go missing. It goes BEFORE the count: backlog.js recovers the URL count from the key
+// with /-(\d+)\.txt$/, and a trailing marker would silently turn every count into the priority digit.
+async function queueBioUrls(urls, label, priority = 0) {
   if (!MONITOR_QUEUE || !Array.isArray(urls) || !urls.length) return;
   try {
     if (!_qs3) {
@@ -41,14 +45,118 @@ async function queueBioUrls(urls, label) {
     const region = process.env.AWS_REGION || 'us-east-1';
     const bucket = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${region}`;
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const key = `${MONITOR_QUEUE_PREFIX}${stamp}-${urls.length}.txt`;
+    const prio = Math.max(0, Math.min(9, Math.trunc(Number(priority) || 0)));
+    const key = `${MONITOR_QUEUE_PREFIX}${stamp}${prio ? `-p${prio}` : ''}-${urls.length}.txt`;
     await _qs3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: urls.join('\n') + '\n', ContentType: 'text/plain' }));
-    console.log(`[monitor-queue] ${urls.length} URL(s) -> s3://${bucket}/${key}${label ? ` (${label})` : ''}`);
+    console.log(`[monitor-queue] ${urls.length} URL(s)${prio ? ` at priority ${prio}` : ''} -> s3://${bucket}/${key}${label ? ` (${label})` : ''}`);
+    return { key, bucket };        // so the caller can record where the push landed
   } catch (e) {
     // Never let queueing break a monitor pass — the inline job (if enabled) is still the safety net.
     console.error('[monitor-queue] failed:', e.message);
+    return null;
   }
 }
+// Record a pushed BIO URL list in the Data Importer.
+//
+// This is a RECEIPT, not a gate. The URLs are already in the queue by the time this runs, and the pump
+// drains them without consulting it — nothing here can hold a URL up, and a failure to write the
+// receipt is logged and swallowed for exactly that reason. What it buys is the question "where did
+// these come from and when" having an answer in the UI instead of only in an S3 key.
+//
+// Named after the source, because that is the thing worth finding later: the page the Chrome extension
+// scraped, or the Google Maps export the parse came from.
+// A list too big for one request arrives as several, and each one used to mint its own receipt: 25
+// exports produced 59 rows in the Data Importer, named "… (part 1)", "… (part 2)". The caller passes
+// the id it got back from the first chunk and the rest are added to that one, so an export is one
+// named list with a true total however many requests carried it.
+// Keep the URLs of a push on disk beside its receipt, so "what became of this?" stays answerable.
+// They cannot be recovered later from anywhere else: bio-feed CONSUMES the S3 pending object once it
+// has drained it, and crawl_queue has no column pointing back at a receipt. With the list in hand the
+// outcome is a primary-key read of those exact rows, which is the only shape that works here -- an
+// aggregate over 24.6M queue rows exceeds the request timeout.
+//
+// Capped. An interactive push is tens to hundreds of URLs and is the case this exists for; a Maps
+// export continuing into one receipt can be hundreds of thousands, which is not worth the disk, so it
+// stops at the cap and the receipt records that it did.
+const LIST_URLS_CAP = Number(process.env.BIO_LIST_URLS_CAP) || 50000;
+function writeListUrls(listId, urls, already) {
+  try {
+    const room = LIST_URLS_CAP - (already || 0);
+    if (room <= 0) return already || 0;
+    const take = (urls || []).slice(0, room);
+    if (!take.length) return already || 0;
+    fs.mkdirSync(JOBS_DIR, { recursive: true });
+    fs.appendFileSync(path.join(JOBS_DIR, `${listId}.urls.txt`), take.join('\n') + '\n');
+    return (already || 0) + take.length;
+  } catch (e) {
+    console.error('[bio-list] could not keep the URL list (the push itself is unaffected):', e.message);
+    return already || 0;
+  }
+}
+
+function appendBioUrlList(listId, count, key, urls = []) {
+  const job = jobs.get(listId);
+  if (!job || job.type !== 'BIO URL List') return false;
+  const prev = job.bioList || { count: 0, keys: [] };
+  const urlsStored = writeListUrls(listId, urls, prev.urlsStored || 0);
+  job.bioList = {
+    ...prev,
+    count: (prev.count || 0) + count,
+    keys: [...(prev.keys || (prev.key ? [prev.key] : [])), key].filter(Boolean),
+    urlsStored,
+    urlsTruncated: !!prev.urlsTruncated || urlsStored < ((prev.urlsStored || 0) + (urls || []).length),
+    at: new Date().toISOString(),
+  };
+  job.totalOverride = job.bioList.count;
+  job.doneOverride = job.bioList.count;
+  persistJob(job);
+  console.log(`[bio-list] "${job.name}" += ${count} URL(s) (${job.bioList.count} total)`);
+  return true;
+}
+
+function recordBioUrlList({ name, count, key, source, priority = 0, urls = [] }) {
+  try {
+    const job = {
+      id: newJobId(),
+      createdAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),   // the PUSH is complete; the crawling of it is the queue's job
+      // ...and the status has to say so. 'queued' was honest about the URLs but a lie about this ROW:
+      // nothing in the server ever moved a receipt off it, so every push stayed in the dashboard looking
+      // like unprocessed work -- 38 of them sat there while crawl_queue held ZERO pending rows. It also
+      // counted as ACTIVE in pruneOldJobs, which exempted receipts from retention so they accumulated
+      // without limit. The URL count still shows on the row and ui/app.js badges where those URLs went
+      // in the queue; progress of the crawl itself belongs to the queue, not to this row.
+      status: 'completed',
+      name: String(name || 'BIO URLs').trim().slice(0, 120),
+      type: 'BIO URL List',
+      domains: [], doneDomains: [],
+      coverage: { found: 0, live: 0, empty: 0, errored: 0 },
+      directoryFilter: '', recordSource: '', liveOnly: false, mode: 'webpage',
+      stopRequested: false, error: null,
+      recordsByEmail: new Map(),
+      lastProgress: null,
+      // These are STRUCT PADDING, not findings. A receipt borrows the job object's shape so it can
+      // sit in the same list, but the crawling of its URLs happens minutes later on other machines
+      // that hold no reference back to this row, so there is no coverage and no record count to put
+      // here and nothing ever comes back to fill them in. ui/app.js must not render them as results:
+      // it did, and a push that had crawled 13 pages displayed "0 CC · 0 live · 0 none · 0 people".
+      // The real outcome comes from /api/list-outcome, which reads the queue and the live ledger.
+      totalOverride: count, doneOverride: count, recordCount: 0,
+      // what this receipt is actually about
+      bioList: { count, key: key || '', source: source || '', priority: priority || 0, at: new Date().toISOString() },
+    };
+    job.bioList.urlsStored = writeListUrls(job.id, urls, 0);
+    job.bioList.urlsTruncated = job.bioList.urlsStored < (urls || []).length;
+    jobs.set(job.id, job);
+    persistJob(job);
+    console.log(`[bio-list] recorded "${job.name}" — ${count} URL(s)${priority ? ` at priority ${priority}` : ''}${key ? ` (${key})` : ''}`);
+    return job.id;
+  } catch (e) {
+    console.error('[bio-list] could not record the push (the URLs are queued regardless):', e.message);
+    return null;
+  }
+}
+
 // ---- the DRAIN side of that queue ----
 // queueBioUrls is the producer and it is scheduled (setInterval, 12h). Until now the consumer was not
 // scheduled at all: `bio-etl --mode urls` existed, worked, and was only ever run by hand. The result was a
@@ -573,7 +681,7 @@ async function runSheetSync(url) {
     res.elapsedMs = Date.now() - t0;
     sheetSync.lastResult = res; sheetSync.url = target;
     upsertSheetJob(res);                       // mirror the sync as a 'Google Sheet' job in the panel
-    console.log(`Sheet sync: ${res.imported} imported (+${res.added} new) from ${res.unique} unique URL(s); DB total ${res.dbTotal} (${res.elapsedMs}ms).`);
+    console.log(`Sheet sync: ${res.imported} row(s) read, ${res.changed === undefined ? '?' : res.changed} changed (+${res.added} new) from ${res.unique} unique URL(s); DB total ${res.dbTotal} (${res.elapsedMs}ms).`);
   } catch (e) {
     sheetSync.lastError = e.message;
     console.error('Sheet sync failed:', e.message);
@@ -787,6 +895,10 @@ function jobSummary(job) {
     mode: job.mode || 'domain',
     error: job.error || null,
     lastProgress: job.lastProgress || null,
+    // Whether this job's records actually reached the Master DB. null = the merge never ran, which is
+    // a different thing from "merged 0 rows" and the UI says so.
+    merge: job.merge || null,
+    bioList: job.bioList || null,       // a pushed BIO URL list: where it came from and how many
   };
 }
 
@@ -816,6 +928,14 @@ function persistJob(job) {
     mode: job.mode || 'domain',
     error: job.error || null,
     totalOverride: job.totalOverride, doneOverride: job.doneOverride, recordCount: job.recordCount,   // for the Google Sheet job
+    // These two were READ on load (`j.merge`, `j.bioList`) and never WRITTEN here, so both were lost on
+    // every restart — and a restart is what a deploy is. The merge record is the Merged badge, so a job
+    // that had merged read as NOT MERGED again the moment the app came back; the bioList is a pushed
+    // list's source, S3 key and now its queue priority, so a receipt silently lost the provenance that
+    // is its entire reason for existing. Nothing else was wrong with either feature: they were simply
+    // absent from this object.
+    merge: job.merge || null,
+    bioList: job.bioList || null,
     records: jobRawRecords(job),
   };
   try { fs.writeFileSync(path.join(JOBS_DIR, `${job.id}.json`), JSON.stringify(out)); }
@@ -823,6 +943,7 @@ function persistJob(job) {
 }
 
 function loadJobs() {
+  let reconciled = 0;
   let files = [];
   try { files = fs.readdirSync(JOBS_DIR).filter((f) => f.endsWith('.json')); } catch (e) { return; }
   for (const f of files) {
@@ -833,8 +954,29 @@ function loadJobs() {
         const k = String(r['Email Address'] || '').toLowerCase() || `_${recordsByEmail.size}`;
         recordsByEmail.set(k, r);
       }
-      // a job still marked "running" means the server died mid-run — it can be resumed
-      const status = j.status === 'running' ? 'interrupted' : j.status;
+      // Reconcile a job that was mid-flight when the process died, and WRITE THE ANSWER BACK.
+      //
+      // This used to reclassify running -> interrupted in memory only, leaving the file saying
+      // "running" forever. Disk and the UI then disagreed permanently, and because the status was
+      // never re-derived from the work, a job that had finished every URL still read as unfinished:
+      // 140 of 496 CC Discovery jobs had doneDomains >= domains and were still labelled running,
+      // which is what made the Data Importer look like it held a huge backlog when 98.4% of the work
+      // was done. Deriving from the work and persisting it means the file, the memory and reality
+      // agree from the first boot after a crash.
+      const total = (j.domains || []).length, done = (j.doneDomains || []).length;
+      let status = j.status;
+      if (status === 'running') status = (total > 0 && done >= total) ? 'completed' : 'interrupted';
+      // Same repair for the receipts already on disk. 'queued' is assigned in exactly one place in this
+      // server (recordBioUrlList) and no code path ever moved it, so a file still carrying it is a push
+      // whose URLs went to S3 and through the queue long ago. Rewriting it here means the dashboard stops
+      // showing a backlog that does not exist, without anyone editing 38 files by hand.
+      if (status === 'queued') status = 'completed';
+      if (status !== j.status) {
+        j.status = status;
+        if (status === 'completed' && !j.finishedAt) j.finishedAt = new Date().toISOString();
+        try { fs.writeFileSync(path.join(JOBS_DIR, f), JSON.stringify(j)); reconciled++; }
+        catch (e) { console.error(`Could not persist reconciled status for job ${j.id}:`, e.message); }
+      }
       jobs.set(j.id, {
         id: j.id, createdAt: j.createdAt, finishedAt: j.finishedAt || null, status,
         name: j.name || '', type: j.type || (j.mode === 'webpage' ? 'Webpages' : 'Domains'),
@@ -843,10 +985,13 @@ function loadJobs() {
         directoryFilter: j.directoryFilter || '', liveOnly: !!j.liveOnly, mode: j.mode || 'domain',
         totalOverride: j.totalOverride, doneOverride: j.doneOverride, recordCount: j.recordCount,
         error: j.error || null, recordsByEmail, lastProgress: null,
+        merge: j.merge || null,         // survives restarts; null means the merge never ran
+        bioList: j.bioList || null,     // a pushed BIO URL list keeps its provenance across restarts
       });
     } catch (e) { console.error(`Failed to load job file ${f}:`, e.message); }
   }
-  console.log(`Loaded ${jobs.size} saved job(s) from ${JOBS_DIR}`);
+  console.log(`Loaded ${jobs.size} saved job(s) from ${JOBS_DIR}`
+    + (reconciled ? ` (${reconciled} stale status(es) reconciled and written back)` : ''));
 }
 
 // Each job file embeds ALL its records (a big crawl/load can be tens of MB), and they accumulate
@@ -915,6 +1060,54 @@ async function modelMissingEmails(job) {
   return n;
 }
 
+// Merge what the job has found SO FAR into the Master DB, without waiting for it to finish.
+//
+// The merge used to happen once, in the completion path. A job that stalled, was stopped, or had its
+// machine restarted mid-flight therefore contributed NOTHING, however much it had found:
+// j_mvpl7aqc_mfofta sat two domains short of 10,158 with 7,671 records that existed only in its own
+// file, while the Data Importer showed it as finished work. Draining as we go means a stall costs the
+// last few hundred records instead of all of them.
+//
+// Only records not yet sent are collected, so the cost is proportional to new work rather than to the
+// job's total size. upsertMany is email-keyed, score-gated and idempotent, so a record sent twice
+// (a resumed job, an overlapping batch) is harmless.
+const MERGE_EVERY = Number(process.env.JOB_MERGE_EVERY || 250);   // unsent records that trigger a merge
+function mergeIncremental(job, force = false) {
+  // Keyed on the ROW, not just the email. onRecord overwrites recordsByEmail[k] when the same person
+  // turns up again with more fields, and a set of merged emails would treat that improved record as
+  // already sent and drop the improvement on the floor. Comparing the object identity catches it:
+  // a replaced row is a different object, so it goes again (and upsertMany's score gate decides).
+  if (!job._mergedRows) job._mergedRows = new Map();
+  if (job._mergeInFlight) return;                       // one at a time; the next domain will retry
+  const pending = [];
+  for (const [k, rec] of job.recordsByEmail) if (job._mergedRows.get(k) !== rec) pending.push([k, rec]);
+  if (!pending.length || (!force && pending.length < MERGE_EVERY)) return;
+
+  job._mergeInFlight = true;
+  const stamp = new Date().toISOString();
+  Promise.resolve(db.upsertMany(pending.map(([, rec]) => rec)))
+    .then((res) => {
+      for (const [k, rec] of pending) job._mergedRows.set(k, rec);
+      const prev = job.merge || { processed: 0, added: 0, changed: 0 };
+      job.merge = {
+        at: stamp,
+        processed: (prev.processed || 0) + (res.processed || 0),
+        added: (prev.added || 0) + (res.added || 0),
+        changed: (prev.changed || 0) + (res.changed || 0),
+        partial: true,                                   // cleared when the job finishes
+        error: null,
+      };
+      console.log(`Central DB (incremental): merged ${res.processed} of ${pending.length} pending record(s), +${res.added} new`);
+    })
+    .catch((e) => {
+      // Leave the keys unmarked so the next pass retries them, and make the failure visible on the job
+      // rather than only in a log line nobody reads.
+      job.merge = { ...(job.merge || { processed: 0, added: 0, changed: 0 }), at: stamp, partial: true, error: e.message || String(e) };
+      console.error('Central DB (incremental) merge failed:', e.message);
+    })
+    .finally(() => { job._mergeInFlight = false; });
+}
+
 // run a set of domains for a job, accumulating records + coverage, persisting per domain
 async function runJobDomains(job, domainsToRun) {
   job.status = 'running';
@@ -946,6 +1139,7 @@ async function runJobDomains(job, domainsToRun) {
           else if (p.status === 'domain-done') job.coverage.live += 1;
           else job.coverage.empty += 1;
           persistJobThrottled(job);        // throttled: final unthrottled save happens after the run
+          mergeIncremental(job);           // don't let a stall strand everything found so far
         }
       },
     });
@@ -967,17 +1161,49 @@ async function runJobDomains(job, domainsToRun) {
   catch (e) { console.error('geocode failed:', e.message); }
   job.finishedAt = new Date().toISOString();
   persistJob(job);
-  // merge this job's fully-processed records into the central database
+  // Merge this job's records into the central database, and RECORD WHAT HAPPENED on the job itself.
+  //
+  // "completed" only ever meant "the crawl stopped" — it said nothing about whether a single record
+  // reached the Master DB, and the merge below is the only step that puts one there. A job could read
+  // Completed in the Data Importer while its 7,671 records existed nowhere but its own file, which is
+  // exactly what happened to j_mvpl7aqc_mfofta: stalled two domains short of the end, so this block
+  // never ran at all. The status was true and useless at the same time, and there was no way to tell
+  // the difference from the outside without querying Postgres by hand.
+  //
+  // So the outcome is now part of the job: how many rows went in, how many were new, and the error if
+  // it threw. The UI reads it as a separate "Merged" state next to the status.
+  const stamp = new Date().toISOString();
+  if (!job._mergedRows) job._mergedRows = new Map();
+  // Only what the incremental passes have not already sent, compared by row identity so a record that
+  // was improved after its first merge goes again. On a job that drained as it went this is the last
+  // few records; on a job that never got there it is everything, exactly as before.
+  const remaining = [];
+  for (const [k, rec] of job.recordsByEmail) if (job._mergedRows.get(k) !== rec) remaining.push([k, rec]);
+  const prev = job.merge || { processed: 0, added: 0, changed: 0 };
   try {
-    const merged = await db.upsertMany(jobRecords(job));
-    console.log(`Central DB: merged ${merged.processed} record(s), +${merged.added} new (total ${merged.total}).`);
-  } catch (e) { console.error('Central DB merge failed:', e.message); }
+    const merged = remaining.length ? await db.upsertMany(remaining.map(([, rec]) => rec))
+                                    : { processed: 0, added: 0, changed: 0, total: null };
+    for (const [k, rec] of remaining) job._mergedRows.set(k, rec);
+    job.merge = {
+      at: stamp,
+      processed: (prev.processed || 0) + (merged.processed || 0),
+      added: (prev.added || 0) + (merged.added || 0),
+      changed: (prev.changed || 0) + (merged.changed || 0),
+      partial: false,                    // the whole job is in
+      error: null,
+    };
+    console.log(`Central DB: merged ${merged.processed} final record(s), +${merged.added} new; job total ${job.merge.processed}.`);
+  } catch (e) {
+    job.merge = { ...prev, at: stamp, partial: true, error: e.message || String(e) };
+    console.error('Central DB merge failed:', e.message);
+  }
+  persistJob(job);                      // the merge result has to survive a restart like everything else
   // the per-job engine CSV is throwaway (records are in our DB now) — delete it so it can't fill /data
   try { fs.unlinkSync(path.join(JOBS_DIR, `${job.id}.engine.csv`)); } catch (e) { /* may not exist */ }
   console.log(`Job ${job.id} ${job.status} — ${job.recordsByEmail.size} record(s)`);
 }
 
-const JOB_TYPES = ['Domains', 'Webpages', 'Sitemaps', 'Site Search Results', 'Google Sheet', 'CC Discovery', 'Monitor'];
+const JOB_TYPES = ['Domains', 'Webpages', 'Sitemaps', 'Site Search Results', 'Google Sheet', 'CC Discovery', 'Monitor', 'BIO URL List'];
 const jobTypeFromMode = (mode) => (mode === 'webpage' ? 'Webpages' : 'Domains');
 const normalizeJobType = (t, mode) => (JOB_TYPES.includes(t) ? t : jobTypeFromMode(mode));
 
@@ -1142,10 +1368,28 @@ function setSessionCookie(res, token) {
 function clearSessionCookie(res) {
   res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`);
 }
-function readJsonBody(req, cb) {
-  let body = '';
-  req.on('data', (c) => { body += c; if (body.length > 2e6) req.destroy(); });
-  req.on('end', () => { try { cb(JSON.parse(body || '{}')); } catch (e) { cb(null); } });
+const JSON_BODY_MAX = Number(process.env.JSON_BODY_MAX || 8e6);
+function readJsonBody(req, cb, res) {
+  res = res || req._res;                      // set once in the request handler
+  let body = '', killed = false;
+  req.on('data', (c) => {
+    if (killed) return;
+    body += c;
+    if (body.length > JSON_BODY_MAX) {
+      // Destroying the socket tells the caller NOTHING: the proxy turns a dropped connection into a
+      // bare 502, which is indistinguishable from the app being down. Three bio-URL pushes failed
+      // every retry this way — 94,696 URLs — because a 20,000-URL chunk of long URLs came to 3.6MB
+      // against the old 2MB cap, and the error said only "502". Answer properly, then stop reading.
+      killed = true;
+      if (res && !res.headersSent) {
+        res.writeHead(413, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: `Request body too large (max ${JSON_BODY_MAX} bytes). Send it in smaller batches.` }));
+      }
+      req.destroy();
+    }
+  });
+  req.on('end', () => { if (killed) return; try { cb(JSON.parse(body || '{}')); } catch (e) { cb(null); } });
+  req.on('error', () => { /* client went away; nothing to answer */ });
 }
 function jsonErr(res, code, msg) { res.writeHead(code, jsonHdr); res.end(JSON.stringify({ error: msg })); }
 
@@ -1254,6 +1498,9 @@ function handleAdmin(req, res, p) {
 }
 
 const server = http.createServer(async (req, res) => {
+  // So readJsonBody can ANSWER an oversized body (413) instead of dropping the socket and leaving the
+  // caller with a bare 502. Attaching it here covers all 30 call sites without touching any of them.
+  req._res = res;
   const url = new URL(req.url, `http://${req.headers.host}`);
   const _t0 = Date.now();
   const _hasSid = /(^|;\s*)sid=[^;]+/.test(String(req.headers['cookie'] || ''));
@@ -1555,6 +1802,177 @@ const server = http.createServer(async (req, res) => {
   // POST /api/vcards/ingest  { urls: [...] }  -> fetch each vCard and upsert it as a contact.
   // Not a crawl job: a .vcf IS the record, so there is no page to walk and no extraction to schedule.
   // Fetch, parse, upsert, report — which is why this answers inline instead of creating a job.
+  // POST /api/bio-urls  { urls: [...], label?: "..." }  -> straight into the bio-URL queue.
+  //
+  // What became of one push. The receipt says how many URLs went IN; nothing anywhere said how many
+  // people came OUT, so a push that crawled perfectly and stored nobody was indistinguishable from one
+  // that worked -- the single most misleading thing in this dashboard. Two numbers are reported apart
+  // on purpose: `withPerson` is pages where a person was found, `noEmail` is those discarded for having
+  // no email address, and the gap between them is the loss that used to be invisible.
+  if (url.pathname === '/api/list-outcome' && req.method === 'GET') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    (async () => {
+      const id = String(url.searchParams.get('listId') || '').trim();
+      if (!jobs.get(id)) { jsonErr(res, 404, 'No such list.'); return; }
+      const job = jobs.get(id);
+      let urls = [];
+      try {
+        urls = fs.readFileSync(path.join(JOBS_DIR, `${id}.urls.txt`), 'utf8')
+          .split('\n').map((s) => s.trim()).filter(Boolean);
+      } catch (e) {
+        sendJson(res, { listId: id, available: false,
+          note: 'This push predates per-URL outcome tracking, so its URL list was not kept. Pushes from now on report.' });
+        return;
+      }
+      if (!(db && db._pool)) { jsonErr(res, 503, 'crawl_queue is unreachable, so the outcome is MISSING, not zero.'); return; }
+      // `no_email` only exists once a machine running the new image has applied the schema. Its own
+      // failure and its own fallback: a missing column must read as "not tracked yet", never as 0.
+      let noEmailTracked = true;
+      const readChunk = async (chunk) => {
+        if (noEmailTracked) {
+          try {
+            return await db._pool.query(
+              `SELECT url, status, COALESCE(records,0) AS records, COALESCE(no_email,0) AS no_email
+                 FROM crawl_queue WHERE url = ANY($1::text[])`, [chunk]);
+          } catch (e) { noEmailTracked = false; }
+        }
+        return await db._pool.query(
+          `SELECT url, status, COALESCE(records,0) AS records, 0 AS no_email
+             FROM crawl_queue WHERE url = ANY($1::text[])`, [chunk]);
+      };
+      try {
+        const out = { urls: urls.length, known: 0, byStatus: {}, withPerson: 0, noEmail: 0 };
+        const inQueue = new Set();
+        for (let i = 0; i < urls.length; i += 20000) {
+          const r = await readChunk(urls.slice(i, i + 20000));
+          for (const row of r.rows) {
+            out.known++;
+            inQueue.add(row.url);
+            out.byStatus[row.status] = (out.byStatus[row.status] || 0) + 1;
+            if (Number(row.records) > 0) out.withPerson++;
+            if (Number(row.no_email) > 0) out.noEmail++;
+          }
+        }
+
+        // The live-crawl path NEVER touches crawl_queue, and for the extension it is the MAJORITY
+        // path: bio-feed sends everything the archive does not already hold to bio-miss/ and the
+        // fleet crawls it directly. One real 15-URL push went 1 row to the queue and 13 to the fleet,
+        // so an outcome built from crawl_queue alone reported 14 of them as "already known, not
+        // re-queued" -- a confident wrong answer about exactly the pages being asked about.
+        //
+        // The fleet writes its own per-URL ledger (OpenSearch `crawl_log`, _id = sha1(url)), so this
+        // is an mget by id: exact keys, no query, no scan. Its own try/catch, because an unreachable
+        // ledger must read as "unknown", never as zero.
+        const crawlLedger = require('./crawl-ledger');
+        const inLedger = new Set();
+        let ledger = null;
+        try {
+          const endpoint = process.env.OPENSEARCH_ENDPOINT;
+          if (!endpoint) {
+            ledger = { error: 'OPENSEARCH_ENDPOINT is not set' };
+          } else {
+            const osc = openSearch.makeClient(endpoint);
+            ledger = { seen: 0, byOutcome: {}, bySource: {} };
+            for (let i = 0; i < urls.length; i += 500) {
+              const slice = urls.slice(i, i + 500);
+              const r = await osc.mget({ index: crawlLedger.INDEX, body: { ids: slice.map(crawlLedger.idOf) } });
+              const docs = (r && r.body && r.body.docs) || (r && r.docs) || [];
+              docs.forEach((d, k) => {
+                if (!d || !d.found) return;
+                const src = d._source || {};
+                ledger.seen++;
+                inLedger.add(slice[k]);
+                const o2 = src.outcome || 'unknown';
+                ledger.byOutcome[o2] = (ledger.byOutcome[o2] || 0) + 1;
+                if (src.source) ledger.bySource[src.source] = (ledger.bySource[src.source] || 0) + 1;
+              });
+            }
+          }
+        } catch (e) { ledger = { error: String((e && e.message) || e) }; }
+
+        // Three states kept deliberately apart, because conflating them produced the wrong answer:
+        // in the crawl queue, crawled live by the fleet, or genuinely not seen by either yet.
+        out.ledger = ledger;
+        out.liveSeen = inLedger.size;
+        out.unseen = urls.filter((u) => !inQueue.has(u) && !inLedger.has(u)).length;
+        sendJson(res, { listId: id, available: true, noEmailTracked,
+          truncated: !!(job.bioList && job.bioList.urlsTruncated), ...out });
+      } catch (e) { jsonErr(res, 500, 'Outcome lookup failed: ' + e.message); }
+    })();
+    return;
+  }
+
+  // The door the Chrome extension needs. Everything else that discovers a bio URL (the sitemap monitor,
+  // the Maps ETL, cc-bio-discover) already writes to monitor-queue/pending/ and bio-etl drains it on a
+  // schedule; a browser-side collector had no way in, so its output went CSV -> Google Sheet -> 24h sync
+  // instead. Same destination, one hop instead of three, and no job record: a URL in the queue needs no
+  // status, no slot and nothing to resume.
+  if (url.pathname === '/api/bio-urls' && req.method === 'POST') {
+    if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    readJsonBody(req, async (b) => {
+      const MAX = Number(process.env.BIO_URL_INGEST_MAX) || 20000;
+      const raw = Array.isArray(b && b.urls) ? b.urls : [];
+      // Accept anything http(s); the drain's own filter decides what is worth fetching, and the
+      // per-URL crawl_log stops a repeat. Validating harder here would just be another gate.
+      const urls = [...new Set(raw.map((u) => String(u || '').trim())
+        .filter((u) => /^https?:\/\/[^\s/]+\.[^\s]/i.test(u)))].slice(0, MAX);
+      if (!urls.length) return sendJson(res, { queued: 0, submitted: raw.length, note: 'No usable http(s) URLs.' });
+      const label = b && b.label ? String(b.label).slice(0, 120) : 'Extension';
+      try {
+        // Name the list after WHERE IT CAME FROM: the page the extension scraped, or the Google Maps
+        // export the parse came from. `sourceUrl`/`source` are explicit; the label is the fallback for
+        // older callers that only ever sent one string.
+        const pageUrl = String((b && b.sourceUrl) || '').trim()
+          || ((label.match(/^(?:Extension|Chrome extension):\s*(\S+)/i) || [])[1] || '');
+        const source = String((b && b.source) || '').trim() || (/^extension/i.test(label) ? 'Chrome extension' : 'API');
+        // An extension push is a person standing on a page expecting the contact to appear, so it goes
+        // in at the FRONT of the crawl queue. A Maps export or a sitemap sweep is bulk: hundreds of
+        // thousands of URLs that nobody is watching, and those stay strictly FIFO at priority 0. Before
+        // this, the two were the same queue in arrival order, so one Maps run put every later extension
+        // push behind 863,965 URLs. An explicit `priority` in the body wins, so another caller can ask
+        // for the same treatment without pretending to be the extension.
+        //
+        // The test is for BULK, not for the extension, and that direction is deliberate. This endpoint
+        // is the interactive door — its own comment above says so — and the only bulk callers that use
+        // it are the Maps scripts, which label themselves 'Google Maps' explicitly. Testing for
+        // /extension/ instead would mean any wording the extension sends that I guessed wrong silently
+        // lands at the back of the queue, which is the exact failure this change exists to remove.
+        // Bulk producers (the sitemap monitor, cc-bio-discover) don't come through here at all; they
+        // write to the queue prefix directly and stay at 0.
+        const extPrio = Number(process.env.BIO_URL_EXT_PRIORITY);
+        const prioOf = (v) => Math.max(0, Math.min(9, Math.trunc(Number(v) || 0)));
+        // Match on the DESCRIPTOR, never on the page URL glued after it. The extension sends
+        // `label` as 'Extension: <the page you scraped>', so testing the whole string meant any
+        // scraped URL containing "sitemap", "bulk", "backfill" or "reprocess" demoted an interactive
+        // push to priority 0 -- the back of the bulk backlog this priority split exists to escape.
+        // Scraping bios off a page with "sitemap" in its path is routine here, so this fired in
+        // ordinary use and was indistinguishable from a silent gate. Both bulk callers (gm-run.js,
+        // gm-bio-scan.js) set `source` explicitly, and the label's own prefix before the first colon
+        // still catches an older caller that only ever sent the one string.
+        const labelTag = label.split(':')[0];
+        const isBulk = /google\s*maps|sitemap|bulk|backfill|reprocess/i.test(source + ' ' + labelTag);
+        const priority = (b && b.priority != null) ? prioOf(b.priority)
+          : (isBulk ? 0 : (Number.isFinite(extPrio) ? prioOf(extPrio) : 9));
+        const put = await queueBioUrls(urls, label, priority);
+        const key = put && put.key ? put.key : '';
+        // A continuation of a list already recorded (a big push split across requests) adds to that
+        // receipt; anything else starts a new one.
+        const continueId = String((b && b.listId) || '').trim();
+        const listId = (continueId && appendBioUrlList(continueId, urls.length, key, urls))
+          ? continueId
+          : recordBioUrlList({ name: pageUrl || label, count: urls.length, key, source, priority, urls });
+        sendJson(res, { queued: urls.length, submitted: raw.length,
+          duplicatesDropped: raw.length - urls.length,
+          capped: raw.length > MAX ? MAX : 0,
+          listId, priority,
+          note: priority > 0
+            ? `Queued at the FRONT of the crawl queue (priority ${priority}) — taken before any bulk backlog, and a URL already queued is moved up rather than skipped.`
+            : 'Queued. The scheduled bio drain picks these up; already-known URLs are skipped there.' });
+      } catch (e) { jsonErr(res, 500, 'Queue write failed: ' + e.message); }
+    });
+    return;
+  }
+
   if (url.pathname === '/api/vcards/ingest' && req.method === 'POST') {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     readJsonBody(req, async (b) => {
@@ -1956,90 +2374,135 @@ const server = http.createServer(async (req, res) => {
   // a LIST of the key names — no GETs, no bytes transferred, safe to poll from the UI.
   if (url.pathname === '/api/backlog' && req.method === 'GET') {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
+    // What is ACTUALLY waiting, measured now — not a cached snapshot.
+    //
+    // This panel used to serve `bio_backlog_count`, a figure computed out of band because answering
+    // "what is left?" meant reading every queue object and have-checking ~6.8M URLs: 844 seconds, its own
+    // 16GB machine. When that job was switched off the panel froze, and it spent 54 days reporting
+    // 2,152,049 URLs and "idle" while the pipeline underneath had drained, changed shape and moved on.
+    //
+    // It is cheap now because the work has a cursor and a table. Three honest stages, each a list or an
+    // indexed count, all computed per request so the number cannot go stale again:
+    //   awaitingResolve  — queued URLs bio-feed has not reached yet (newer than its cursor)
+    //   awaitingExtract  — resolved rows in crawl_queue that no worker has claimed
+    //   awaitingLive     — URLs Common Crawl lacks, waiting for the bio-live fleet
     try {
       const { S3Client, ListObjectsV2Command } = require('@aws-sdk/client-s3');
       const region = process.env.AWS_REGION || 'us-east-1';
       const bucket = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${region}`;
       if (!_qs3) _qs3 = new S3Client({ region });
-      let token = null, allKeys = [], sizes = new Map();
-      do {
-        const r = await _qs3.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: MONITOR_QUEUE_PREFIX, ContinuationToken: token }));
-        for (const o of (r.Contents || [])) { allKeys.push(o.Key); sizes.set(o.Key, o.Size || 0); }
-        token = r.IsTruncated ? r.NextContinuationToken : null;
-      } while (token);
+      const cc = reader && reader.client;
 
-      // A LIST of this prefix is NOT the backlog. The IAM user has no s3:DeleteObject, so every object a
-      // run consumes stays in the listing forever and is skipped via the queue_consumed ledger instead.
-      // Counting the raw listing reported 10,398,933 URLs when 97,504 were actually unprocessed -- a
-      // number alarming enough to cast doubt on the whole pipeline. Report what is genuinely left.
-      const consumedSet = new Set();
-      try {
-        const cc = reader && reader.client;
-        if (cc && allKeys.length) {
-          for (let i = 0; i < allKeys.length; i += 1000) {
-            const r = await cc.mget({ index: process.env.QUEUE_CONSUMED_INDEX || 'queue_consumed',
-              body: { ids: allKeys.slice(i, i + 1000) }, _source: false });
-            for (const d of (((r.body || r).docs) || [])) if (d && d.found) consumedSet.add(d._id);
+      const cursorOf = async (id) => {
+        try { const g = await cc.get({ index: process.env.CC_CONFIG_INDEX || 'cc_config', id });
+              return ((g.body || g)._source || {}).cursor || ''; } catch (e) { return ''; }
+      };
+      // URL counts come from the filename suffix each producer writes (…-<n>.txt); no object is opened.
+      const countNewer = async (prefix, cursor) => {
+        let token = null, objects = 0, urls = 0, oldest = '', unnamed = 0, bytes = 0, consumed = 0;
+        do {
+          const r = await _qs3.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, ContinuationToken: token }));
+          for (const o of (r.Contents || [])) {
+            const iso = new Date(o.LastModified).toISOString();
+            // Objects at or below the cursor are DONE, not backlog. Counting them is what lets the panel
+            // say so out loud: the prefix is never deleted, so the raw object count reads as a vast
+            // backlog unless the finished share is stated beside it.
+            if (cursor && iso <= cursor) { consumed++; continue; }
+            objects++;
+            bytes += Number(o.Size) || 0;
+            const m = /-(\d+)\.txt$/.exec(o.Key || '');
+            if (m) urls += Number(m[1]); else unnamed++;
+            if (!oldest || iso < oldest) oldest = iso;
           }
-        }
-      } catch (e) { /* ledger absent -> treat everything as pending, which errs loud not quiet */ }
+          token = r.IsTruncated ? r.NextContinuationToken : null;
+        } while (token);
+        return { objects, urls, oldest, unnamed, bytes, consumed };
+      };
 
-      let objects = 0, bytes = 0, urls = 0, unnamed = 0, oldest = '', newest = '';
-      for (const key of allKeys) {
-        if (consumedSet.has(key)) continue;
-        objects++; bytes += sizes.get(key) || 0;
-        const m = /-(\d+)\.txt$/.exec(key || '');
-        if (m) urls += Number(m[1]); else unnamed++;
-        const k = (key || '').slice(MONITOR_QUEUE_PREFIX.length);
-        if (!oldest || k < oldest) oldest = k;
-        if (!newest || k > newest) newest = k;
-      }
-      // The headline is the MEASURED outstanding count, not the object arithmetic.
-      //
-      // Counting every URL in every not-yet-retired object reads 13,495,935 when the genuine remaining work
-      // is ~4,000,000: most of those URLs are individually known (a contact exists, or the crawl ledger says
-      // the page was fetched and had no person on it) while the OBJECT they sit in is not yet 100% done and
-      // is therefore still counted whole. A figure that overstates the work 3x is not progress reporting.
-      // This project has already been here once -- the counter showed 10,398,933 when 97,504 were left.
-      //
-      // The true number needs a per-URL check, which is minutes, so bio-backlog-count.js computes it out of
-      // band and caches it. Serve that, say when it was measured, and keep the raw arithmetic as secondary
-      // so the two can be compared rather than one quietly replacing the other.
-      await refreshDrainProbe();
-      let measured = null;
+      const [feedCur, liveCur] = await Promise.all([cursorOf('bio_feed_cursor'), cursorOf('bio_live_cursor')]);
+      const [feed, live] = await Promise.all([
+        countNewer(MONITOR_QUEUE_PREFIX, feedCur),
+        countNewer('bio-miss/', liveCur),
+      ]);
+
+      // crawl_queue: the resolved rows. Indexed, so this is milliseconds.
+      let pending = 0, claimed = 0, queueOk = false;
       try {
-        const g = await reader.client.get({ index: process.env.CC_CONFIG_INDEX || 'cc_config', id: 'bio_backlog_count' });
-        measured = (g.body || g)._source || null;
-      } catch (e) { /* not computed yet -> fall back to the arithmetic, clearly labelled */ }
+        if (db && db._pool) {
+          const r = await db._pool.query(
+            "SELECT count(*) FILTER (WHERE status='pending') p, count(*) FILTER (WHERE status='claimed') c FROM crawl_queue");
+          pending = Number(r.rows[0].p) || 0; claimed = Number(r.rows[0].c) || 0; queueOk = true;
+        }
+      } catch (e) { /* queue table unreachable -> report what we have, flagged */ }
 
-      // An oldest entry far behind the newest means the drain is not keeping up — surface the age rather
-      // than only the size, because a small queue that never empties is the worse failure.
-      const parseStamp = (k) => { const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})/.exec(k || ''); return m ? Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`) : 0; };
-      const oldestMs = parseStamp(oldest);
+      // Pending split by priority. With extension pushes jumping the queue, "1,200 pending" can mean
+      // 1,199 bulk rows plus one urgent row that goes next, or the reverse, and those are very different
+      // situations. Its own query and its own failure: the column does not exist on a pre-priority image.
+      let pendingByPriority = null;
+      try {
+        if (db && db._pool) {
+          const r = await db._pool.query(
+            "SELECT priority, count(*)::int n FROM crawl_queue WHERE status='pending' GROUP BY priority ORDER BY priority DESC");
+          pendingByPriority = r.rows.map((x) => ({ priority: Number(x.priority), n: Number(x.n) }));
+        }
+      } catch (e) { /* pre-priority image -> omit rather than invent a split */ }
+
+      // WHY nothing is moving -- not just how much is waiting.
+      //
+      // Every figure above was already measured per request and already honest, and it STILL left the
+      // operator guessing, because a stage can hold a healthy-looking count for days purely because a
+      // threshold has not been crossed, and nothing on screen admits the threshold exists. From the
+      // outside that is indistinguishable from a broken pipeline, so the panel could not be trusted even
+      // when it was telling the truth -- and an untrustworthy panel sends you hunting for a gate that
+      // isn't there while a real one hides in plain sight. A gate now states itself: which stage it
+      // holds, the number it is waiting for, how far off that is, and what overrides it.
+      const gates = [];
+      const liveMin = Number(process.env.BIO_LIVE_MIN_URLS) || 2000;
+      if (!MONITOR_QUEUE) {
+        gates.push({ stage: 'awaitingResolve', urls: feed.urls,
+          reason: 'MONITOR_QUEUE is off, so discovered URLs are neither pushed nor resolved' });
+      }
+      if (live.urls > 0 && live.urls < liveMin) {
+        gates.push({ stage: 'awaitingLive', urls: live.urls,
+          reason: `bio-live wakes a fleet only at ${liveMin.toLocaleString()} URLs`,
+          need: liveMin - live.urls,
+          override: 'a priority push from the Chrome extension launches at once, whatever the count' });
+      }
+      if (queueOk && pending > 0 && !claimed) {
+        gates.push({ stage: 'awaitingExtract', urls: pending,
+          reason: 'rows are pending but no worker holds any - the cq-live machines may be stopped' });
+      }
+      if (!queueOk) {
+        gates.push({ stage: 'awaitingExtract', urls: 0,
+          reason: 'crawl_queue is unreachable, so the extract figure is MISSING, not zero' });
+      }
+
+      const waiting = feed.urls + pending + live.urls;
+      const oldestIso = [feed.oldest, live.oldest].filter(Boolean).sort()[0] || '';
+      const oldestMs = oldestIso ? Date.parse(oldestIso) : 0;
+
       sendJson(res, {
-        // A queue counter has to answer "is this getting better or worse", not just "how big is it".
-        //
-        // A bare 2,168,551 reads identically whether the queue is draining, growing or frozen -- which is
-        // how a seven-hour drain outage went unnoticed, and why the number looked stuck when it was in fact
-        // being recomputed hourly and genuinely not moving. Direction, rate, when the last drain ran and
-        // whether one is running now are the things that make it judgeable without reading machine logs.
-        ...(measured ? backlogTrend(measured) : { trend: null }),
-        drainRunning: !!drainMachineLive,
-        objects,
-        urls: measured ? measured.urls_outstanding : urls,
-        urlsCounted: urls,
-        urlsUnique: measured ? measured.urls_unique : null,
-        urlsKnown: measured ? measured.urls_known : null,
-        measuredAt: measured ? measured.computed_at : null,
-        measuredSeconds: measured ? measured.seconds : null,
-        estimate: !measured,          // true = falling back to arithmetic, treat as an upper bound
-        bytes, unnamed,
-        consumed: consumedSet.size, listed: allKeys.length,
-        oldest: oldest ? oldest.slice(0, 19).replace(/-(\d{2})-(\d{2})-(\d{2})$/, ' $1:$2:$3') : null,
-        newest: newest ? newest.slice(0, 19).replace(/-(\d{2})-(\d{2})-(\d{2})$/, ' $1:$2:$3') : null,
+        urls: waiting,                       // headline: everything not yet extracted
+        awaitingResolve: feed.urls,          // queued, bio-feed has not reached it
+        awaitingExtract: pending,            // resolved, waiting for a worker
+        awaitingLive: live.urls,             // not in the archive, waiting for the live fleet
+        inFlight: claimed,                   // claimed by a worker right now
+        gates,                               // why a stage is held, in words, or [] when nothing is held
+        pendingByPriority,                   // null on a pre-priority image, not an empty split
+        objects: feed.objects + live.objects,
+        // The panel has always read these three and the server has never sent them, so the note rendered
+        // a literal "NaNMB" whenever a backlog existed, and the "already processed" reassurance never
+        // appeared at all. Both come free from the listing that just happened.
+        bytes: feed.bytes + live.bytes,
+        consumed: feed.consumed + live.consumed,
+        listed: feed.objects + live.objects + feed.consumed + live.consumed,
+        feedCursor: feedCur || null, liveCursor: liveCur || null,
+        queueOk,
+        oldest: oldestIso ? oldestIso.slice(0, 19).replace('T', ' ') : null,
         oldestAgeHours: oldestMs ? Math.round(((Date.now() - oldestMs) / 3600000) * 10) / 10 : null,
-        draining: bioEtlRunning,
-        lastDrain: BIO_ETL_LAST || null,
+        draining: !!claimed,
+        measuredAt: new Date().toISOString(),
+        estimate: false,
         queueEnabled: MONITOR_QUEUE, liveJobs: MONITOR_LIVE_JOBS,
       });
     } catch (e) { jsonErr(res, 500, e.message); }
@@ -2699,7 +3162,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // routes that target a single job: /api/jobs/:id , /api/jobs/:id/records , /api/jobs/:id/results.csv , /api/jobs/:id/resume
-  const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)(\/records|\/results\.csv|\/resume|\/stop|\/name)?$/);
+  const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)(\/records|\/results\.csv|\/resume|\/stop|\/name|\/merge)?$/);
   if (jobMatch) {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     const id = jobMatch[1];
@@ -2714,6 +3177,33 @@ const server = http.createServer(async (req, res) => {
     if (sub === '' && req.method === 'GET') { sendJson(res, jobSummary(job)); return; }
 
     if (sub === '' && req.method === 'DELETE') { deleteJob(id); sendJson(res, { deleted: true, id }); return; }
+
+    // Merge a job's records into the Master DB WITHOUT re-crawling it.
+    //
+    // Until now the merge existed only inside the completion path, so a job that stalled, was stopped,
+    // or had its machine restarted held its records in its own file with no way to get them out short
+    // of re-running the whole crawl. That is how 7,671 records sat unreachable while the Data Importer
+    // showed the job as finished work. Idempotent: upsertMany is email-keyed and score-gated, so
+    // running this on a job that already merged changes nothing.
+    if (sub === '/merge' && req.method === 'POST') {
+      const recs = jobRecords(job);
+      if (!recs.length) { sendJson(res, { merged: 0, note: 'This job holds no records.' }); return; }
+      const stamp = new Date().toISOString();
+      try {
+        const r = await db.upsertMany(recs);
+        job.merge = { at: stamp, processed: r.processed, added: r.added, changed: r.changed, partial: false, error: null };
+        if (!job._mergedRows) job._mergedRows = new Map();
+        for (const [k, rec] of job.recordsByEmail) job._mergedRows.set(k, rec);
+        persistJob(job);
+        console.log(`Central DB (manual): job ${id} merged ${r.processed} record(s), +${r.added} new`);
+        sendJson(res, { merged: r.processed, added: r.added, changed: r.changed, total: r.total, id });
+      } catch (e) {
+        job.merge = { ...(job.merge || { processed: 0, added: 0, changed: 0 }), at: stamp, partial: true, error: e.message || String(e) };
+        persistJob(job);
+        jsonErr(res, 500, 'Merge failed: ' + e.message);
+      }
+      return;
+    }
 
     if (sub === '/records' && req.method === 'GET') { sendJson(res, jobRecords(job)); return; }
 

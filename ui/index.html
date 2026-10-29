@@ -101,15 +101,17 @@
     <section class="jobs-panel backlog-panel" id="backlogPanel" hidden>
       <div class="jobs-header">
         <h2>Bio URL queue</h2>
-        <p class="jobs-hint" id="backlogHint">Discovered by the Sitemap Monitor, waiting to be extracted.</p>
+        <p class="jobs-hint" id="backlogHint">Measured live. Queued URLs are resolved against Common Crawl, extracted by the worker pool, and live-crawled when the archive lacks them.</p>
         <button id="drainButton" type="button" hidden>Drain now</button>
         <button id="refreshBacklogButton" type="button">Refresh</button>
       </div>
       <div class="backlog-stats">
         <div class="backlog-stat"><span class="backlog-num" id="backlogUrls">—</span><span class="backlog-lbl">URLs queued</span></div>
-        <div class="backlog-stat"><span class="backlog-num" id="backlogObjects">—</span><span class="backlog-lbl">batches</span></div>
+        <div class="backlog-stat"><span class="backlog-num" id="backlogResolve">—</span><span class="backlog-lbl">to resolve</span></div>
+        <div class="backlog-stat"><span class="backlog-num" id="backlogExtract">—</span><span class="backlog-lbl">to extract</span></div>
+        <div class="backlog-stat"><span class="backlog-num" id="backlogLive">—</span><span class="backlog-lbl">to live-crawl</span></div>
         <div class="backlog-stat"><span class="backlog-num" id="backlogAge">—</span><span class="backlog-lbl">oldest</span></div>
-        <div class="backlog-stat"><span class="backlog-num" id="backlogState">—</span><span class="backlog-lbl">drain</span></div>
+        <div class="backlog-stat"><span class="backlog-num" id="backlogState">—</span><span class="backlog-lbl">state</span></div>
       </div>
       <p class="backlog-note" id="backlogNote"></p>
     </section>
