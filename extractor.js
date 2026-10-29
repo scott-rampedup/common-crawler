@@ -131,6 +131,83 @@ const BIO_DIR_RAW = [
   "team-post","team-member-post","team-person","team_list","team_group","team-type","team-locations",
   "all-team","our-team-members","dipl-team-member","wd-team-member","amo-team","em_team","cpo_team",
   "ts-team","sh_team","wpm-team","team_mf","restly-team","wps-members",
+  // ---- Expanded people/company terminology from bio-terms-people-company.txt (2026-10-29) ----
+  // That file is 744 terms; 367 were already covered above, so these are the 355 genuinely new ones.
+  // NOTE: the .txt is now hand-maintained -- 359 of its terms are NOT in Directories.xlsx -- so
+  // re-running tmp-gen-terms.js would regenerate it from the sheet and DESTROY those 359.
+  //
+  // 22 terms from that file are deliberately NOT here. pathIdFromUrl matches ANY path segment,
+  // so a term that names an ordinary website section classifies the whole web as bios: with all
+  // 377 added, 10 of 10 plain company pages became BIO URLs (/about/our-history -> "About").
+  //     fa, lo  -- 2-char segment, collides with locale/asset paths
+  //     about, about+us, about-our-firm, about-the-chamber, about-us, about_us, aboutus, company, corporate,
+  //     our-company, our-firm, our-story, who-we-are, who-we-are.html  -- company page
+  //     investor, investors  -- investor relations
+  //     mortgage  -- product directory (see the note above)
+  //     homeloans, mortgage-loans, realestate  -- product page
+  "abogadas","accident-doctor","acupuncturist","advisor-bio","advisor-profile","advisor-profiles",
+  "aestheticians","agent-bio","agent-profile","agent_directory","agentdetail","agentdirectory","agentlocator",
+  "agentpages","agentsearch","allergist","alternative-medicine","anesthesiologist","archaeologist",
+  "architect","architectural-designer","attorney-bio","audiologist","audiologists","auditor","banker",
+  "behavior-analyst","bio-directory","biologist","bookkeeper","cardiologist","cardiovascular-surgeon",
+  "care-providers","chemist","chiropractor","chiropractors","civil-rights-attorney","clinician","columnist",
+  "concierge-doctors","concierge-physicians","cosmetic-surgeon","counselor","counselors","credit-counselor",
+  "dental-hygienist","dental-hygienists","dental-team","dentists","dermatologist","designer","designerd",
+  "designers","dietitian","dietitians","docbio","doctor-details","doctor-public-profile","doctor.aspx",
+  "doctors-and-care","doctors-and-departments","doctors-and-locations","doctors-departments",
+  "doctors-offices","doctors-staff","ear-nose-and-throat","editors","employees.aspx","endocrinologist",
+  "endodontist","endoscopist","estate-planner","exec-bio","exec-bios","exec-profile","exec-profiles","execs",
+  "executive-bio","executive-profile","expert-bio","expert-profile","eye-care-team","eye-doctor",
+  "eye-doctors","eyedoctors","faculty-and-staff-bios","faculty-bio","faculty-bios","faculty-profile",
+  "faculty-profiles","faculty-research","faculty-search","facultydirectory","fad","family-counselor",
+  "family-practicioner","fertility-care-team","fertility-doctors","financial-advisors",
+  "financial-investment-and-retirement-managers","find-a-community-provider","find-a-doctor-basic-profile",
+  "find-a-doctor-or-provider","find-a-doctor-profile","find-a-doctor.html","find-a-doctor~details.aspx",
+  "find-a-financial-advisor","find-a-physician","find-a-provider~details.aspx","find-clinician",
+  "find-doctor-provider","find-faculty","find-medical-providers","find-physician","find-provider",
+  "find-providers","findagent","findaprovider","findcare","finddoctor","findmyamgdoctor","fitness-trainer",
+  "gastroenterologist","genealogists","geneticist","geologist","geologists","gerontologist",
+  "graphic-designer","gynecologist","health-coach","health-consultant","hepatologist",
+  "home-health-care-professional","home-inspector","homelendingadvisor","hospitalist","immunodermatologist",
+  "infectious-disease-specialist","interior-designer","internal-medicine","investment-manager","ir-contact",
+  "lawyer-bio","lawyer-bios","lawyer-profile","lawyer-profiles","leadership-bio","leadership-profile",
+  "leadership-profiles","leadership.html","lender","licensee","loan-advisor","loan-consultant",
+  "loan-consultants","loan-expert","loan-officer-directory","loan-originators","loan-provider",
+  "loan-providers","loan_officer","loan_officers","loanofficer","local-agent","local-agents","local-experts",
+  "local-health-insurance-agent","management-bio","management-bios","management-profiles","managers",
+  "massage-therapist","massage-therapists","mc_bios","mechanical-engineer","media-contact","mediator",
+  "medical-provider","medical-providers","medical-staff","medical-team","medicareagent","meditatior",
+  "meditatiors","meet-our-attorneys","meet-our-care-team","meet-our-oral-surgeons","meet-our-team.aspx",
+  "meet-the-doctors","meet-the-team.html","mental-health-practicioner","midwife","midwives","mortgage-broker",
+  "mortgage-brokers","mortgage-lender","mortgage-lenders","mortgage-loan-officer","mortgage-loan-officers",
+  "nephrologist","neurologist","neuropathologist","neurosurgeon","neurosurgeons","neurotologist","nurse",
+  "nurse-practitioner","nurse-practitioners","nurse-practitioners.html","nurses","nutritionist","obgyn",
+  "obstetrician","oncologist","oncologists","ophthalmologist","ophthalmologist-team","ophthalmologists",
+  "optometrist","optometrists","oral-surgeon","originators","orthodontist","orthodontists","orthopedist",
+  "osteopathic-physician","otologist","our-care-providers","our-dentists","our-doctors","our-doctorsstaff",
+  "our-eye-care-team","our-eye-doctors","our-faculty","our-nurse-practitioners","our-optometric-doctors",
+  "our-people.php","our-physicians-staff","our-realtors","our-team.asp","our-team.htm","our-team.html",
+  "our_doctors","our_providers","ourdoctors","paralegal","paralegals","pediatric-cardiology",
+  "pediatric-dentist","pediatric-nephrology","pediatric-surgery","pediatrician","people-and-locations",
+  "people-bio","people-bios","periodontist","phlebologist","photographers","physician-assistant",
+  "physician-clinics","physician-locator","physician-profile.aspx","physician-recruitment",
+  "physician_directory","physicians-1","physicians-and-medical-staff","physicians-and-providers",
+  "physicians-and-staff","physicians-by-specialty","physicianslocations","plastic-surgeon","podiatrist",
+  "press-contact","preventive-medicine","proctologist","professional-bio","professional-profile",
+  "professional-staff","professor","professor-profiles","professors","profile.aspx","prosthodontist",
+  "provider-detail","provider-details","provider-profile","provider-profiles","provider_detail",
+  "providerdetail","providerdirectory","providerinfo","providers-and-staff","providers-offices",
+  "providersearch","psychiatrist","psychiatrists","psychoanalyst","psychologist","psychologists",
+  "psychotherapist","pulmonologist","radiologist","radiologists","real-estate-broker","real-estate-brokers",
+  "realestateagents","registered-dietician","registered-nurse","registered-nurse-practicioner",
+  "registered-nurse-practicioners","registered-nurses","rehabilitation-therapist","reporter","reporters",
+  "retina-specialist","retina-specialists","retina-specialists-doctors","retirement-specialist",
+  "rheumatologist","sleep-specialist","sophrologist","specialist","speech-language-pathologist",
+  "speech-pathologist","speech-therapist","spine-surgeon","sports-psychologist","staff.htm","staff.html",
+  "staff_member","stock-brokers","structural-engineer","surgeon","surgeons","tax-pros","teacher",
+  "teacher-and-faculty","teacher-and-staff","teacher-faculty","teacher-staff","team#","team.asp","team.html",
+  "team.php","team_bio","therapist","therapists","toxicologist","uha-doctors","urologist","urologists",
+  "veterinarian","wealth-manager","wealth-managers",
 ];
 const BIO_DIRS = new Set(BIO_DIR_RAW.map((s) => normalizeForMatching(s)).filter(Boolean));
 
