@@ -37,6 +37,33 @@ function pgSafe(v) {
   return v.replace(/\x00/g, '')
           .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
 }
+// JSON for a jsonb column, with the characters jsonb refuses taken out FIRST.
+//
+// JSON.stringify() of a record holding a NUL emits the literal escape \u0000, and Postgres jsonb
+// rejects that outright: "unsupported Unicode escape sequence". It aborts the whole INSERT, so one
+// poisoned page killed a 200-row batch and parked all 200 URLs in 'error' -- 472 of them, all with the
+// same message. pgSafe already strips exactly these characters for the text columns; the spool payload
+// was the one value that skipped it, because it is built by stringifying the raw record.
+function jsonSafe(rec) {
+  // Sanitise the VALUES, then serialise once. The previous version stringified first and then cut
+  // the \u0000 escape out of the resulting text, which could leave the surrounding escaping broken
+  // ("invalid input syntax for type json" on 79 rows). pgSafe already strips exactly the characters
+  // Postgres jsonb refuses; applying it before JSON.stringify means the output cannot contain them,
+  // so no post-processing is needed and none can corrupt the document.
+  const seen = new WeakSet();
+  const walk = (v) => {
+    if (typeof v === "string") return pgSafe(v);
+    if (v === null || typeof v !== "object") return v;
+    if (seen.has(v)) return null;            // a cycle would otherwise hang JSON.stringify
+    seen.add(v);
+    if (Array.isArray(v)) return v.map(walk);
+    const out = {};
+    for (const k in v) out[pgSafe(k)] = walk(v[k]);
+    return out;
+  };
+  return JSON.stringify(walk(rec));
+}
+
 const COLS = FIELDS.map(colName);
 const FIELD_BY_COL = Object.fromEntries(FIELDS.map((f) => [colName(f), f]));
 const SORT_COLS = new Set([...COLS, 'domain']);
@@ -167,17 +194,29 @@ async function makeDb(opts = {}) {
   async function upsertMany(records) {
     const byEmail = new Map();
     const sightings = [];                      // every record, BEFORE the dedupe below discards them
+    // Count what this call THROWS AWAY, and from where. Identity here is the email address, so a bio
+    // page that published a name, a title and no address produces a record that dies at rowValues()
+    // and leaves no trace in any table -- after which every component reports success for a push that
+    // stored nobody. Returning the number is what lets a caller say "19 found, 19 discarded, no email
+    // address" instead of "0 people" with no reason attached.
+    let noEmail = 0;
+    const noEmailDomains = new Map();
     for (const r of (records || [])) {
       normalizeContact(r);
       const v = rowValues(r);
-      if (!v) continue;
+      if (!v) {
+        noEmail++;
+        const d = rootDomain(r['Web Source URL']) || '(unknown)';
+        noEmailDomains.set(d, (noEmailDomains.get(d) || 0) + 1);
+        continue;
+      }
       // Spool the sighting first. This has to happen HERE, ahead of the byEmail Map, because the
       // Map is itself a loss point: an address found on three pages in one batch keeps only the
       // highest-scoring row and the other two never reach SQL at all.
       if (SPOOL_SIGHTINGS) {
         sightings.push([v[0], r['Web Source URL'] || null, r['Time Stamp'] || null,
                         r['Source'] || null, rootDomain(r['Web Source URL']) || null,
-                        JSON.stringify(r)]);
+                        jsonSafe(r)]);
       }
       const prev = byEmail.get(v[0]);
       const sIdx = INSERT_COLS.indexOf('score');
@@ -187,18 +226,34 @@ async function makeDb(opts = {}) {
     // Without this, concurrent upserts touching overlapping emails deadlock — a storm once the
     // S3-direct fetch made writes fast + near-simultaneous across the 12-region fleet.
     const rows = [...byEmail.values()].sort((a, b) => { const x = String(a[0]), y = String(b[0]); return x < y ? -1 : x > y ? 1 : 0; });
-    if (!rows.length) return { processed: 0, added: 0, total: await countApprox() };
+    const noEmailTop = [...noEmailDomains.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5)
+      .map(([domain, count]) => ({ domain, count }));
+    if (!rows.length) return { processed: 0, added: 0, noEmail, noEmailTop, total: await countApprox() };
 
     const colList = INSERT_COLS.map((c) => `"${c}"`).join(', ');
     const setList = INSERT_COLS.filter((c) => c !== 'email').map((c) => `"${c}" = EXCLUDED."${c}"`).join(', ');
+    // Only write a row that ACTUALLY DIFFERS.
+    //
+    // This upsert fired whenever EXCLUDED.score >= contacts.score, and a re-imported row carries an EQUAL
+    // score, so '>=' was always true: every re-import rewrote every row and stamped a fresh updated_at on
+    // all of them. The Google Sheet sync re-imports the whole sheet on a timer AND 30 seconds after every
+    // app restart, so ~32,000 contacts got a new "Last Updated" several times a day without one field
+    // changing. Two visible consequences: the column means "last touched" rather than "last changed", and
+    // since the Contact Crawler sorts updated_at DESC by default, whichever batch the importer wrote last
+    // (ampersandcapital.com) sat permanently at the top of the view, burying fresh crawl results.
+    //
+    // updated_at is excluded from the comparison for the obvious reason: it is the thing being decided.
+    const CMP_COLS = INSERT_COLS.filter((c) => c !== 'email' && c !== 'updated_at');
+    const cmpOld = CMP_COLS.map((c) => `contacts."${c}"`).join(', ');
+    const cmpNew = CMP_COLS.map((c) => `EXCLUDED."${c}"`).join(', ');
     const perRow = INSERT_COLS.length;
     const maxRows = Math.max(1, Math.floor(60000 / perRow));   // stay under 65535 params
     const client = await pool.connect();
-    let added = 0, processed = 0;
+    let added = 0, processed = 0, changed = 0;
     try {
       for (let attempt = 1; ; attempt++) {
         try {
-          added = 0; processed = 0;
+          added = 0; processed = 0; changed = 0;
           await client.query('BEGIN');
           for (let i = 0; i < rows.length; i += maxRows) {
             const chunk = rows.slice(i, i + maxRows);
@@ -208,10 +263,15 @@ async function makeDb(opts = {}) {
               return '(' + ph.join(', ') + ')';
             });
             const sql = `INSERT INTO contacts (${colList}) VALUES ${tuples.join(', ')}
-              ON CONFLICT (email) DO UPDATE SET ${setList} WHERE EXCLUDED.score >= contacts.score
+              ON CONFLICT (email) DO UPDATE SET ${setList}
+                WHERE EXCLUDED.score >= contacts.score
+                  AND (${cmpOld}) IS DISTINCT FROM (${cmpNew})
               RETURNING (xmax = 0) AS inserted`;
             const res = await client.query(sql, values);
             processed += chunk.length;
+            // RETURNING only yields rows the statement actually wrote, so this counts real changes.
+            // An unchanged re-import now reports changed=0 instead of silently rewriting the table.
+            changed += res.rows.length;
             for (const r of res.rows) if (r.inserted) added++;
           }
           // Append every sighting in the SAME transaction as the contacts write, so the two can
@@ -241,7 +301,7 @@ async function makeDb(opts = {}) {
         }
       }
     } finally { client.release(); }
-    return { processed, added, total: await countApprox() };
+    return { processed, added, changed, noEmail, noEmailTop, total: await countApprox() };
   }
 
   // Exact COUNT(*) over a multi-million-row table is a full scan on EVERY page load — the main
@@ -457,7 +517,12 @@ async function makeDb(opts = {}) {
     return { scanned: rows.length, fixed, unparsed, samples };
   }
 
-  console.log(`Central DB (Postgres): ${(await count()).toLocaleString()} contact(s)`);
+  // Approximate, deliberately. This banner used the EXACT count, which is a full scan of a 4.5M-row table
+  // -- the very thing the comment on countApprox() above says melted the DB. Because makeDb() is awaited
+  // before ui-server starts listening, that scan sits directly in the boot path: with the worker fleet
+  // saturating disk IO the COUNT never returned, the health check reported "gone", and the app was down
+  // 17 minutes. A startup line that prints a row count must never be able to prevent startup.
+  console.log(`Central DB (Postgres): ~${(await countApprox()).toLocaleString()} contact(s) (planner estimate)`);
   return { upsertMany, query, each, stats, count, facets, getByEmail, updateRecord, deleteByEmail, deleteByDomain,
     domainStats, existingUrls, fixRemaxLocations, backfillLocations, updatePositionByPrefix, bulkSetPosition, fixAngola,
     putForce, sampleProfessionalEmails, _pool: pool, close: () => pool.end() };
