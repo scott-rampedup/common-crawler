@@ -50,15 +50,27 @@ function _getJsonCC(u, timeoutMs = 8000){
     req.on("timeout", () => { req.destroy(); resolve(null); });
   });
 }
+// Resolves through cc-athena-miner.latestCrawls(), which lists the index-table partitions in
+// s3://commoncrawl/ and only falls back to collinfo.json. This used to call collinfo.json directly, and
+// index.commoncrawl.org REFUSES CONNECTIONS FROM FLY (`ECONNREFUSED 54.237.141.66:443`) -- so in
+// production this lookup always failed and left CRAWL on the literal below, which is CC-MAIN-2026-25:
+// the OLDEST of the four recent corpora, not the newest. Observed in the boot log as
+// "latest-corpus lookup failed; using CC-MAIN-2026-25". S3 is reachable and answers in ~200ms.
 async function resolveLatestCrawl(){
   if(process.env.CC_CRAWL){ CRAWL = process.env.CC_CRAWL; return CRAWL; }      // explicit pin
-  const info = await _getJsonCC(INDEX + "/collinfo.json");
-  const latest = Array.isArray(info) && info[0] && info[0].id;
+  let latest = null;
+  try {
+    const ids = await require("./cc-athena-miner").latestCrawls(1, []);
+    latest = ids && ids[0];
+  } catch (e) {
+    console.error(`Common Crawl: corpus resolve threw (${e.message})`);
+  }
   if(typeof latest === "string" && /^CC-MAIN-\d{4}-\d+$/.test(latest)){
     if(latest !== CRAWL) console.log(`Common Crawl: using latest corpus ${latest} (was ${CRAWL}).`);
     CRAWL = latest;
   } else {
-    console.log(`Common Crawl: latest-corpus lookup failed; using ${CRAWL}.`);
+    // Loud, because the consequence is silent staleness: every resolve runs against an old archive.
+    console.error(`Common Crawl: latest-corpus lookup FAILED — staying on ${CRAWL}, which may be stale.`);
   }
   return CRAWL;
 }

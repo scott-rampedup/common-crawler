@@ -265,20 +265,76 @@ function latestCrawl(fallback = "CC-MAIN-2026-25") {
   });
 }
 
-// The latest N CC corpus ids (collinfo.json is newest-first) — for scanning several recent crawls when
-// resolving a URL list (a bio page may only be in an older crawl).
-function latestCrawls(n = 1, fallback = ["CC-MAIN-2026-25"]) {
-  return new Promise((resolve) => {
+// CC-MAIN-YYYY-NN sorts correctly as (year, week), not as a string.
+const crawlRank = (id) => { const m = /^CC-MAIN-(\d{4})-(\d+)$/.exec(id); return m ? Number(m[1]) * 100 + Number(m[2]) : -1; };
+
+// Primary source for "which corpora exist": the S3 index-table partitions themselves.
+//
+// This used to fetch https://index.commoncrawl.org/collinfo.json, which CANNOT BE REACHED FROM FLY --
+// `connect ECONNREFUSED 54.237.141.66:443` from a machine, HTTP 200 from a workstation. The old code
+// caught that and returned the hardcoded fallback without logging, so "resolve the corpora at run time"
+// silently meant "use the list someone typed in 2026" forever, and the August and September archives went
+// unscanned for weeks with no signal.
+//
+// Listing s3://commoncrawl/cc-index/table/cc-main/warc/ is reachable (the same bucket the WARC reads use),
+// takes ~200ms, and is strictly more truthful: a crawl shows up here only once the partition Athena has to
+// query actually exists. collinfo.json can advertise a crawl before its index table is queryable.
+async function crawlsFromS3(n) {
+  const { S3Client, ListObjectsV2Command } = require("@aws-sdk/client-s3");
+  const s3 = new S3Client({ region: REGION });
+  const ids = [];
+  let tok = null;
+  do {
+    const r = await s3.send(new ListObjectsV2Command({
+      Bucket: "commoncrawl", Prefix: "cc-index/table/cc-main/warc/", Delimiter: "/", ContinuationToken: tok }));
+    for (const p of (r.CommonPrefixes || [])) {
+      const m = /crawl=(CC-MAIN-\d{4}-\d+)\//.exec(p.Prefix || "");
+      if (m) ids.push(m[1]);
+    }
+    tok = r.IsTruncated ? r.NextContinuationToken : null;
+  } while (tok);
+  ids.sort((a, b) => crawlRank(b) - crawlRank(a));          // newest first
+  return ids.slice(0, Math.max(1, n));
+}
+
+// Secondary: the published collection list. Kept because it works from a workstation (and from anywhere
+// without AWS credentials), which is where this is run by hand.
+function crawlsFromHttp(n) {
+  return new Promise((resolve, reject) => {
     const req = https.get("https://index.commoncrawl.org/collinfo.json", { headers: { "User-Agent": "cc-athena-miner" }, timeout: 8000 }, (res) => {
       let b = ""; res.on("data", (d) => b += d); res.on("end", () => {
         try {
-          const ids = JSON.parse(b).map((x) => x && x.id).filter((id) => /^CC-MAIN-\d{4}-\d+$/.test(id)).slice(0, Math.max(1, n));
-          resolve(ids.length ? ids : fallback);
-        } catch { resolve(fallback); }
+          const ids = JSON.parse(b).map((x) => x && x.id).filter((id) => /^CC-MAIN-\d{4}-\d+$/.test(id));
+          ids.sort((a, c) => crawlRank(c) - crawlRank(a));
+          if (!ids.length) reject(new Error("collinfo.json had no usable ids"));
+          else resolve(ids.slice(0, Math.max(1, n)));
+        } catch (e) { reject(e); }
       });
     });
-    req.on("error", () => resolve(fallback)); req.on("timeout", () => { req.destroy(); resolve(fallback); });
+    req.on("error", reject);
+    req.on("timeout", () => { req.destroy(new Error("collinfo.json timed out")); });
   });
+}
+
+// The latest N CC corpus ids, newest-first — for scanning several recent crawls when resolving a URL list
+// (a bio page may only be in an older crawl). Tries S3, then HTTP, then the caller's fallback. A fallback
+// is a DEGRADED result and says so at error level: silence here is what hid the missing corpora.
+async function latestCrawls(n = 1, fallback = ["CC-MAIN-2026-25"]) {
+  try {
+    const ids = await crawlsFromS3(n);
+    if (ids.length) return ids;
+    console.error("[latestCrawls] S3 partition listing returned nothing — trying collinfo.json");
+  } catch (e) {
+    console.error(`[latestCrawls] S3 partition listing FAILED (${e.message}) — trying collinfo.json`);
+  }
+  try {
+    return await crawlsFromHttp(n);
+  } catch (e) {
+    console.error(`[latestCrawls] collinfo.json FAILED too (${e.message})`);
+    console.error(`[latestCrawls] DEGRADED: using the hardcoded fallback [${fallback.join(", ")}] — this list does`
+      + " not update, so a newly published corpus will be skipped until someone edits it.");
+    return fallback;
+  }
 }
 
 async function ensureBucket(A, bucket) {
@@ -288,8 +344,17 @@ async function ensureBucket(A, bucket) {
   console.error("created Athena results bucket:", bucket);
 }
 
-// Run a query; resolve { id, scanned, output } when SUCCEEDED, throw on FAILED/CANCELLED.
-async function runAthena(A, sql, output, label) {
+// Athena reports a transient S3 condition as a FAILED QUERY, not as an SDK error: a throttled partition
+// scan arrives here as State=FAILED with StateChangeReason "HIVE_S3_THROTTLING: S3 throttling". With no
+// retry that one hiccup threw, cc-athena-miner exited 1, and the bio drain above it lost the whole run --
+// 147 seconds in, after the keys were already uploaded and the partitions already built. Re-running by
+// hand is not a protocol, so the retryable reasons are retried here where they happen.
+const ATHENA_RETRYABLE = /THROTTL|SlowDown|TOO_MANY_REQUESTS|INTERNAL_ERROR|InternalError|exhausted resources|CANNOT_OPEN_SPLIT/i;
+const ATHENA_TRIES = Math.max(1, Number(process.env.ATHENA_TRIES) || 6);
+
+// Run a query; resolve { id, scanned, output } when SUCCEEDED, throw on a non-retryable FAILED/CANCELLED.
+async function runAthena(A, sql, output, label, attempt) {
+  attempt = attempt || 0;
   const start = await A.athena.send(new A.StartQueryExecutionCommand({
     QueryString: sql, QueryExecutionContext: { Database: DB }, ResultConfiguration: { OutputLocation: output }, WorkGroup: WORKGROUP }));
   const id = start.QueryExecutionId;
@@ -302,7 +367,17 @@ async function runAthena(A, sql, output, label) {
       if (label) console.error(`  [${label}] ok — scanned ${(scanned / 1048576).toFixed(0)} MB (~$${(scanned / 1e12 * 5).toFixed(4)})`);
       return { id, scanned, output: q.QueryExecution.ResultConfiguration.OutputLocation };
     }
-    if (st === "FAILED" || st === "CANCELLED") throw new Error(`[${label || "query"}] ${st}: ${q.QueryExecution.Status.StateChangeReason || ""}`);
+    if (st === "FAILED" || st === "CANCELLED") {
+      const why = q.QueryExecution.Status.StateChangeReason || "";
+      if (ATHENA_RETRYABLE.test(why) && attempt + 1 < ATHENA_TRIES) {
+        const wait = Math.min(60000, 4000 * 2 ** attempt);
+        console.error(`  [${label || "query"}] ${st}: ${why.slice(0, 140)}`);
+        console.error(`  [${label || "query"}] retryable — attempt ${attempt + 2}/${ATHENA_TRIES} in ${Math.round(wait / 1000)}s`);
+        await sleep(wait);
+        return runAthena(A, sql, output, label, attempt + 1);
+      }
+      throw new Error(`[${label || "query"}] ${st}: ${why}`);
+    }
   }
 }
 
