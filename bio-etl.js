@@ -117,16 +117,48 @@ async function markConsumed(keys) {
   try { await c.indices.refresh({ index: CONSUMED_INDEX }); } catch (e) { /* best-effort */ }
   return n;
 }
+// A retirement EXPIRES, because the thing it summarises expires.
+//
+// This ledger caches the claim "every URL in this object is already known". That claim is evaluated with
+// crawl-ledger's skipSet, which forgets an attempt after LEDGER_RETRY_DAYS (default 30) -- staff pages
+// change, so a page checked two months ago is worth checking again. The cache had no expiry at all, so it
+// outlived its own contents: once an object was retired it could never be re-read, even after every URL
+// inside it had become retry-eligible again.
+//
+// Measured cost of that mismatch: all 13,174 objects were retired in one write at 2026-08-27T03:16:42Z.
+// Sampling 20 of them at random 47 days later -- 3,000 URLs -- found 98.2% retry-eligible, 46.9% with no
+// ledger entry whatsoever (never attempted), and 0% with a contact on that URL. Roughly 6.8M unique URLs
+// were unreachable, not because the work was done but because the bookkeeping said so.
+//
+// So: honour the retirement only while the underlying attempts are still fresh. After that the object is
+// re-read and have-checked per URL, which is cheap (these are text files) and self-correcting.
+const CONSUMED_TTL_DAYS = Number(process.env.QUEUE_CONSUMED_TTL_DAYS)
+  || Number(process.env.LEDGER_RETRY_DAYS) || 30;
+
 async function alreadyConsumed(keys) {
   const done = new Set();
   if (!keys.length) return done;
+  const cutoff = Date.now() - CONSUMED_TTL_DAYS * 86400000;
+  let expired = 0, undated = 0;
   try {
     await ensureConsumedIndex();
     const c = osClient();
     for (let i = 0; i < keys.length; i += 1000) {
       const chunk = keys.slice(i, i + 1000);
-      const r = await c.mget({ index: CONSUMED_INDEX, body: { ids: chunk }, _source: false });
-      for (const d of (((r.body || r).docs) || [])) if (d && d.found) done.add(d._id);
+      const r = await c.mget({ index: CONSUMED_INDEX, body: { ids: chunk }, _source: ['consumed_at'] });
+      for (const d of (((r.body || r).docs) || [])) {
+        if (!d || !d.found) continue;
+        const at = Date.parse(((d._source || {}).consumed_at) || '') || 0;
+        // An undatable retirement is not a trustworthy one — re-check rather than honour it forever.
+        if (!at) { undated++; continue; }
+        if (at < cutoff) { expired++; continue; }
+        done.add(d._id);
+      }
+    }
+    if (expired || undated) {
+      console.error(`  ${(expired + undated).toLocaleString()} retirement(s) have lapsed`
+        + ` (${expired.toLocaleString()} older than ${CONSUMED_TTL_DAYS}d`
+        + `${undated ? `, ${undated.toLocaleString()} undated` : ''}) — those objects will be re-checked`);
     }
   } catch (e) { console.error('  (consumed-key ledger unavailable: ' + e.message + ')'); }
   return done;
