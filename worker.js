@@ -120,20 +120,32 @@ function makeWorker(deps = {}) {
       if (analyzePhones) recs = analyzePhones(recs) || recs;   // dedupe Phone 2, relabel Direct->Office
       if (geocodeRecords) await geocodeRecords(recs);          // fill Phone Location (City, Region, Country)
     }
-    let added = 0;
-    if (recs.length) { const u = await dbpg.upsertMany(recs); added = u.added; }
-    // mark every successfully-fetched URL done (records=1 if it yielded a contact, else 0);
-    // retry the ones that threw.
-    const done = results.filter((r) => r.ok).map((r) => ({ url: r.url, records: r.rec ? 1 : 0 }));
+    let added = 0, noEmail = 0, noEmailTop = [];
+    if (recs.length) {
+      const u = await dbpg.upsertMany(recs);
+      added = u.added; noEmail = u.noEmail || 0; noEmailTop = u.noEmailTop || [];
+    }
+    // Mark every successfully-fetched URL done. `records` meant "extraction returned an object", which
+    // is NOT the same as a stored contact: a bio with no email address counted 1 here and nothing
+    // anywhere else, which is how a push shows 23 crawled, 9 with records and 0 people. Keep `records`
+    // meaning "a person was found on the page" and record the discard in its own column, so the two
+    // can be compared instead of one standing in for the other.
+    // Read AFTER modelling, which fills addresses in place on these same objects.
+    const noEmailUrl = (rec) => (rec && !String(rec['Email Address'] || '').trim()) ? 1 : 0;
+    const done = results.filter((r) => r.ok).map((r) => ({ url: r.url, records: r.rec ? 1 : 0, noEmail: noEmailUrl(r.rec) }));
     await queue.markDoneMany(done);
     const failed = results.filter((r) => !r.ok);
     for (const r of failed) await queue.markError(r.url, r.error);
-    return { claimed: batch.length, extracted: recs.length, added, errors: failed.length };
+    if (noEmail) {
+      const where = noEmailTop.map((d) => `${d.domain} x${d.count}`).join(', ');
+      log(`  ${noEmail} of ${recs.length} extracted record(s) had NO email address and were not stored${where ? ' -- ' + where : ''}`);
+    }
+    return { claimed: batch.length, extracted: recs.length, added, noEmail, errors: failed.length };
   }
 
   // Claim → process loop. `drain` exits when the queue empties; otherwise idles with backoff.
   async function runLoop({ drain = false, signal = null } = {}) {
-    const totals = { batches: 0, claimed: 0, extracted: 0, added: 0, errors: 0 };
+    const totals = { batches: 0, claimed: 0, extracted: 0, added: 0, noEmail: 0, errors: 0 };
     let emptyPolls = 0;
     const stopped = () => signal && signal.stopped;
     while (!stopped()) {
@@ -157,8 +169,8 @@ function makeWorker(deps = {}) {
         continue;
       }
       totals.batches++; totals.claimed += r.claimed; totals.extracted += r.extracted;
-      totals.added += r.added; totals.errors += r.errors;
-      log(`batch #${totals.batches}: claimed ${r.claimed}, extracted ${r.extracted}, +${r.added} new, ${r.errors} err  (cum +${totals.added})`);
+      totals.added += r.added; totals.errors += r.errors; totals.noEmail += (r.noEmail || 0);
+      log(`batch #${totals.batches}: claimed ${r.claimed}, extracted ${r.extracted}, +${r.added} new, ${r.noEmail || 0} no-email, ${r.errors} err  (cum +${totals.added}, ${totals.noEmail} dropped)`);
       // Periodically reclaim work orphaned by a dead/removed worker (claims only auto-recover at boot
       // otherwise) so the run always finishes — idempotent; 15-min threshold never touches live batches.
       if (queue.requeueStale && totals.batches % 50 === 0) {

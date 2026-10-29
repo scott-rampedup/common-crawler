@@ -17,7 +17,10 @@ const readline = require('readline');
 
 // Stream a JSONL pointer file through `queue.enqueueMany` in chunks. Testable: pass a fake queue.
 // Returns { lines, parsed, inserted, bad }.
-async function loadFile(filePath, { queue, chunkSize = 5000, onProgress = () => {} } = {}) {
+// `priorityOf(url)` is optional: when given, each pointer carries the claim priority of the push it
+// came from, so one file can hold a mix (an urgent extension push resolved in the same pass as a bulk
+// export). Without it every row goes in at 0, which is what every existing caller wants.
+async function loadFile(filePath, { queue, chunkSize = 5000, onProgress = () => {}, priorityOf = null } = {}) {
   if (!queue) throw new Error('loadFile: queue required');
   const rl = readline.createInterface({ input: fs.createReadStream(filePath), crlfDelay: Infinity });
   let lines = 0, parsed = 0, inserted = 0, bad = 0;
@@ -36,7 +39,8 @@ async function loadFile(filePath, { queue, chunkSize = 5000, onProgress = () => 
     let o; try { o = JSON.parse(t); } catch (e) { bad++; continue; }
     if (!o || !o.url) { bad++; continue; }
     parsed++;
-    chunk.push({ url: o.url, filename: o.filename, offset: o.offset, length: o.length, timestamp: o.timestamp });
+    chunk.push({ url: o.url, filename: o.filename, offset: o.offset, length: o.length, timestamp: o.timestamp,
+      ...(priorityOf ? { priority: priorityOf(o.url) } : {}) });
     if (chunk.length >= chunkSize) await flush();
   }
   await flush();
@@ -95,6 +99,13 @@ async function runSelftest() {
   ok('inserts all parsed pointers', res.inserted === 3 && seen.length === 3);
   ok('preserves the WARC pointer fields', seen[0].url === 'https://a.com/1' && seen[0].filename === 'w1' && seen[0].offset === '10' && seen[0].length === '20');
   ok('chunking does not drop rows across chunk boundary', seen.map((s) => s.url).join(',') === 'https://a.com/1,https://a.com/2,https://a.com/3');
+  ok('no priorityOf -> no priority field, so enqueueMany uses its own default', seen.every((s) => !('priority' in s)));
+
+  // One file can hold a mix: an urgent push resolved in the same pass as a bulk export.
+  const seen2 = [];
+  const queue2 = { async enqueueMany(ptrs) { seen2.push(...ptrs); return { inserted: ptrs.length }; } };
+  await loadFile(f, { queue: queue2, chunkSize: 2, priorityOf: (u) => (u === 'https://a.com/2' ? 9 : 0) });
+  ok('priorityOf is applied per URL', seen2.map((s) => s.priority).join(',') === '0,9,0');
 
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* temp */ }
   console.log(`\n${pass} passed, ${fail} failed`);
