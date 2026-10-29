@@ -23,6 +23,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function withRetry(fn) { for (let a = 0; ; a++) { try { return await fn(); } catch (e) { if (a >= 6) throw e; await sleep(Math.min(16000, 500 * 2 ** a)); } } }
 
 const CC = (g) => ({ name: g.name || '', website: g.website || '', category: g.category || '', full_address: g.full_address || '',
+  // The Location's own page, carried through from gm-load so a per-location crawl has something to
+  // fetch other than the shared homepage.
+  ...(g.page_url ? { page_url: g.page_url } : {}),
   phone: g.phone || '', phone_type: g.phone_type || '', website_type: g.website_type || '', facebook: g.facebook || '', instagram: g.instagram || '',
   whatsapp: g.whatsapp || '', cid: g.cid || '', team_page: g.team_page || '', bio_url: g.bio_url || '',
   linkedin_contact: g.linkedin_contact || '', linkedin_url: g.linkedin_url || '',   // /in vs /company kept distinct
@@ -31,10 +34,13 @@ const CC = (g) => ({ name: g.name || '', website: g.website || '', category: g.c
   // Location records -- an HQ is an aggregate over a domain, where a closure would be meaningless.
   company_status: g.company_status || '',
   // componentized geo (Bing UK carries these) + provenance; Google leaves them blank and keeps full_address
-  ...(g.locality ? { locality: g.locality } : {}), ...(g.region ? { region: g.region } : {}), ...(g.country ? { country: g.country } : {}),
+  // lower-cased on the way in: the country/industry filters lower-case their input, so a Location
+  // stored as "United States" was unreachable through the very facet it counted into.
+  ...(g.locality ? { locality: co.canonPlace(g.locality) } : {}), ...(g.region ? { region: co.canonPlace(g.region) } : {}),
+  ...(g.country ? { country: co.canonPlace(g.country) } : {}),
   ...(g.time_stamp ? { time_stamp: g.time_stamp } : {}), ...(g.source_map ? { source_map: g.source_map } : {}) });
 const locToDoc = (g) => naics.assignNaics({ id: g.cid || ('gm:' + g.root_domain), domain: g.root_domain, company_type: 'Location', cc_refreshed_at: now, ...CC(g) });
-const hqNewToDoc = (id, d) => naics.assignNaics({ id, domain: d.domain, company_type: 'HQ', locality: d.locality || '', region: d.region || '', country: d.country || '',
+const hqNewToDoc = (id, d) => naics.assignNaics({ id, domain: d.domain, company_type: 'HQ', locality: co.canonPlace(d.locality), region: co.canonPlace(d.region), country: co.canonPlace(d.country),
   location_count: d.location_count || 0, cc_refreshed_at: now, ...CC(d) });
 
 async function bulkFlush(body, tag) {

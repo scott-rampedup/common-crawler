@@ -35,10 +35,71 @@ const QUEUE_PREFIX = process.env.MONITOR_QUEUE_PREFIX || 'monitor-queue/pending/
 // gm-load writes gm-bio-urls.txt and nothing ever read it. Two runs produced bio URLs -- 14,084 from the
 // 17-08 export and ~14,000 more from 24-08 -- and both sets died with their machine's /tmp. They are the
 // most valuable output of the parse: pages naming a person at a business we now hold a record for.
+// Push through the app when we can reach it, so the Data Importer gets a named receipt for the list —
+// named after the Google Maps export it came from. The direct S3 write below stays as the fallback:
+// the URLs reaching the queue is the thing that must not depend on the app being up, and a missing
+// receipt is a smaller loss than a missing batch.
+async function queueViaApp(lines, sourceName) {
+  const base = String(process.env.APP_URL || process.env.COMMON_CRAWLER_URL || '').replace(/\/+$/, '');
+  const token = process.env.LOADER_TOKEN || '';
+  if (!base || !token) return false;
+  // By BYTES, not by URL count — see gm-bio-scan.js. A fixed 20,000-URL chunk is ~1.1MB for a typical
+  // export and 3.6MB for one with long URLs, and the server used to drop the connection on the latter
+  // with nothing but a 502 to show for it.
+  const MAX_BODY = 1500000;                 // headroom under the server's body cap
+  // The endpoint also caps a single request at BIO_URL_INGEST_MAX (20,000) URLs and SILENTLY DROPS the
+  // rest — it reports `capped` and returns 200. Byte-sized chunks ran to ~23,800 URLs, so every chunk
+  // lost its tail: 100,810 of 863,965 vanished while the push reported success. Respect both limits.
+  const MAX_URLS = 20000;
+  const chunks = [];
+  {
+    let cur = [], curBytes = 0;
+    for (const u of lines) {
+      const cost = u.length + 3;
+      if (cur.length && (curBytes + cost > MAX_BODY || cur.length >= MAX_URLS)) { chunks.push(cur); cur = []; curBytes = 0; }
+      cur.push(u); curBytes += cost;
+    }
+    if (cur.length) chunks.push(cur);
+  }
+  let sent = 0;
+  let listId = '';            // one receipt per export; later chunks append to it
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const chunk = chunks[ci];
+    const body = JSON.stringify({
+      urls: chunk,
+      sourceUrl: sourceName,                 // the LIST NAME in the importer
+      source: 'Google Maps',
+      label: 'Google Maps: ' + sourceName,
+      listId,
+    });
+    const r = await fetch(base + '/api/bio-urls', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-loader-token': token },
+      body,
+    }).catch((e) => ({ ok: false, status: 0, _err: e.message }));
+    if (!r || !r.ok) { console.error(`  app push failed (${(r && (r.status || r._err)) || '?'}) — falling back to a direct queue write`); return false; }
+    if (!listId) { try { listId = (await r.json()).listId || ''; } catch { /* continue without appending */ } }
+    sent += chunk.length;
+  }
+  console.error(`  queued ${sent.toLocaleString()} bio URL(s) via the app, recorded as "${sourceName}"`);
+  return true;
+}
+
 async function queueBioUrls(file) {
   if (NO_QUEUE || !fs.existsSync(file)) return;
   const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
   if (!lines.length) { console.error('  no bio URLs to queue'); return; }
+
+  // name the list after the export that produced it (gm-load leaves this beside the URL file)
+  let sourceName = 'Google Maps';
+  try {
+    const meta = JSON.parse(fs.readFileSync(file.replace(/\.txt$/, '') + '.meta.json', 'utf8'));
+    if (meta && Array.isArray(meta.sourceFiles) && meta.sourceFiles.length) {
+      sourceName = meta.sourceFiles.length === 1 ? meta.sourceFiles[0] : `${meta.sourceFiles[0]} +${meta.sourceFiles.length - 1} more`;
+    }
+  } catch { /* no meta: fall back to the generic name */ }
+
+  if (await queueViaApp(lines, sourceName)) return;
   const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
   const region = process.env.AWS_REGION || 'us-east-1';
   const bucket = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${region}`;
@@ -94,6 +155,17 @@ function step(label, script, args) {
   step('Phase 2/3/5 — group by domain, resolve HQ, build contacts', 'gm-build.js',
     ['--in', path.join(DIR, 'gm-locations.ndjson'), '--out', DIR]);
   step('Phase 4 — apply to OpenSearch', 'gm-upsert.js', ['--in', DIR]);
+
+  // Phase 5 — the standing procedure for every Maps export: one BIO URL list per file, pushed under
+  // that file's name, and the pages labelled BIO URL in the Company Crawler. It runs AFTER the upsert
+  // because the labelling step needs the Location records to exist before it can label them.
+  //
+  // This finds more than the Phase-1 queue does: that one takes the team-profile column, while this
+  // also takes a row's OWN page when that page is a person page — 40,803 against 19,049 on the 26-10
+  // export. Both run: Phase 1 queues early so the URLs are durable before anything else can fail, and
+  // the queue de-duplicates by URL anyway.
+  step('Phase 5 — per-file BIO URL list, queued and labelled', 'gm-bio-scan.js',
+    ['--src', DIR, '--out', path.join(DIR, 'bio-lists'), '--push', '--label']);
 
   console.error(`\n══════ GM ETL DONE · ${Math.round((Date.now() - t0) / 1000)}s ══════`);
   for (const f of ['gm-locations.ndjson', 'gm-bio-urls.txt', 'gm-hq.ndjson', 'gm-loc.ndjson', 'gm-contacts.ndjson']) {

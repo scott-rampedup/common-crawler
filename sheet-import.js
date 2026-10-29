@@ -175,7 +175,9 @@ async function importSheet(db, sheetRefOrUrl, { genderMap = {} } = {}){
   const merged = await db.upsertMany(records);                 // DB is email-keyed; email-less rows are skipped
   return {
     ...stats, withEmail, withoutEmail: records.length - withEmail,
-    imported: merged.processed, added: merged.added, dbTotal: merged.total,
+    // `changed` is the honest number: rows whose content actually differed. `imported` counts rows
+    // CONSIDERED, which on a re-import of an unchanged sheet is every row and tells you nothing.
+    imported: merged.processed, added: merged.added, changed: merged.changed, dbTotal: merged.total,
     spreadsheetId: ref.spreadsheetId, gid: ref.gid,
   };
 }

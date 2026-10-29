@@ -65,7 +65,9 @@ async function eachRecord(file, onRec) {
       const rec = {
         company_type: 'Location', root_domain: dom, cid: clean(r[B.ypid]),
         name: clean(r[B.name]), full_address: clean(r[B.address]),
-        locality: clean(r[B.city]), region: clean(r[B.state]), country: COUNTRY[clean(r[B.country]).toUpperCase()] || clean(r[B.country]),
+        // lower-case to match the rest of the index — the place filters lower-case their input
+        locality: co.canonPlace(r[B.city]), region: co.canonPlace(r[B.state]),
+        country: co.canonPlace(COUNTRY[clean(r[B.country]).toUpperCase()] || clean(r[B.country])),
         website: 'https://' + dom + '/', website_type: websiteType(r[B.website]),
         category: clean(r[B.cat1]) || clean(r[B.cat2]),
         email, email_type: email ? ex.classifyEmail(email) : '',

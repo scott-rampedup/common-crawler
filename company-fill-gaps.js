@@ -130,7 +130,7 @@ async function fillIndustry(client) {
       if (!ind && PREFIX_FALLBACK) { ind = byPrefix.get(code.slice(0, 4)); if (ind) viaPrefix++; }
       if (!ind) continue;
       matched++;
-      buf.push({ id: h._id, industry: ind });
+      buf.push({ id: h._id, industry: co.canonPlace(ind) });   // crosswalk titles are mixed case; the index is lower-case
       if (buf.length >= 1000) await flush();
     }
     after = hits[hits.length - 1].sort;

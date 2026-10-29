@@ -155,6 +155,21 @@ function processGroup(domain, locs, hq0) {
 }
 
 (async () => {
+  // Windows ships its own sort.exe whose flags are unrelated to GNU's — it reads `tmp -o sorted` as two
+  // input files and dies with "Input file specified two times". Both binaries are usually on PATH and
+  // which one wins depends on the launching shell (PowerShell puts System32 first, Git Bash puts Git's
+  // usr/bin first), so the ETL silently worked or failed depending on how it was started. Resolve the
+  // GNU binary explicitly; on Linux, where this normally runs, nothing changes.
+  function gnuSort() {
+    if (process.platform !== 'win32') return 'sort';
+    for (const c of [process.env.GNU_SORT, 'C:/Program Files/Git/usr/bin/sort.exe',
+                     'C:/Program Files (x86)/Git/usr/bin/sort.exe', 'C:/msys64/usr/bin/sort.exe']) {
+      if (c && fs.existsSync(c)) return c;
+    }
+    console.error('WARNING: no GNU sort found; falling back to PATH "sort", which on Windows is probably the wrong one');
+    return 'sort';
+  }
+
   // ---- external sort by root_domain: write "domain\tline" -> sort -> stream grouped ----
   const tmp = path.join(OUT, '_gm-keyed.tsv'), sorted = path.join(OUT, '_gm-sorted.tsv');
   if (process.argv.includes('--resume') && fs.existsSync(sorted) && fs.statSync(sorted).size > 0) {
@@ -165,7 +180,7 @@ function processGroup(domain, locs, hq0) {
       for await (const l of rl) { if (!l.trim()) continue; let o; try { o = JSON.parse(l); } catch { continue; } if (o.root_domain) w.write(o.root_domain + '\t' + l + '\n'); }
       await new Promise((r) => w.end(r)); }
     console.error('sorting…');
-    const s = spawnSync('sort', ['-t', '\t', '-k1,1', '-T', OUT, tmp, '-o', sorted], { stdio: 'inherit' });
+    const s = spawnSync(gnuSort(), ['-t', '\t', '-k1,1', '-T', OUT, tmp, '-o', sorted], { stdio: 'inherit' });
     if (s.status !== 0) { console.error('sort failed'); process.exit(1); }
   }
 

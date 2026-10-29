@@ -27,6 +27,32 @@ const clean0 = (s) => String(s == null ? '' : s).trim();
 // status value ("Open"/"Closed"/…) — website/category/phone sit at fixed offsets around it — and read the
 // xb_* enrichment fields from FIXED offsets off the END of the row (identical tail in both layouts).
 const STATUS_RE = /^(Open|Closed|Permanently closed|Temporarily closed)$/i;
+// Which xb_ field each end-offset was standing in for. The offsets stay as the fallback for a
+// headerless file; when a header is present XB_IDX wins, so a changed column count cannot silently
+// repoint a field at an empty column.
+const XB_BY_END = { 18: 'xb_emails', 16: 'xb_phones', 15: 'xb_phone_details', 14: 'xb_whatsapp',
+  13: 'xb_facebook', 12: 'xb_instagram', 9: 'xb_linkedin_company', 8: 'xb_linkedin_profile',
+  5: 'xb_team_profile_urls', 3: 'xb_team_page', 1: 'xb_crawled_at' };
+let XB_IDX = null;                       // set from the header by setHeaderIndex()
+
+// Record where each xb_ column actually is. Called once per file with the parsed header row.
+function setHeaderIndex(headerRow) {
+  XB_IDX = null;
+  if (!Array.isArray(headerRow) || !headerRow.length) return;
+  const idx = {};
+  headerRow.forEach((h, i) => {
+    const k = String(h == null ? '' : h).replace(/^﻿/, '').trim().toLowerCase();
+    if (k.startsWith('xb_') && idx[k] == null) idx[k] = i;
+  });
+  const found = Object.keys(idx).length;
+  if (found) {
+    XB_IDX = idx;
+    console.error(`  header: ${headerRow.length} column(s), ${found} xb_ field(s) located by name`);
+  } else {
+    console.error(`  header: ${headerRow.length} column(s), no xb_ names found — falling back to end-offsets`);
+  }
+}
+
 function fields(r, siHint) {
   const len = r.length;
   // Prefer the status column the HEADER declares. Scanning for the first cell matching Open|Closed|...
@@ -38,7 +64,18 @@ function fields(r, siHint) {
   let name = '';
   for (let i = 4; i < si - 1; i++) { const v = clean0(r[i]); if (v && v !== '#N/A' && !/^\d+$/.test(v) && !/^(m|f|male|female|unisex)$/i.test(v) && !/^https?:/i.test(v) && v.length > name.length) name = v; }
   if (!name) name = clean0(r[4]) === '#N/A' ? '' : clean0(r[4]);
-  const end = (n) => clean0(r[len - n]);                            // xb_* live at fixed offsets from the end
+  // xb_* BY NAME when the header gave us positions, by end-offset only as a fallback.
+  //
+  // The end-offsets held for the 37- and 43-column layouts, but the 19-10 export arrived with 155
+  // columns: the same 37 real ones followed by 118 EMPTY trailing columns. end(18) then addressed
+  // column 137 instead of 19, so xb_emails/xb_phones/xb_phone_details/xb_whatsapp all read '' and the
+  // run would have produced ~500k Location records with no contact data while reporting success.
+  // A name is stable under that; a distance from the end is not.
+  const end = (n) => {
+    const name = XB_BY_END[n];
+    if (name && XB_IDX && XB_IDX[name] != null) return clean0(r[XB_IDX[name]]);
+    return clean0(r[len - n]);
+  };
   // the cid COLUMN is Excel-mangled (scientific notation) — take the real one from the Maps URL (col 2).
   const cid = (String(r[2] || '').match(/[?&]cid=(-?\d+)/) || [])[1] || clean0(r[1]);
   return {
@@ -73,6 +110,13 @@ let dirRules = {}; try { dirRules = ex.loadDirectoryRules(path.join(__dirname, '
 
 const clean = (s) => String(s == null ? '' : s).trim();
 const abs = (u) => { u = clean(u); return /^https?:/i.test(u) ? u : (u ? 'https://' + u : ''); };
+// Google appends redirect tracking to the website URL in the Maps export:
+//   https://www.midflorida.com/locations/kissimmee-branch&opi=79508299&sa=U&ved=0ahUKEwj...
+// Note the bare "&" with no "?" -- it is not even a valid query string. Left in place these URLs
+// resolve against nothing in Common Crawl, which would quietly defeat the per-location crawl: the
+// field looks populated and every lookup misses. Strip from the first tracking key.
+const GOOG_TRACK = /[?&](?:opi|sa|ved|usg|sca_esv|source|cd|cad|rct|uact)=/;
+const cleanUrl = (u) => { const s = String(u || '').trim(); if (!s) return ''; return s.split(GOOG_TRACK)[0].replace(/[?&]+$/, ''); };
 const splitMulti = (s) => clean(s).split(/\s*\|\|\s*|\s*;\s*|\s*,\s*/).map((x) => x.trim()).filter(Boolean);
 // LinkedIn Contact = personal profile (linkedin.com/in, from xb_linkedin_profile);
 // LinkedIn URL = company page (linkedin.com/company, from xb_linkedin_company). Enforce BOTH the
@@ -119,7 +163,13 @@ async function eachRecord(file, onRec, onHeader) {
   });
 }
 
-(async () => {
+// Exported so gm-bio-scan.js reads these CSVs through EXACTLY this code. The column mapping is the
+// fragile part of the format — the 19-10 export arrived with 155 columns and end-offset parsing would
+// have produced locations with no emails or phones — so a second reader that drifts from this one is a
+// defect waiting to happen. Guarded below so requiring the module does not start an ingest.
+module.exports = { eachRecord, fields, setHeaderIndex, websiteType, isBio, abs, clean, splitMulti, cleanUrl };
+
+if (require.main === module) (async () => {
   // --file <path> ingests ONE CSV (e.g. a newly-arrived export); default = every CSV in --src.
   const oneFile = arg('--file', '');
   const files = oneFile ? [oneFile]
@@ -162,7 +212,18 @@ async function eachRecord(file, onRec, onHeader) {
         // on the location record so it can be filtered without condemning the whole domain.
         company_status: status,
         name: f.name, full_address: f.address,
-        website: 'https://' + dom + '/', website_type: websiteType(webLoc),
+        // KEEP THE LOCATION'S OWN PAGE.
+        //
+        // webLoc is the specific page the Maps export gave for THIS place
+        // (…/locations/manchester-blood-donor-centre). It was previously used only to derive `dom` and
+        // the website_type label and then discarded, so every Location stored the bare root instead:
+        // all 4,510,566 of them, three different NHS blood donor centres all pointing at blood.co.uk.
+        // That makes a per-location crawl impossible -- it would fetch the same homepage for every
+        // branch -- and it inverts the rule that the location website beats the plain website.
+        // `website` is now the page; `root_domain` above still carries the domain for joins.
+        website: cleanUrl(abs(webLoc)) || ('https://' + dom + '/'),
+        page_url: cleanUrl(abs(webLoc)) || '',            // explicit: what a Location-scoped crawl should fetch
+        website_type: websiteType(webLoc),
         category: f.category,
         email, emails, email_type: email ? ex.classifyEmail(email) : '',
         phone: f.phone, phone_type: phoneType(f.phone),
@@ -179,11 +240,21 @@ async function eachRecord(file, onRec, onHeader) {
       byStatus.set(status || '(blank)', (byStatus.get(status || '(blank)') || 0) + 1);
       kept++;
       if (kept % 50000 === 0) console.error(`  seen ${seen.toLocaleString()} | kept ${kept.toLocaleString()} | ${Math.round(kept / ((Date.now() - t0) / 1000))}/s`);
-    }, (hdr) => { siHint = hdr.findIndex((h) => String(h || '').trim().toLowerCase() === 'company_status'); });
+    }, (hdr) => {
+      siHint = hdr.findIndex((h) => String(h || '').trim().toLowerCase() === 'company_status');
+      setHeaderIndex(hdr);              // locate the xb_ columns by name for THIS file
+    });
     if (LIMIT && kept >= LIMIT) break;
   }
   console.error('  kept by status: ' + [...byStatus].sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ' ' + v.toLocaleString()).join(' | '));
   fs.writeFileSync(path.join(OUT, 'gm-bio-urls.txt'), [...bioSet].join('\n') + '\n');
+  // Which export these bio URLs came out of. gm-run names the Data Importer list after it, so a pushed
+  // list can be traced back to the file that produced it instead of appearing as an anonymous batch.
+  fs.writeFileSync(path.join(OUT, 'gm-bio-urls.meta.json'), JSON.stringify({
+    sourceFiles: files.map((f) => path.basename(f)),
+    count: bioSet.size,
+    at: new Date().toISOString(),
+  }, null, 1));
   locOut.end();
   console.error(`DONE: ${seen.toLocaleString()} seen -> ${kept.toLocaleString()} Location records | skipped ${skippedClosed.toLocaleString()} permanently-closed + ${skippedNoWeb.toLocaleString()} no-website + ${unparseable.toLocaleString()} unparseable | ${bioSet.size.toLocaleString()} bio URLs | ${Math.round((Date.now() - t0) / 1000)}s`);
 })().catch((e) => { console.error('ERR', e && e.stack || e); process.exit(1); });

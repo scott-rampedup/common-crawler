@@ -17,6 +17,16 @@ const ex = require('./extractor');
 // Websites that belong in "Alternate Websites", not the primary Website (seed list; the Admin UI can edit it).
 const ALT_DEFAULT = ['linktr.ee', 'youtube.com', 'crunchbase.com', 'twitter.com', 'x.com', 'yelp.com', 'etsy.com', 'about.me', 'sites.google.com', 'amazon.com/shop', 'wix.com', 'wixsite.com'];
 
+// companies.js -> opensearch.js -> (lazily) back to this module, so this require is deferred exactly
+// the way opensearch.js defers its own. A top-level require here would resolve mid-cycle and hand back
+// a half-built exports object. Falls back to the same transformation if the require ever fails, so a
+// place name cannot be written in the wrong case just because the lookup broke.
+let _co = null;
+function canonPlace(v) {
+  if (_co === null) { try { _co = require('./companies'); } catch { _co = false; } }
+  return (_co && _co.canonPlace) ? _co.canonPlace(v) : String(v == null ? '' : v).trim().toLowerCase();
+}
+
 const cap = (s) => String(s || '').charAt(0).toUpperCase() + String(s || '').slice(1);
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_RE = /\+?\d[\d().\-\s]{7,}\d/g;
@@ -26,6 +36,113 @@ function hrefsFromHtml(html) {
   while ((m = re.exec(html)) && out.length < 4000) out.push(m[1]);
   return out;
 }
+
+// --- schema.org blocks -------------------------------------------------------------------------
+// The home page states a lot about the business in machine-readable form that nothing here read:
+// logo, street address and postal code above all. Only `description` and the <a> hrefs were parsed,
+// which is why logo and postal_code are not even columns yet and full_address only ever came from
+// the Google/Bing exports. JSON-LD first (dominant and structured), microdata as the fallback.
+function jsonLdBlocks(html) {
+  const out = []; let m;
+  const re = /<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  while ((m = re.exec(html)) && out.length < 40) {
+    const raw = m[1].replace(/<!\[CDATA\[|\]\]>/g, '').trim();
+    if (!raw) continue;
+    try { out.push(JSON.parse(raw)); }
+    catch {
+      // Real pages ship trailing commas and stray control characters; one bad block must not cost
+      // the rest of the page.
+      try { out.push(JSON.parse(raw.replace(/,\s*([}\]])/g, '$1').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ''))); } catch { /* skip */ }
+    }
+  }
+  return out;
+}
+// Walk every node of the parsed JSON-LD, whatever the nesting or @graph shape.
+function* ldNodes(v, depth = 0) {
+  if (!v || typeof v !== 'object' || depth > 8) return;
+  if (Array.isArray(v)) { for (const x of v) yield* ldNodes(x, depth + 1); return; }
+  yield v;
+  for (const k in v) if (v[k] && typeof v[k] === 'object') yield* ldNodes(v[k], depth + 1);
+}
+const ldType = (n) => [].concat(n['@type'] || []).map((t) => String(t).toLowerCase());
+const ORG_TYPES = ['organization', 'localbusiness', 'corporation', 'store', 'restaurant', 'professionalservice',
+  'medicalorganization', 'educationalorganization', 'ngo', 'website', 'realestateagent', 'dentist', 'lawfirm',
+  'homeandconstructionbusiness', 'automotivebusiness', 'financialservice', 'lodgingbusiness', 'hotel'];
+const isOrgNode = (n) => ldType(n).some((t) => ORG_TYPES.includes(t));
+
+// Absolute URL against the page's own host; returns '' for data: URIs and unusable values.
+function absUrl(u, domain) {
+  let s = String(u || '').trim();
+  if (!s || /^data:/i.test(s)) return '';
+  if (s.startsWith('//')) return 'https:' + s;
+  if (/^https?:\/\//i.test(s)) return s;
+  if (!domain) return '';
+  // one separator, exactly: strip any leading slashes off the path and always supply the '/'
+  return 'https://' + String(domain).replace(/\/+$/, '') + '/' + s.replace(/^\/+/, '');
+}
+
+const strOf = (v) => {
+  if (v == null) return '';
+  if (typeof v === 'string' || typeof v === 'number') return String(v).trim();
+  if (Array.isArray(v)) { for (const x of v) { const s = strOf(x); if (s) return s; } return ''; }
+  if (typeof v === 'object') return strOf(v.url || v.contentUrl || v['@id'] || v.name || '');
+  return '';
+};
+
+// logo: the organisation's own logo if it declares one, else og:image, else a touch icon. An <img>
+// whose alt/class says "logo" is the last resort — it is the least reliable of the four.
+function parseLogo(html, domain) {
+  for (const block of jsonLdBlocks(html)) {
+    for (const n of ldNodes(block)) {
+      if (!isOrgNode(n)) continue;
+      const u = absUrl(strOf(n.logo), domain);
+      if (u) return u;
+    }
+  }
+  let m = html.match(/<meta[^>]+(?:property|name)\s*=\s*["'](?:og:image|og:image:url|twitter:image)["'][^>]*\bcontent\s*=\s*["']([^"']+)["']/i)
+       || html.match(/<meta[^>]+\bcontent\s*=\s*["']([^"']+)["'][^>]*(?:property|name)\s*=\s*["'](?:og:image|og:image:url|twitter:image)["']/i);
+  if (m) { const u = absUrl(m[1], domain); if (u) return u; }
+  m = html.match(/<link[^>]+rel\s*=\s*["'][^"']*(?:apple-touch-icon|icon)[^"']*["'][^>]*\bhref\s*=\s*["']([^"']+)["']/i);
+  if (m) { const u = absUrl(m[1], domain); if (u) return u; }
+  m = html.match(/<img\b[^>]*(?:alt|class|id)\s*=\s*["'][^"']*logo[^"']*["'][^>]*\bsrc\s*=\s*["']([^"']+)["']/i)
+   || html.match(/<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*(?:alt|class|id)\s*=\s*["'][^"']*logo[^"']*["']/i);
+  if (m) { const u = absUrl(m[1], domain); if (u) return u; }
+  return '';
+}
+
+// address: a schema.org PostalAddress gives the components separately, which is the only way to get a
+// postal code reliably — pulling one out of a free-text address works for the US and fails elsewhere.
+function parseAddress(html) {
+  const pick = (a) => ({
+    street: strOf(a.streetAddress), locality: strOf(a.addressLocality),
+    region: strOf(a.addressRegion), postal: strOf(a.postalCode),
+    country: strOf(a.addressCountry && (a.addressCountry.name || a.addressCountry)) || strOf(a.addressCountry),
+  });
+  const isUseful = (o) => o && (o.street || o.postal) && (o.locality || o.region || o.postal);
+  for (const block of jsonLdBlocks(html)) {
+    // an address on an Organization node beats a loose one (which may belong to an event or author)
+    for (const n of ldNodes(block)) {
+      if (!isOrgNode(n) || !n.address) continue;
+      for (const a of [].concat(n.address)) {
+        if (a && typeof a === 'object') { const o = pick(a); if (isUseful(o)) return o; }
+      }
+    }
+    for (const n of ldNodes(block)) {
+      if (!ldType(n).includes('postaladdress')) continue;
+      const o = pick(n);
+      if (isUseful(o)) return o;
+    }
+  }
+  // microdata fallback
+  const md = (prop) => {
+    const m = html.match(new RegExp('itemprop\\s*=\\s*["\']' + prop + '["\'][^>]*>([^<]{1,120})<', 'i'))
+           || html.match(new RegExp('itemprop\\s*=\\s*["\']' + prop + '["\'][^>]*\\bcontent\\s*=\\s*["\']([^"\']{1,120})["\']', 'i'));
+    return m ? m[1].replace(/\s+/g, ' ').trim() : '';
+  };
+  const o = { street: md('streetAddress'), locality: md('addressLocality'), region: md('addressRegion'), postal: md('postalCode'), country: md('addressCountry') };
+  return isUseful(o) ? o : null;
+}
+const joinAddress = (a) => (a ? [a.street, a.locality, a.region, a.postal, a.country].map((x) => String(x || '').trim()).filter(Boolean).join(', ') : '');
 function metaDescription(html) {
   const m = html.match(/<meta[^>]+(?:name|property)\s*=\s*["'](?:description|og:description)["'][^>]*\bcontent\s*=\s*["']([^"']*)["']/i)
     || html.match(/<meta[^>]+\bcontent\s*=\s*["']([^"']*)["'][^>]*(?:name|property)\s*=\s*["'](?:description|og:description)["']/i);
@@ -90,9 +207,12 @@ async function resolveHome(domain, { crawls, demoMode = false } = {}) {
 
 // Parse the home-page HTML into the raw field buckets. altList = the (admin-editable) alternate-website patterns.
 function parseHome(html, domain, altList) {
-  const out = { description: '', facebook: '', instagram: '', map: '', linkedin: [], bio: [], alternateWebsites: [], emails: [], phones: [] };
+  const out = { description: '', facebook: '', instagram: '', map: '', logo: '', address: null,
+                linkedin: [], bio: [], alternateWebsites: [], emails: [], phones: [] };
   if (!html) return out;
   out.description = metaDescription(html);
+  out.logo = parseLogo(html, domain);
+  out.address = parseAddress(html);
   const selfHost = String(domain || '').toLowerCase().replace(/^www\./, '');
   const seenLi = new Set(), seenBio = new Set(), seenAlt = new Set();
   for (const raw of hrefsFromHtml(html)) {
@@ -207,6 +327,14 @@ function reclassifyWebsite(website, altList) {
   if (/(facebook\.com|fb\.com)\//i.test(low) && hasPath(w)) return { facebook: w, website: '' };
   if (/instagram\.com\//i.test(low) && hasPath(w)) return { instagram: w, website: '' };
   if (/(google\.[^/]+\/maps|bing\.com\/maps|goo\.gl\/maps|maps\.app\.goo\.gl)/i.test(low)) return { map: w, website: '' };
+  // LinkedIn and WhatsApp also have dedicated fields, so a "website" that is really one of those moves
+  // there too instead of sitting in `website` pretending to be a company site. In PDL that is 25,745
+  // linkedin.com records and 3,984 wa.me records whose only listed site is a profile or a chat link.
+  // /company|/school|/showcase is the ORGANISATION page; /in/ is a PERSON, which belongs in
+  // linkedin_contact -- the two must never cross-contaminate (gm-load enforces the same split).
+  if (/linkedin\.com\/(company|school|showcase)\//i.test(low)) return { linkedin_url: w, website: '' };
+  if (/linkedin\.com\/in\//i.test(low)) return { linkedin_contact: w, website: '' };
+  if (/(wa\.me\/|api\.whatsapp\.com\/send|whatsapp\.com\/send)/i.test(low)) return { whatsapp: w, website: '' };
   if (isAlternate(w, altList)) return { altMove: w, website: '' };
   return {};
 }
@@ -233,6 +361,21 @@ function enrichFromHtml(company, html, { genderMap = {}, altList, now, crawl } =
     contacts: contacts.join(' '),
     contacts_count: count,
   };
+  if (p.logo) up.logo = p.logo;
+  // Address fields FILL BLANKS ONLY. A Google/Bing Location record already carries a verified address
+  // for that specific place; a logo-and-footer address scraped off the shared home page must never
+  // overwrite it. The home page is the only source of a postal code for records that have no Zip
+  // column, so that one is worth having even when the rest of the address is already present.
+  if (p.address) {
+    const full = joinAddress(p.address);
+    if (full && !String(company.full_address || '').trim()) up.full_address = full;
+    if (p.address.postal && !String(company.postal_code || '').trim()) up.postal_code = p.address.postal;
+    // lower-cased through canonPlace: these are the same columns the casing repair just canonicalised,
+    // and a fresh title-case write here would reopen the split it closed.
+    if (p.address.locality && !String(company.locality || '').trim()) up.locality = canonPlace(p.address.locality);
+    if (p.address.region && !String(company.region || '').trim()) up.region = canonPlace(p.address.region);
+    if (p.address.country && !String(company.country || '').trim()) up.country = canonPlace(p.address.country);
+  }
   if (now) up.cc_refreshed_at = now;          // when this company was last CC-refreshed (drives deltas + "last refreshed")
   if (crawl) up.cc_crawl = crawl;             // the CC crawl the freshest capture came from
   if (phone && !String(company.phone || '').trim()) up.phone = phone;

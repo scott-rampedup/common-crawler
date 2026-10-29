@@ -16,7 +16,12 @@ const OUT_COLS = ['name', 'website', 'domain', 'company_type', 'website_type', '
   'description', 'email', 'email_type', 'facebook', 'instagram', 'whatsapp', 'linkedin_contact', 'bio_url', 'team_page',
   'source_map', 'cc_refreshed_at', 'map', 'alternate_websites', 'contacts', 'contacts_count'];
 // CC home-page enrichment fields (populated by cc-home-enrich via /api/companies/cc-enrich).
-const CC_FIELDS = ['description', 'email', 'email_type', 'facebook', 'instagram', 'map', 'linkedin_contact', 'bio_url', 'alternate_websites', 'contacts', 'contacts_count'];
+// Fields a Common Crawl enrichment is allowed to write. load-enriched.js filters every incoming update
+// against this list, so a field missing here is parsed, carried, and then silently dropped at the door —
+// which is what would have happened to logo/postal_code/full_address the first time the refresh ran.
+const CC_FIELDS = ['description', 'email', 'email_type', 'facebook', 'instagram', 'map', 'linkedin_contact',
+  'bio_url', 'alternate_websites', 'contacts', 'contacts_count',
+  'logo', 'postal_code', 'full_address', 'locality', 'region', 'country', 'whatsapp', 'team_page'];
 
 const MAPPING = {
   settings: { number_of_shards: 2, number_of_replicas: 0, 'index.max_result_window': 50000 },
@@ -39,6 +44,13 @@ const MAPPING = {
       naics_title:  { type: 'text', fields: { kw: { type: 'keyword' } } },
       email_pattern: { type: 'keyword' },    // local-part template for modelled emails, e.g. {first}.{last}
       email_domain:  { type: 'keyword' },    // domain used for modelled emails (may differ from the website domain)
+      // The Location's own page, e.g. …/locations/manchester-blood-donor-centre. A Location-scoped
+      // crawl fetches THIS, not the shared homepage -- without it every branch of a chain returns
+      // identical data. keyword: it is an identifier to match and filter on, never analysed text.
+      page_url:      { type: 'keyword' },
+      root_domain:   { type: 'keyword' },    // registrable domain the record groups under
+      logo:          { type: 'keyword' },    // org logo from the home page (JSON-LD logo / og:image / touch icon)
+      postal_code:   { type: 'keyword' },    // from a schema.org PostalAddress, or the Bing Zip column
     },
   },
 };
@@ -48,13 +60,27 @@ function normDomain(w) {
   return String(w).toLowerCase().trim().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].split('?')[0];
 }
 
+// Place/industry values are stored LOWER-CASE and title-cased for display (see shapeRow). That is not
+// a cosmetic preference: buildQuery lower-cases the country/industry filter values, so a record stored
+// as "United States" cannot be reached by any filter at all. The Google/Bing Location path used to pass
+// the source casing straight through, which left 3.19M records invisible to the facets they populated
+// — the facet showed "United States 2,400,640" and clicking it returned the 7.7M lower-case bucket.
+// Every writer of country/region/locality/industry goes through this.
+const canonPlace = (v) => String(v == null ? '' : v).trim().toLowerCase();
+function canonPlaces(doc) {
+  for (const f of ['country', 'region', 'locality', 'industry']) {
+    if (doc[f] != null) doc[f] = canonPlace(doc[f]);
+  }
+  return doc;
+}
+
 // One raw PDL record -> an index doc.
 function recordToDoc(r) {
   return {
     id: r.id || '', name: r.name || '', website: r.website || '', domain: normDomain(r.website),
-    industry: r.industry || '', size: r.size || '',
+    industry: canonPlace(r.industry), size: r.size || '',
     founded: (r.founded != null && r.founded !== '') ? (Number(r.founded) || null) : null,
-    locality: r.locality || '', region: r.region || '', country: r.country || '', linkedin_url: r.linkedin_url || '',
+    locality: canonPlace(r.locality), region: canonPlace(r.region), country: canonPlace(r.country), linkedin_url: r.linkedin_url || '',
   };
 }
 
@@ -213,7 +239,9 @@ async function setRoleEmailTerms(client, terms) {
 const EDITABLE = new Set(['name', 'website', 'industry', 'size', 'country', 'region', 'locality', 'founded',
   'linkedin_url', 'phone', 'full_address', 'category', 'cid', 'sitemap_url',
   'description', 'email', 'email_type', 'facebook', 'instagram', 'map', 'linkedin_contact', 'bio_url', 'alternate_websites', 'contacts', 'contacts_count',
-  'cc_refreshed_at', 'cc_crawl', 'email_pattern', 'email_domain']);
+  'cc_refreshed_at', 'cc_crawl', 'email_pattern', 'email_domain',
+  // home-page enrichment outputs; without these co.update() drops them without a word
+  'logo', 'postal_code', 'whatsapp', 'team_page']);
 async function update(client, id, updates) {
   if (!id) throw new Error('id required');
   const doc = {};
@@ -360,4 +388,4 @@ function isBadCompanyDomain(dom) {
   return !dom || NON_COMPANY_DOMAINS.has(dom);
 }
 
-module.exports = { INDEX, MAPPING, OUT_COLS, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, getRoleEmailTerms, setRoleEmailTerms, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, bulkUpdate, getEmailModel, setEmailModelByDomain, makeClient: os.makeClient };
+module.exports = { INDEX, MAPPING, OUT_COLS, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, canonPlace, canonPlaces, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, getRoleEmailTerms, setRoleEmailTerms, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, bulkUpdate, getEmailModel, setEmailModelByDomain, makeClient: os.makeClient };
