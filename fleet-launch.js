@@ -120,7 +120,12 @@ async function launchFleet(o) {
     const name = `${o.namePrefix || 'live-fleet'}-${i}`;
     const config = {
       image,
-      restart: { policy: 'no' },
+      // 'no' is right for a BATCH shard: it finishes its slice and must stay finished, or a completed
+      // crawl would restart forever. It is wrong for a long-lived SERVICE (the delta syncer, the
+      // scheduler) -- those should come back after a crash. The syncer proved it: an unhandled idle-pg
+      // error exited it at 19:49Z and restart:no left it dead for 18 hours while Postgres drifted ahead
+      // of OpenSearch. Pass o.restart for a service, e.g. { policy: 'always' }.
+      restart: o.restart || { policy: 'no' },
       guest: { cpu_kind: 'performance', cpus, memory_mb: memMb },
       env: Object.assign({}, TUNING(), {
         LIVE_CONC: String(o.liveConc || process.env.FLEET_LIVE_CONC || 96),

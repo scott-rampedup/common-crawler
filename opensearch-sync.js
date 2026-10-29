@@ -42,6 +42,13 @@ function startSync(opts = {}) {
   const intervalMs = Number(opts.intervalMs || process.env.OS_SYNC_INTERVAL_MS || 20000);
   const batch = Number(opts.batch || process.env.OS_SYNC_BATCH || 2000);
   const pool = new Pool({ connectionString, max: 2, ssl: opts.ssl || !!process.env.PGSSL });
+  // An IDLE pg client can emit 'error' on its own -- the server restarts, a NAT drops the connection, a
+  // reaper kills a long-lived session. node treats an unhandled 'error' event as fatal, so without this
+  // listener the whole process exits. That is not theoretical: the syncer died at 2026-10-13T19:49:17Z
+  // with exit_code=1 after 9,930 pool uses, printing a pg Client dump and nothing else, and because its
+  // machine runs restart:no it stayed dead for 18 hours. The pool replaces the broken client by itself;
+  // all that was missing was somebody listening.
+  pool.on('error', (e) => console.error('[os-sync] idle pg client error (pool will replace it):', e.message));
   const os = makeClient(endpoint);
   let wm = null, stopped = false, timer = null;
 
