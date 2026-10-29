@@ -34,12 +34,14 @@ const firmo = (c) => ({
 // Two-label roots only. Stripping to two labels is wrong for co.uk / com.au / uni-graz.at style suffixes,
 // so a second-level suffix keeps three labels: news.budderfly.com -> budderfly.com, but
 // team.example.co.uk -> example.co.uk rather than the unusable co.uk.
-const SECOND_LEVEL = new Set(['co', 'com', 'org', 'net', 'gov', 'edu', 'ac', 'gob', 'mil']);
-function rootDomain(d) {
-  const p = String(d || '').toLowerCase().replace(/^www\./, '').split('.').filter(Boolean);
-  if (p.length <= 2) return p.join('.');
-  return SECOND_LEVEL.has(p[p.length - 2]) && p.length >= 3 ? p.slice(-3).join('.') : p.slice(-2).join('.');
-}
+// The company-lookup key. This was a nine-entry second-level list, which answered with a bare public
+// suffix for 235,288 of the 4,955,773 multi-label domains in the index (4.75%): clayton.k12.ga.us came
+// back as "ga.us", 0031.co.kr as "co.kr", 007metro.blogspot.com as "blogspot.com". A contact on any of
+// those joined to whatever company happened to sit on the suffix, or to nothing at all. The PSL knows
+// the real boundary, including the private section that keeps each blogspot/github.io/canva.site tenant
+// separate. See psl-suffix.js.
+const psl = require('./psl-suffix');
+const rootDomain = (d) => psl.registrableOrHost(d);
 
 async function lookup(coClient, keys) {
   const found = new Map();

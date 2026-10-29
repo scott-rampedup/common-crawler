@@ -25,13 +25,12 @@ const domainOf = (r) => String((r && r['Domain']) || '').toLowerCase() || rootDo
 // registrable-ish domain (strip subdomains); keeps two-part TLDs like co.uk together. Used as the email
 // domain for the default-pattern fallback so a bio on a subdomain (financialprofessionals.massmutual.com)
 // models against the parent (massmutual.com).
+// The ^(co|com|org|net|gov|edu|ac)\.[a-z]{2}$ test got co.uk and com.br right and everything else
+// wrong — 239,844 of the index's multi-label domains (4.84%), where it returned a bare public suffix
+// and the email pattern was then modelled against a suffix rather than a company. See psl-suffix.js.
+const psl = require('./psl-suffix');
 function registrableDomain(host) {
-  const h = String(host || '').toLowerCase().replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, '').trim();
-  if (!h) return '';
-  const p = h.split('.');
-  if (p.length <= 2) return h;
-  const last2 = p.slice(-2).join('.');
-  return /^(co|com|org|net|gov|edu|ac)\.[a-z]{2}$/.test(last2) ? p.slice(-3).join('.') : last2;
+  return psl.registrableOrHost(host);
 }
 
 // Mutate `records` IN PLACE: model emails for the email-less bios. Returns the count modelled.
