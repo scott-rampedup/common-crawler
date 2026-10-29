@@ -1273,6 +1273,13 @@ function countryCodeFromDomain(domain){
 // Convert a messy phone string to E.164 (+<cc><number>, digits only). Best-effort.
 function toE164(raw, cc){
   if(!raw) return "";
+  // Strip any extension FIRST. Every digit in the string used to be treated as part of the number, so
+  // "(770) 399-5788 ext 109" became "+7703995788109" — 13 digits, country code lost, and because the
+  // store holds no extensions anywhere this was pure corruption. The crawl path and vcard.js already
+  // call toE164(splitExtension(s).main, cc); doing it here too means a caller that forgets cannot
+  // produce a broken number. Pre-split callers are unaffected: their .main has no extension left.
+  raw = splitExtension(String(raw)).main;
+  if(!raw) return "";
   raw = String(raw).replace(/\(\s*0\s*\)/g, "");         // drop a parenthesized trunk prefix, e.g. "+44 (0)1483…" -> "+44 1483…"
   const hasPlus = raw.trim().startsWith("+");
   let digits = raw.replace(/\D/g, "");
@@ -1401,7 +1408,7 @@ function loadDirectoryRules(filePath){
 
 module.exports = {
   isBioAllottedDomain, bioAllotmentDomains, extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules,
-  cleanEmail, setEmailBlocklist, loadEmailBlocklist, setAdminRoleTerms, getAdminRoleTerms, getBuiltInRoleTerms, analyzePhones, splitExtension,
+  cleanEmail, setEmailBlocklist, loadEmailBlocklist, setAdminRoleTerms, getAdminRoleTerms, getBuiltInRoleTerms, analyzePhones, splitExtension, intlLineType,
   geocodeRecords, geocodePhone, findPosition,
   toE164, countryCodeFromDomain, pathIdFromUrl, getBaseDomain, nameSlugFromUrl, lastPathSeg, lastPathFromUrl, structuredFromHtml, findSocials };   // reused by the Sheet importer + Site Search + DB normalizer
 
