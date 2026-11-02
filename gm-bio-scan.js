@@ -216,7 +216,14 @@ async function pushList(urls, listName) {
       }
       if (LIMIT && rows >= LIMIT) return;
     }, (headerRow) => {
-      siHint = gm.setHeaderIndex(headerRow);
+      gm.setHeaderIndex(headerRow);
+      // setHeaderIndex locates the xb_ columns and returns NOTHING, so taking its value left siHint
+      // undefined and fields() fell back to scanning for an Open|Closed cell -- which cannot see a
+      // BLANK status, so every such row was dropped as unparseable. 55,843 of the 30-10 export's
+      // 500,000 rows went that way (gm-load saw 500,000, this scan saw 444,157). Read the column off
+      // the header exactly as gm-load does.
+      siHint = headerRow.findIndex((h) =>
+        String(h || '').replace(/^﻿/, '').trim().toLowerCase() === 'company_status');
       // The POI folder holds more than Maps exports — an 8-column "All the places…" sheet, a
       // 16-column Facebook batch. Read with the Maps column mapping they yield nonsense, and a junk
       // list would then be queued under that file's name. A real export declares xb_ columns, or at
