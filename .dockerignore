@@ -53,3 +53,10 @@ batch-1m.txt
 bio-repo-misses.txt
 wdc-emails-*.txt
 cc-bio-urls*.txt
+# The build context reached 154MB across 1,140 files and two Depot builds died mid-upload. Neither of
+# these is read by anything at runtime: .venv is a local Python virtualenv, and team-pages-distinct.csv
+# (65MB) is a staging dump no .js references. Together they were half the context.
+# phone-blocks.csv, Sitemap Master List.csv and Corp Prospects Child Sitemaps.csv STAY — each is loaded
+# by code in the image.
+.venv/
+team-pages-distinct.csv
