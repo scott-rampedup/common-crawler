@@ -1013,6 +1013,9 @@ function pruneOldJobs() {
     const fp = path.join(JOBS_DIR, `${j.id}.json`);
     try { bytes += fs.statSync(fp).size; } catch (e) { /* may already be gone */ }
     try { fs.unlinkSync(fp); n++; } catch (e) { /* ignore */ }
+    // The pushed URL list lives beside the job file and has no other owner: pruning the job without it
+    // left the list behind permanently, and every interactive push now writes one.
+    try { fs.unlinkSync(path.join(JOBS_DIR, `${j.id}.urls.txt`)); } catch (e) { /* most jobs have none */ }
     jobs.delete(j.id);
   }
   console.log(`Pruned ${n} old job file(s) (${(bytes / 1048576).toFixed(1)} MB freed), kept ${RETAIN} most recent.`);
@@ -1203,7 +1206,7 @@ async function runJobDomains(job, domainsToRun) {
   console.log(`Job ${job.id} ${job.status} — ${job.recordsByEmail.size} record(s)`);
 }
 
-const JOB_TYPES = ['Domains', 'Webpages', 'Sitemaps', 'Site Search Results', 'Google Sheet', 'CC Discovery', 'Monitor', 'BIO URL List'];
+const JOB_TYPES = ['Domains', 'Webpages', 'Sitemaps', 'Site Search Results', 'Google Sheet', 'CC Discovery', 'Monitor', 'BIO URL List', 'Extension'];
 const jobTypeFromMode = (mode) => (mode === 'webpage' ? 'Webpages' : 'Domains');
 const normalizeJobType = (t, mode) => (JOB_TYPES.includes(t) ? t : jobTypeFromMode(mode));
 
@@ -1250,7 +1253,7 @@ function deleteJob(id) {
   job.deleted = true;                     // suppress any further persistence
   job.stopRequested = true;               // wind down if it's still running
   jobs.delete(id);
-  for (const f of [`${id}.json`, `${id}.engine.csv`]) {
+  for (const f of [`${id}.json`, `${id}.engine.csv`, `${id}.urls.txt`]) {
     try { fs.unlinkSync(path.join(JOBS_DIR, f)); } catch (e) { /* may not exist */ }
   }
   console.log(`Deleted job ${id}`);
@@ -1953,11 +1956,52 @@ const server = http.createServer(async (req, res) => {
         const isBulk = /google\s*maps|sitemap|bulk|backfill|reprocess/i.test(source + ' ' + labelTag);
         const priority = (b && b.priority != null) ? prioOf(b.priority)
           : (isBulk ? 0 : (Number.isFinite(extPrio) ? prioOf(extPrio) : 9));
-        const put = await queueBioUrls(urls, label, priority);
-        const key = put && put.key ? put.key : '';
+
+        // ---- the interactive push CRAWLS NOW, as its own named list ----
+        //
+        // A queued push is invisible while it works. The receipt said how many URLs went in, and the
+        // outcome badge could be clicked for a tally after the fact, but there was no list to open, no
+        // rows arriving as they were found, and nothing to download: the push left the browser and the
+        // next sight of those people was in the Master DB among millions of others. Priority 9 was a
+        // workaround for the same complaint -- it bought a place at the front of a queue the push did
+        // not need to be in at all.
+        //
+        // Everything needed to do better already existed. A webpage-mode job crawls exactly the URLs it
+        // is handed, streams each record into the Data Importer as it lands, merges incrementally, and
+        // exposes /api/jobs/:id/results.csv. So an interactive push now IS one of those jobs: no S3
+        // object, no priority, no pump, and the crawl starts on this request.
+        //
+        // The fallback is on SIZE, not on the caller's say-so, and that direction is deliberate. A live
+        // job holds its work in memory and a deploy drops it -- survivable for the 60 URLs someone
+        // ticked in a popup, not survivable for a 24,897-URL Maps export. Bulk callers and anything
+        // over the cap fall through to the queue exactly as before, and a continuation chunk always
+        // does, because it is by definition part of a list already recorded there.
+        const LIVE_MAX = Number(process.env.BIO_URL_LIVE_MAX) || 2000;
         // A continuation of a list already recorded (a big push split across requests) adds to that
         // receipt; anything else starts a new one.
         const continueId = String((b && b.listId) || '').trim();
+        const wantsLive = (b && b.live != null) ? !!b.live : !isBulk;
+        if (wantsLive && !continueId && urls.length <= LIVE_MAX) {
+          // 'Extension' only when it really came from one. The same door is open to any interactive
+          // caller, and labelling an API push as the extension would put a lie in the one column that
+          // exists to say where a list came from.
+          const jobType = /extension/i.test(source) ? 'Extension' : 'Webpages';
+          const job = startJob(urls, '', !!(b && b.liveOnly), 'webpage', jobType, pageUrl || label, null, '');
+          // Keep the URL list beside the job for the same reason the queue path does: what was ASKED
+          // for is not recoverable from the records, which hold only the pages that yielded a person.
+          writeListUrls(job.id, urls, 0);
+          console.log(`[bio-list] "${job.name}" — crawling ${urls.length} URL(s) live as job ${job.id}`);
+          sendJson(res, { queued: urls.length, submitted: raw.length,
+            duplicatesDropped: raw.length - urls.length,
+            capped: raw.length > MAX ? MAX : 0,
+            listId: job.id, jobId: job.id, live: true, priority: 0,
+            note: 'Crawling now in the Data Importer as its own list — rows appear there as each page is read, and it downloads separately.' });
+          return;
+        }
+        const tooBigForLive = wantsLive && !continueId;
+
+        const put = await queueBioUrls(urls, label, priority);
+        const key = put && put.key ? put.key : '';
         const listId = (continueId && appendBioUrlList(continueId, urls.length, key, urls))
           ? continueId
           : recordBioUrlList({ name: pageUrl || label, count: urls.length, key, source, priority, urls });
@@ -1965,9 +2009,13 @@ const server = http.createServer(async (req, res) => {
           duplicatesDropped: raw.length - urls.length,
           capped: raw.length > MAX ? MAX : 0,
           listId, priority,
-          note: priority > 0
-            ? `Queued at the FRONT of the crawl queue (priority ${priority}) — taken before any bulk backlog, and a URL already queued is moved up rather than skipped.`
-            : 'Queued. The scheduled bio drain picks these up; already-known URLs are skipped there.' });
+          live: false,
+          // Over the inline cap is not the same event as a bulk load, and a caller that asked for a
+          // live list deserves to be told which one happened to it.
+          note: (tooBigForLive ? `Too large to crawl inline (${urls.length.toLocaleString()} URLs, cap ${LIVE_MAX.toLocaleString()}), so it went to the queue instead. ` : '')
+            + (priority > 0
+              ? `Queued at the FRONT of the crawl queue (priority ${priority}) — taken before any bulk backlog, and a URL already queued is moved up rather than skipped.`
+              : 'Queued. The scheduled bio drain picks these up; already-known URLs are skipped there.') });
       } catch (e) { jsonErr(res, 500, 'Queue write failed: ' + e.message); }
     });
     return;

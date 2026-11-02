@@ -1409,8 +1409,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   setInterval(fetchBacklog, 30000);
   // ?view=db (e.g. the "Master database" link on the Search page) opens the DB view directly;
   // otherwise open the newest job, or fall back to the legacy cc-results.csv view.
-  if (new URLSearchParams(location.search).get('view') === 'db') {
+  // ?view=db opens the master database; ?job=<id> opens ONE list directly. The Chrome extension
+  // links straight to the list it has just created, which until now could only be reached by being
+  // the newest row -- true the moment it was sent and wrong as soon as anything else started.
+  const qp = new URLSearchParams(location.search);
+  const wantJob = (qp.get('job') || '').trim();
+  if (qp.get('view') === 'db') {
     viewDatabase();
+  } else if (wantJob && state.jobs.some((j) => j.id === wantJob)) {
+    viewJob(wantJob);
   } else if (state.jobs.length) {
     viewJob(state.jobs[0].id);
   } else {
