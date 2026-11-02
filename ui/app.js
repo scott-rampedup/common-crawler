@@ -228,6 +228,10 @@ function updateModeHint() {
     elements.modeHint.textContent =
       'vCard: each .vcf is already a contact — name, title, email, phone and address are read straight from the card, with no page to crawl. Paste one vCard URL per line, or upload a .txt / .csv list.';
     if (elements.domainInput) elements.domainInput.placeholder = 'Enter one vCard URL per line (e.g. example.com/team/jane-smith.vcf or /vcard.aspx?id=123)';
+  } else if (mode === 'teampage') {
+    elements.modeHint.textContent =
+      'Team Page: reads a LISTING page that names several people at once — it segments the roster and pulls one record per person, binding each email, phone and profile link inside that person’s own card. Use Webpage instead when each URL is about a single person.';
+    if (elements.domainInput) elements.domainInput.placeholder = 'Enter one team / staff / our-people URL per line';
   } else if (mode === 'webpage') {
     elements.modeHint.textContent = 'Webpage: pulls contacts only from the exact URLs you provide (one per line).';
     if (elements.domainInput) elements.domainInput.placeholder = 'Enter one full webpage URL per line';
@@ -733,23 +737,25 @@ async function searchContacts() {
     await ingestVcards(elements.domainInput.value);
     return;
   }
-  const domains = mode === 'webpage'
+  const urlMode = mode === 'webpage' || mode === 'teampage';   // both take full URLs, not bare hosts
+  const domains = urlMode
     ? parseUrlList(elements.domainInput.value)
     : parseDomainList(elements.domainInput.value);
   if (domains.length === 0) {
-    setSearchStatus(mode === 'webpage' ? 'Please enter one or more webpage URLs.' : 'Please enter one or more domains to search.');
+    setSearchStatus(urlMode ? 'Please enter one or more webpage URLs.' : 'Please enter one or more domains to search.');
     return;
   }
   const directoryFilter = elements.directoryFilter.value.trim();
   const liveOnly = !!(elements.liveOnlyCheckbox && elements.liveOnlyCheckbox.checked);
-  const unit = mode === 'webpage' ? 'webpage' : 'domain';
+  const unit = mode === 'teampage' ? 'team page' : (mode === 'webpage' ? 'webpage' : 'domain');
 
   try {
     setSearchStatus(`Starting a job for ${domains.length} ${unit}${domains.length === 1 ? '' : 's'}...`);
     const response = await fetch('/api/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ domains, directoryFilter, liveOnly, mode, type: mode === 'webpage' ? 'Webpages' : 'Domains' }),
+      body: JSON.stringify({ domains, directoryFilter, liveOnly, mode,
+        type: mode === 'teampage' ? 'Team Page' : (mode === 'webpage' ? 'Webpages' : 'Domains') }),
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
@@ -1019,6 +1025,60 @@ function renderJobs() {
         dlBtn.textContent = 'Download CSV';
         dlBtn.addEventListener('click', () => { window.location.href = `/api/jobs/${job.id}/results.csv`; });
         actions.appendChild(dlBtn);
+      }
+
+      // "Read as": what a list IS is normally discovered AFTER it is uploaded — a file of URLs looks
+      // identical whether its pages hold one person or thirty. So the reader is changed here and the
+      // same list re-run, instead of making someone re-upload it under a different type.
+      if (job.status !== 'running' && job.total > 0
+          && ['Webpages', 'Team Page', 'BIO URL List', 'Extension'].includes(job.type || '')) {
+        const wrap = document.createElement('label');
+        wrap.className = 'read-as';
+        wrap.textContent = 'Read as ';
+        const sel = document.createElement('select');
+        for (const [val, label] of [['webpage', 'Webpages — one person per page'],
+                                    ['teampage', 'Team Page — many people per page']]) {
+          const o = document.createElement('option');
+          o.value = val;
+          o.textContent = label;
+          if ((job.mode || 'webpage') === val) o.selected = true;
+          sel.appendChild(o);
+        }
+        sel.addEventListener('change', async () => {
+          const want = sel.value;
+          if (want === (job.mode || 'webpage')) return;
+          const asWhat = want === 'teampage' ? 'Team Pages' : 'Webpages';
+          if (!confirm(`Re-read all ${job.total} URL(s) as ${asWhat}? This rebuilds this job's rows from scratch — anything already merged into the Master DB stays there.`)) {
+            sel.value = job.mode || 'webpage';
+            return;
+          }
+          sel.disabled = true;
+          try {
+            const r = await fetch(`/api/jobs/${job.id}/reprocess`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ mode: want }),
+            });
+            const j = await r.json();
+            if (!r.ok) throw new Error(j.error || 'reprocess failed');
+            await fetchJobs();
+          } catch (e) {
+            alert('Could not change how this list is read: ' + e.message);
+            sel.disabled = false;
+          }
+        });
+        wrap.appendChild(sel);
+        actions.appendChild(wrap);
+      }
+
+      // The per-person bio pages the cards linked to. Deliberately a download, not a queue push:
+      // they belong to the one-page-one-person pipeline and sending them there is its own decision.
+      if (job.teamPage && job.teamPage.bioUrls > 0) {
+        const bioBtn = document.createElement('button');
+        bioBtn.textContent = `Bio URLs (${job.teamPage.bioUrls})`;
+        bioBtn.title = 'Per-person bio pages found inside the team cards. Downloaded, not queued.';
+        bioBtn.addEventListener('click', () => { window.location.href = `/api/jobs/${job.id}/team-bio-urls.txt`; });
+        actions.appendChild(bioBtn);
       }
 
       if (job.status === 'interrupted' || job.status === 'failed' || job.status === 'stopped') {

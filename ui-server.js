@@ -300,6 +300,7 @@ const emailVerify = require('./email-verify'); // deliverability check for MODEL
 const { importSheet } = require('./sheet-import');
 const { siteSearch, bioRowsToRecords } = require('./serper');
 const vcard = require('./vcard');
+const teamJob = require('./team-job');   // Team Page mode: many people off ONE listing page
 const mailer = require('./mailer');
 const optout = require('./optout');
 const firmoEnrich = require('./enrich-firmographics');
@@ -314,8 +315,10 @@ try {
 
 // First-name -> gender lookup, loaded once at startup (committed CSV ships in the image).
 let GENDER_MAP = {};
+let FIRST_NAMES = new Set();   // same lexicon as a Set, for team-extract's name detector
 try {
   GENDER_MAP = loadGenderMap(path.join(__dirname, 'names-genders.csv'));
+  FIRST_NAMES = new Set(Object.keys(GENDER_MAP).map((k) => String(k).toLowerCase()));
   console.log(`Loaded ${Object.keys(GENDER_MAP).length.toLocaleString()} name->gender entries.`);
 } catch (e) {
   console.warn('names-genders.csv not loaded (Gender will be blank):', e.message);
@@ -899,6 +902,9 @@ function jobSummary(job) {
     // a different thing from "merged 0 rows" and the UI says so.
     merge: job.merge || null,
     bioList: job.bioList || null,       // a pushed BIO URL list: where it came from and how many
+    // Team Page read: pages fetched, people emitted, bare names dropped, and how many per-person
+    // bio pages the cards linked to (downloadable, not queued).
+    teamPage: job.teamPage || null,
   };
 }
 
@@ -936,6 +942,7 @@ function persistJob(job) {
     // absent from this object.
     merge: job.merge || null,
     bioList: job.bioList || null,
+    teamPage: job.teamPage || null,     // Team Page read stats -- same reason as the two above
     records: jobRawRecords(job),
   };
   try { fs.writeFileSync(path.join(JOBS_DIR, `${job.id}.json`), JSON.stringify(out)); }
@@ -987,6 +994,7 @@ function loadJobs() {
         error: j.error || null, recordsByEmail, lastProgress: null,
         merge: j.merge || null,         // survives restarts; null means the merge never ran
         bioList: j.bioList || null,     // a pushed BIO URL list keeps its provenance across restarts
+        teamPage: j.teamPage || null,   // ...and a Team Page job keeps its read stats
       });
     } catch (e) { console.error(`Failed to load job file ${f}:`, e.message); }
   }
@@ -1117,7 +1125,46 @@ async function runJobDomains(job, domainsToRun) {
   job.error = null;
   job.stopRequested = false;
   persistJob(job);
+  // Shared by BOTH runners below, so coverage, progress and the incremental merge behave identically
+  // whichever one produced the record.
+  const onRecord = (row) => {
+    if (job.recordSource) row['Source'] = job.recordSource;   // tag monitor-detected new hires
+    const k = String(row['Email Address'] || '').toLowerCase() || `_${job.recordsByEmail.size}`;
+    job.recordsByEmail.set(k, row);
+  };
+  const onProgress = (p) => {
+    job.lastProgress = p;
+    if (p.domain && (p.status === 'domain-done' || p.status === 'no-candidates')) {
+      if (!job.doneDomains.includes(p.domain)) job.doneDomains.push(p.domain);
+      // tally coverage ourselves so it stays correct across resumes
+      // (Common Crawl -> found; Live Crawl / Webpage / Team Page -> live)
+      if (p.status === 'domain-done' && p.source === 'Common Crawl') job.coverage.found += 1;
+      else if (p.status === 'domain-done') job.coverage.live += 1;
+      else job.coverage.empty += 1;
+      persistJobThrottled(job);        // throttled: final unthrottled save happens after the run
+      mergeIncremental(job);           // don't let a stall strand everything found so far
+    }
+  };
   try {
+    if ((job.mode || '') === 'teampage') {
+      // One listing page -> many people. Everything AFTER this block (vCard, email modelling,
+      // geocode, merge) is untouched: the runner emits the same canonical row shape.
+      const r = await teamJob.runTeamPages(domainsToRun, {
+        genderMap: GENDER_MAP,
+        firsts: FIRST_NAMES,
+        shouldStop: () => job.stopRequested,
+        onRecord,
+        onProgress,
+      });
+      job.teamPage = { pages: r.pages, fetched: r.fetched, people: r.people,
+        bioUrls: r.bioUrls.length, droppedBare: r.dropped };
+      // The per-person bio pages found INSIDE the cards. Written beside the job, NOT queued: they
+      // belong to the existing one-page-one-person pipeline and pushing them is a separate decision.
+      if (r.bioUrls.length) {
+        try { fs.writeFileSync(path.join(JOBS_DIR, `${job.id}.team-bio-urls.txt`), r.bioUrls.join('\n') + '\n'); }
+        catch (e) { console.error('team bio-url write failed:', e.message); }
+      }
+    } else {
     await runDomains(domainsToRun, {
       demoMode: DEMO_MODE,
       directoryFilter: job.directoryFilter,
@@ -1127,25 +1174,10 @@ async function runJobDomains(job, domainsToRun) {
       _warcByUrl: job._warcByUrl || null,                      // pre-resolved WARC pointers -> skip per-URL index lookups
       shouldStop: () => job.stopRequested,                     // honor a STOP request
       outPath: path.join(JOBS_DIR, `${job.id}.engine.csv`),   // throwaway; we keep our own records
-      onRecord: (row) => {
-        if (job.recordSource) row['Source'] = job.recordSource;   // tag monitor-detected new hires
-        const k = String(row['Email Address'] || '').toLowerCase() || `_${job.recordsByEmail.size}`;
-        job.recordsByEmail.set(k, row);
-      },
-      onProgress: (p) => {
-        job.lastProgress = p;
-        if (p.domain && (p.status === 'domain-done' || p.status === 'no-candidates')) {
-          if (!job.doneDomains.includes(p.domain)) job.doneDomains.push(p.domain);
-          // tally coverage ourselves so it stays correct across resumes
-          // (Common Crawl -> found; Live Crawl / Webpage -> live)
-          if (p.status === 'domain-done' && p.source === 'Common Crawl') job.coverage.found += 1;
-          else if (p.status === 'domain-done') job.coverage.live += 1;
-          else job.coverage.empty += 1;
-          persistJobThrottled(job);        // throttled: final unthrottled save happens after the run
-          mergeIncremental(job);           // don't let a stall strand everything found so far
-        }
-      },
+      onRecord,
+      onProgress,
     });
+    }
     job.status = job.stopRequested ? 'stopped' : 'completed';
   } catch (e) {
     job.status = 'failed';
@@ -1206,12 +1238,14 @@ async function runJobDomains(job, domainsToRun) {
   console.log(`Job ${job.id} ${job.status} — ${job.recordsByEmail.size} record(s)`);
 }
 
-const JOB_TYPES = ['Domains', 'Webpages', 'Sitemaps', 'Site Search Results', 'Google Sheet', 'CC Discovery', 'Monitor', 'BIO URL List', 'Extension'];
-const jobTypeFromMode = (mode) => (mode === 'webpage' ? 'Webpages' : 'Domains');
+const JOB_TYPES = ['Domains', 'Webpages', 'Sitemaps', 'Site Search Results', 'Google Sheet', 'CC Discovery', 'Monitor', 'BIO URL List', 'Extension', 'Team Page'];
+const jobTypeFromMode = (mode) => (mode === 'teampage' ? 'Team Page' : (mode === 'webpage' ? 'Webpages' : 'Domains'));
 const normalizeJobType = (t, mode) => (JOB_TYPES.includes(t) ? t : jobTypeFromMode(mode));
 
 function startJob(domains, directoryFilter, liveOnly, mode, type, name, warcByUrl, recordSource) {
-  const m = mode === 'webpage' ? 'webpage' : 'domain';
+  // 'teampage' is its own mode, not a flavour of 'webpage': the URLs are listing pages and each one
+  // yields MANY people, so it takes a different runner further down.
+  const m = mode === 'teampage' ? 'teampage' : (mode === 'webpage' ? 'webpage' : 'domain');
   const job = {
     id: newJobId(),
     createdAt: new Date().toISOString(),
@@ -1253,7 +1287,7 @@ function deleteJob(id) {
   job.deleted = true;                     // suppress any further persistence
   job.stopRequested = true;               // wind down if it's still running
   jobs.delete(id);
-  for (const f of [`${id}.json`, `${id}.engine.csv`, `${id}.urls.txt`]) {
+  for (const f of [`${id}.json`, `${id}.engine.csv`, `${id}.urls.txt`, `${id}.team-bio-urls.txt`]) {
     try { fs.unlinkSync(path.join(JOBS_DIR, f)); } catch (e) { /* may not exist */ }
   }
   console.log(`Deleted job ${id}`);
@@ -2078,7 +2112,10 @@ const server = http.createServer(async (req, res) => {
           .flatMap((d) => String(d || '').split(/[\r\n|]+/)).map((s) => s.trim()).filter(Boolean);
         const directoryFilter = typeof payload.directoryFilter === 'string' ? payload.directoryFilter.trim() : '';
         const liveOnly = payload.liveOnly === true;
-        const mode = payload.mode === 'webpage' ? 'webpage' : 'domain';
+        // 'teampage' must survive here too -- the TYPE is whitelisted separately, so without this
+        // a Team Page job was accepted, labelled Team Page, and then read in domain mode.
+        const mode = payload.mode === 'teampage' ? 'teampage'
+          : (payload.mode === 'webpage' ? 'webpage' : 'domain');
         const type = typeof payload.type === 'string' ? payload.type : '';
         const name = typeof payload.name === 'string' ? payload.name : '';
         // Optional WARC fast path (webpage mode): pre-resolved pointers from cc-domain-miner --warc-out
@@ -3210,7 +3247,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // routes that target a single job: /api/jobs/:id , /api/jobs/:id/records , /api/jobs/:id/results.csv , /api/jobs/:id/resume
-  const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)(\/records|\/results\.csv|\/resume|\/stop|\/name|\/merge)?$/);
+  const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)(\/records|\/results\.csv|\/resume|\/stop|\/name|\/merge|\/reprocess|\/team-bio-urls\.txt)?$/);
   if (jobMatch) {
     if (!isAnalyst) { jsonErr(res, 403, 'Forbidden'); return; }
     const id = jobMatch[1];
@@ -3250,6 +3287,49 @@ const server = http.createServer(async (req, res) => {
         persistJob(job);
         jsonErr(res, 500, 'Merge failed: ' + e.message);
       }
+      return;
+    }
+
+    // Re-read this job's SAME list with a different reader.
+    //
+    // What a list IS tends to be discovered after it is uploaded, not before -- a file of URLs looks
+    // identical whether its pages hold one person or thirty. Rather than make the uploader declare it
+    // up front and re-upload when they get it wrong, this switches the reader and re-runs the list
+    // that is already here. Records are rebuilt from scratch on purpose: a Webpages read and a Team
+    // Page read of the SAME page produce different rows, and keeping both would double-count people.
+    // Anything already merged into the Master DB stays there -- this only rebuilds the job's own rows.
+    if (sub === '/reprocess' && req.method === 'POST') {
+      readJsonBody(req, (payload) => {
+        const want = String((payload && payload.mode) || '').trim();
+        if (!['teampage', 'webpage', 'domain'].includes(want)) { jsonErr(res, 400, "mode must be 'teampage', 'webpage' or 'domain'"); return; }
+        if (job.status === 'running') { jsonErr(res, 409, 'Stop this job before changing how it is read.'); return; }
+        if (!Array.isArray(job.domains) || !job.domains.length) { jsonErr(res, 400, 'This job has no list to re-read.'); return; }
+        job.mode = want;
+        job.type = normalizeJobType('', want);
+        job.recordsByEmail = new Map();
+        job.doneDomains = [];
+        job.coverage = { found: 0, live: 0, empty: 0, errored: 0 };
+        job.teamPage = null;
+        job.error = null;
+        job.finishedAt = null;
+        job.status = 'running';
+        persistJob(job);
+        runJobDomains(job, job.domains).catch((e) => {
+          job.status = 'failed'; job.error = e.message; persistJob(job);
+        });
+        console.log(`Job ${id} re-reading ${job.domains.length} URL(s) as ${job.type}`);
+        sendJson(res, jobSummary(job));
+      });
+      return;
+    }
+
+    // The per-person bio pages this Team Page job found inside the cards, as a plain list.
+    if (sub === '/team-bio-urls.txt' && req.method === 'GET') {
+      let body = '';
+      try { body = fs.readFileSync(path.join(JOBS_DIR, `${id}.team-bio-urls.txt`), 'utf8'); } catch (e) { body = ''; }
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${id}-team-bio-urls.txt"` });
+      res.end(body);
       return;
     }
 
