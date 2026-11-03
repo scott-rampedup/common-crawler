@@ -78,7 +78,13 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
     const t0 = Date.now();
     const summary = { startedAt, finishedAt: null, seconds: 0, total: 0, scanned: 0, withGap: 0,
       newUrls: 0, seenUrls: 0, liveQueued: 0, jobs: 0, noUrls: 0, errors: 0, liveCapReached: false, top: [],
-      stateOk: 0, stateErrors: 0, stateRejected: 0, stateSample: '', ok: false };
+      stateOk: 0, stateErrors: 0, stateRejected: 0, stateSample: '', retired: 0, outstanding: null, ok: false };
+    // A sitemap that fetches nothing ONCE is usually a block or a timeout, not a dead sitemap — 9,026 of
+    // them fetched 0 on 2026-08-26 having produced an average of 366 URLs before, and monitor_note cannot
+    // tell a hard block from an empty file. Retiring on a single zero would have thrown those away. Retire
+    // on a RUN of them instead, so a bad night costs one wasted fetch and a genuinely dead sitemap leaves
+    // the sweep within a week.
+    const ZERO_RETIRE_PASSES = Math.max(1, Number(process.env.SITEMAP_ZERO_RETIRE_PASSES) || 3);
     const byDomain = new Map();                            // domain -> new-URL count, for the report
     // A sweep of this size is dominated by sitemaps that no longer resolve, and the default fetchDoc spends
     // up to 15s on the primary path and another 15s on the residential gateway for each one. Measured on
@@ -137,11 +143,17 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
         }
         // last_new_at makes "new tonight" queryable — last_new alone can't distinguish a sitemap that found
         // 12 new bios this pass from one that found 12 a week ago and none since.
+        // Consecutive zero-fetch passes, reset the moment the sitemap produces anything again.
+        const zeroPasses = pageUrls.length ? 0 : (Number(d.zero_passes) || 0) + 1;
+        const retire = zeroPasses >= ZERO_RETIRE_PASSES;
+        if (retire) summary.retired++;
         await putState(d.sitemap_url, {
           last_checked: nowIso, last_new: missing.length, last_seen_urls: pageUrls.length,
           total_new: (Number(d.total_new) || 0) + missing.length,
           ...(missing.length ? { last_new_at: nowIso } : {}),
+          zero_passes: zeroPasses,
           monitor_note: pageUrls.length ? '' : 'no urls fetched',
+          ...(retire ? { monitored: false, monitor_note: `retired: 0 bio URLs on ${zeroPasses} consecutive passes` } : {}),
         });
       } catch (e) {
         summary.errors++;
@@ -183,12 +195,23 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
       // the old bar, and a pass that stamped nothing still read as a clean run.
       summary.ok = summary.total > 0 && summary.scanned >= summary.total && summary.stateErrors === 0;
       summary.top = [...byDomain.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([domain, count]) => ({ domain, count }));
+      // newUrls is "found tonight". outstanding is "discovered at some point and still not crawled" —
+      // the two are different questions and reporting only the first is what made a stalled consumer look
+      // like a productive producer for ten weeks.
+      try {
+        const ledger = require('./crawl-ledger');
+        const r = await contactsClient.count({ index: ledger.INDEX, body: { query: { term: { outcome: 'queued' } } } });
+        summary.outstanding = ((r.body || r).count);
+      } catch (e) { /* reporting only — never fail a pass over it */ }
       log(`nightly sweep done: scanned ${summary.scanned.toLocaleString()}/${summary.total.toLocaleString()}, ` +
           `${summary.seenUrls.toLocaleString()} bio URL(s) monitored, ` +
           `${summary.withGap.toLocaleString()} sitemap(s) with new bios, ${summary.newUrls.toLocaleString()} new URL(s) ` +
           `in ${summary.jobs} job(s), ${summary.noUrls.toLocaleString()} returned no urls, ${summary.errors.toLocaleString()} error(s), ` +
           `state writes ${summary.stateOk.toLocaleString()} ok / ${summary.stateErrors.toLocaleString()} failed` +
-          `${summary.stateRejected ? ` (${summary.stateRejected.toLocaleString()} rejected by OpenSearch)` : ''}, ${summary.seconds}s`);
+          `${summary.stateRejected ? ` (${summary.stateRejected.toLocaleString()} rejected by OpenSearch)` : ''}, ` +
+          `${summary.retired.toLocaleString()} retired after ${ZERO_RETIRE_PASSES} zero passes, ` +
+          `${summary.outstanding == null ? 'outstanding unknown' : `${summary.outstanding.toLocaleString()} outstanding (queued, not yet crawled)`}, ` +
+          `${summary.seconds}s`);
     }
     return summary;
   }

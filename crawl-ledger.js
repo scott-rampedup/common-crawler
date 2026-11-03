@@ -17,6 +17,8 @@
  *   empty      — no HTML came back (dead link, hard block, redirect to nothing).
  *   error      — the fetch threw. TRANSIENT, and deliberately retried: proxies fail, sites rate-limit,
  *                and a blanket "never again" on an error would quietly shrink the universe every run.
+ *   queued     — DISCOVERED, not attempted. Written by the sitemap sweep when it hands a URL to the
+ *                queue. See recordDiscovered below for why this outcome has to exist.
  *
  * The retry policy follows from that: 'error' is always retried, everything else is suppressed for
  * LEDGER_RETRY_DAYS (default 30) and then allowed again, because staff pages do change.
@@ -37,13 +39,25 @@ const MAPPING = {
     properties: {
       url:          { type: 'keyword', ignore_above: 2048 },
       domain:       { type: 'keyword' },
-      outcome:      { type: 'keyword' },   // extracted | no-record | empty | error
+      outcome:      { type: 'keyword' },   // extracted | no-record | empty | error | queued
       attempts:     { type: 'integer' },
       last_attempt: { type: 'date' },
+      queued_at:    { type: 'date' },      // when DISCOVERY recorded it; never set by an attempt
       source:       { type: 'keyword' },   // Live Crawl | Common Crawl | …
     },
   },
 };
+
+// Fields added after the index was first created. ensureIndex only ever CREATES, so on the live index
+// (11.8M docs) a new mapping property would otherwise be left to dynamic mapping — which types a date by
+// guessing at its first value. Push it explicitly instead; putMapping is additive and safe to repeat.
+const ADDED_FIELDS = { queued_at: { type: 'date' } };
+
+// A discovery must not suppress the crawl that is supposed to follow it. QUEUED_TTL_DAYS is how long a
+// 'queued' entry stops the sweep re-reporting the same URL; past it the URL is reported again, because a
+// promise nothing kept is not a page we have. Deliberately far shorter than RETRY_DAYS: 2026-08-27 retired
+// 13,174 queue objects on the strength of bookkeeping alone and 6.8M URLs went dark for ten weeks.
+const QUEUED_TTL_DAYS = Number(process.env.LEDGER_QUEUED_TTL_DAYS) || 7;
 
 const idOf = (url) => crypto.createHash('sha1').update(String(url)).digest('hex');
 const domainOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { return ''; } };
@@ -55,6 +69,13 @@ async function ensureIndex(client) {
   } catch (e) { /* fall through to create */ }
   try { await client.indices.create({ index: INDEX, body: MAPPING }); }
   catch (e) { if (!/resource_already_exists/i.test(String(e && e.message))) throw e; }
+}
+
+// Additive mapping push for an index that already exists. Separate from ensureIndex's create path so a
+// fresh index gets the full MAPPING and a live one still learns the new fields.
+async function ensureFields(client) {
+  try { await client.indices.putMapping({ index: INDEX, body: { properties: ADDED_FIELDS } }); }
+  catch (e) { /* additive-only; ignore if already present */ }
 }
 
 /**
@@ -93,9 +114,74 @@ async function record(client, entries) {
 }
 
 /**
+ * Record that a URL was DISCOVERED and queued — not that it was crawled.
+ *
+ * THE GAP THIS CLOSES: the sweep's definition of "already known" is a contact or a ledger entry, and both
+ * only exist once something has processed the URL. So an unprocessed URL was indistinguishable from an
+ * undiscovered one and was re-reported every single night. Measured on two consecutive complete passes,
+ * 2026-08-25 and 2026-08-26: 94.2% of the URLs the second night called "net new" the first night had
+ * already queued, and the nightly total barely moved (2,515,167 -> 2,501,321) against a base of 8.7M. That
+ * is where a 54.9M-URL backlog came from — roughly 2.5M distinct URLs written about 22 times.
+ *
+ * Deliberately NOT a Pre-Process contact record: a placeholder in the contacts index would make the
+ * discovery visible but would also inflate every contact count that anyone reads. The ledger is where
+ * "we know about this URL" belongs, and it has no bearing on counts.
+ *
+ * Two things this must never do, both of which would cost the work itself:
+ *   - increment `attempts`. Nothing was fetched. attempts is what the retry policy reads.
+ *   - overwrite a real outcome. 'extracted' or 'no-record' outranks a discovery; only an entry with no
+ *     outcome yet, or a previous discovery, becomes 'queued'.
+ */
+async function recordDiscovered(client, urls, opts = {}) {
+  const list = [...new Set((urls || []).filter(Boolean))];
+  if (!list.length) return { indexed: 0, errors: 0 };
+  const at = new Date().toISOString();
+  const source = opts.source || 'Sitemap Monitor';
+  let indexed = 0, errors = 0;
+  for (let i = 0; i < list.length; i += 1000) {
+    const body = [];
+    for (const u of list.slice(i, i + 1000)) {
+      body.push({ update: { _index: INDEX, _id: idOf(u) } });
+      body.push({
+        scripted_upsert: true,
+        script: {
+          lang: 'painless',
+          source: 'if (ctx._source.attempts == null) { ctx._source.attempts = 0 }'
+                + ' ctx._source.url = params.url; ctx._source.domain = params.domain;'
+                + ' ctx._source.queued_at = params.at;'
+                + ' if (ctx._source.outcome == null || ctx._source.outcome == params.queued) {'
+                + '   ctx._source.outcome = params.queued; ctx._source.source = params.source; }',
+          params: { url: u, domain: domainOf(u), at, source, queued: 'queued' },
+        },
+        upsert: {},
+      });
+    }
+    try {
+      const r = await client.bulk({ body });
+      const b = r.body || r;
+      if (b && b.items) for (const it of b.items) { if (it.update && it.update.error) errors++; else indexed++; }
+    } catch (e) { errors += body.length / 2; }
+  }
+  return { indexed, errors };
+}
+
+/**
  * Which of these URLs should be crawled? Returns a Set of the ones to SKIP.
  * A lookup failure returns an empty set — an unfiltered URL costs one fetch, a wrongly-skipped one is
  * lost data, and this filter must never be the reason a page is missed.
+ *
+ * @param opts.queuedCountsAsKnown  Does a 'queued' entry — discovered, never fetched — count as done?
+ *
+ * The two callers need OPPOSITE answers, exactly as they do for a Pre-Process placeholder in
+ * skip-known.js, and for the same reason:
+ *
+ *   the SWEEP wants true  — the URL is already in the queue, so do not report or queue it a second time.
+ *                           This is what stops the nightly re-discovery that built the backlog.
+ *   the DRAIN wants false — 'queued' is the work it exists to do. Treating it as done would skip the URL
+ *                           forever and no queued URL would ever become a contact.
+ *
+ * The default is FALSE. Wrong in that direction costs a duplicate queue entry; wrong the other way costs
+ * the page, silently, which is the failure this whole file was written to prevent.
  */
 async function skipSet(client, urls, opts = {}) {
   const skip = new Set();
@@ -109,14 +195,24 @@ async function skipSet(client, urls, opts = {}) {
   for (let i = 0; i < ids.length; i += 1000) {
     const chunk = ids.slice(i, i + 1000);
     try {
-      const r = await client.mget({ index: INDEX, body: { ids: chunk }, _source: ['outcome', 'last_attempt'] });
+      const r = await client.mget({ index: INDEX, body: { ids: chunk }, _source: ['outcome', 'last_attempt', 'queued_at'] });
       for (const d of ((r.body || r).docs || [])) {
         if (!d || !d.found || !d._source) continue;
         const o = d._source.outcome;
         if (o === 'error') continue;                                  // transient — always retry
+        const u = byId.get(d._id);
+        if (o === 'queued') {
+          // Discovered, never fetched. Only the producer may treat this as settled, and only while it is
+          // fresh — a URL that has sat queued past the TTL was not drained by anyone, so it is still
+          // genuinely missing and must be reported again rather than quietly disappear.
+          if (!opts.queuedCountsAsKnown) continue;
+          const qAt = Date.parse(d._source.queued_at || '') || 0;
+          if (!qAt || qAt < Date.now() - QUEUED_TTL_DAYS * 86400000) continue;
+          if (u) skip.add(u);
+          continue;
+        }
         const when = Date.parse(d._source.last_attempt || '') || 0;
         if (when && when < cutoff) continue;                          // stale enough to be worth re-checking
-        const u = byId.get(d._id);
         if (u) skip.add(u);
       }
     } catch (e) { /* never skip on a lookup failure */ }
@@ -124,7 +220,7 @@ async function skipSet(client, urls, opts = {}) {
   return skip;
 }
 
-module.exports = { INDEX, MAPPING, ensureIndex, record, skipSet, idOf, RETRY_DAYS };
+module.exports = { INDEX, MAPPING, ensureIndex, ensureFields, record, recordDiscovered, skipSet, idOf, RETRY_DAYS, QUEUED_TTL_DAYS };
 
 // ---- CLI: stats and pruning ----
 if (require.main === module) {

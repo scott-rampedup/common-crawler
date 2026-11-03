@@ -484,6 +484,20 @@ function libraryIngest(urls, content) {
     .then((r) => console.log(`[lib-ingest] Library += ${r.upserted} sitemap(s) from ingest (${r.classified} classified, ${r.unknown} unknown, ${r.errors} err)`))
     .catch((e) => console.error('[lib-ingest] failed:', e.message));
 }
+// Write 'queued' ledger entries for URLs the sweep just handed to the queue. The mapping push runs once
+// per process: crawl_log predates queued_at, and ensureIndex only ever creates, so without it the new
+// field would be left to dynamic mapping.
+let _ledgerFieldsReady = null;
+function recordDiscovery(urls) {
+  if (!reader || !reader.client || !Array.isArray(urls) || !urls.length) return;
+  const ledger = require('./crawl-ledger');
+  if (!_ledgerFieldsReady) _ledgerFieldsReady = ledger.ensureIndex(reader.client).then(() => ledger.ensureFields(reader.client)).catch(() => {});
+  _ledgerFieldsReady
+    .then(() => ledger.recordDiscovered(reader.client, urls, { source: 'Sitemap Monitor' }))
+    .then((r) => { if (r && r.errors) console.error(`[crawl-ledger] ${r.errors.toLocaleString()} discovery write(s) failed`); })
+    .catch((e) => console.error('[crawl-ledger] discovery write failed:', e.message));
+}
+
 let libMonitor = null;
 function getLibMonitor() {   // lazy: sitemapsClient + reader are set in startup()
   if (!libMonitor && sitemapsClient && reader && reader.client) {
@@ -493,6 +507,11 @@ function getLibMonitor() {   // lazy: sitemapsClient + reader are set in startup
         // The queue write is unconditional. It is the durable record that these URLs were found to be new,
         // and it must not depend on how busy the live crawler is or how deep the ETL queue already runs.
         queueBioUrls(urls, label || 'Sitemap Monitor');               // nightly bio-ETL (Lambda) drains this
+        // ...and record the discovery, so tomorrow's pass can tell "not found yet" from "found, not yet
+        // crawled". Without this the sweep re-reported the same URLs every night: 94.2% of what 2026-08-26
+        // called net-new, 2026-08-25 had already queued. Fire-and-forget on purpose — the queue write above
+        // is the durable one, and a ledger failure must never cost us the URLs.
+        recordDiscovery(urls);
         // Past the sweep's live cap, opts.live is false: still queued, just no inline crawl job.
         if (MONITOR_LIVE_JOBS && opts.live !== false) startJob(urls, '', false, 'webpage', 'Monitor', label || 'Sitemap Monitor', null, 'Sitemap Monitor');
       },

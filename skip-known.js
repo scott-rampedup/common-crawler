@@ -140,7 +140,11 @@ function getLedger(client) {
 }
 
 /**
- * @param opts.preProcessCountsAsKnown  Does a Pre-Process placeholder count as "we already did this"?
+ * @param opts.preProcessCountsAsKnown  Does a PROMISE count as "we already did this"?
+ *
+ * Two kinds of promise, one flag, because the answer is the same for both: a Pre-Process placeholder in
+ * the contacts index, and a 'queued' entry in the crawl ledger (crawl-ledger.recordDiscovered). The flag
+ * is forwarded to ledger.skipSet as queuedCountsAsKnown.
  *
  * The two callers need OPPOSITE answers from the same question, and getting it backwards silently stops
  * the pipeline:
@@ -177,7 +181,7 @@ async function knownSet(urls, opts = {}) {
         aggs: { u: { terms: { field: 'web_source_url', size: chunk.length } } } } }, { requestTimeout: 120000 });
       for (const b of (((r.body || r).aggregations.u.buckets) || [])) out.add(b.key);
     } catch (e) { /* unfiltered URL costs a fetch, not correctness */ }
-    if (ledger) { try { for (const u of await ledger.skipSet(client, chunk)) out.add(u); } catch (e) { /* */ } }
+    if (ledger) { try { for (const u of await ledger.skipSet(client, chunk, { queuedCountsAsKnown: preOk })) out.add(u); } catch (e) { /* */ } }
   };
   for (let i = 0; i < chunks.length; i += CONC) await Promise.all(chunks.slice(i, i + CONC).map(one));
   return out;

@@ -94,8 +94,12 @@ async function ensureConsumedIndex() {
   try { const ex = await c.indices.exists({ index: CONSUMED_INDEX }); if (ex.body === true || ex === true) return; }
   catch (e) { /* fall through */ }
   try { await c.indices.create({ index: CONSUMED_INDEX, body: { settings: { number_of_shards: 1, number_of_replicas: 0 },
-    mappings: { properties: { key: { type: 'keyword' }, consumed_at: { type: 'date' }, run: { type: 'keyword' } } } } }); }
+    mappings: { properties: { key: { type: 'keyword' }, consumed_at: { type: 'date' }, run: { type: 'keyword' },
+      permanent: { type: 'boolean' }, retired_reason: { type: 'keyword' } } } } }); }
   catch (e) { if (!/resource_already_exists/i.test(String(e && e.message))) throw e; }
+  // Additive for an index that already exists — create() above is skipped once it does.
+  try { await c.indices.putMapping({ index: CONSUMED_INDEX, body: { properties: {
+    permanent: { type: 'boolean' }, retired_reason: { type: 'keyword' } } } }); } catch (e) { /* ignore */ }
 }
 async function markConsumed(keys) {
   if (!keys || !keys.length) return 0;
@@ -139,15 +143,21 @@ async function alreadyConsumed(keys) {
   const done = new Set();
   if (!keys.length) return done;
   const cutoff = Date.now() - CONSUMED_TTL_DAYS * 86400000;
-  let expired = 0, undated = 0;
+  let expired = 0, undated = 0, permanent = 0;
   try {
     await ensureConsumedIndex();
     const c = osClient();
     for (let i = 0; i < keys.length; i += 1000) {
       const chunk = keys.slice(i, i + 1000);
-      const r = await c.mget({ index: CONSUMED_INDEX, body: { ids: chunk }, _source: ['consumed_at'] });
+      const r = await c.mget({ index: CONSUMED_INDEX, body: { ids: chunk }, _source: ['consumed_at', 'permanent'] });
       for (const d of (((r.body || r).docs) || [])) {
         if (!d || !d.found) continue;
+        // A PERMANENT retirement never lapses. The TTL below exists because a retirement normally
+        // summarises work that was done, and that claim goes stale. A permanent one is a deliberate
+        // write-off of objects nobody intends to process — the 2026-08 backlog, which was ~2.5M distinct
+        // URLs written about 22 times. The URLs themselves are not lost by this: they carry no ledger
+        // entry, so the next sweep rediscovers the real ones. Only the redundant objects are retired.
+        if (((d._source || {}).permanent) === true) { permanent++; done.add(d._id); continue; }
         const at = Date.parse(((d._source || {}).consumed_at) || '') || 0;
         // An undatable retirement is not a trustworthy one — re-check rather than honour it forever.
         if (!at) { undated++; continue; }
@@ -155,6 +165,7 @@ async function alreadyConsumed(keys) {
         done.add(d._id);
       }
     }
+    if (permanent) console.error(`  ${permanent.toLocaleString()} object(s) permanently retired — skipped, and they never lapse`);
     if (expired || undated) {
       console.error(`  ${(expired + undated).toLocaleString()} retirement(s) have lapsed`
         + ` (${expired.toLocaleString()} older than ${CONSUMED_TTL_DAYS}d`
