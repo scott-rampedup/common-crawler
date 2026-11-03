@@ -28,6 +28,12 @@ const APPLY = has('--apply');
 const LIMIT = Number(argOf('--limit', '0')) || 0;
 const CSV = args.find((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1].startsWith('--') && args[i - 1] !== '--apply')) || '';
 const SOURCE = argOf('--source', '') || (CSV ? path.basename(CSV).replace(/\.csv$/i, '').trim() : 'CSV Import');
+// classifyDirectory reads the page type out of the path, and answers "Company" when the path has no
+// directory term in it -- lennarmortgage.com/AbrahamContreras is a person page that looks like none.
+// data/bio-domain-allotments.txt fixes that per DOMAIN, but it applies to every page on the domain
+// forever, which is wrong for a company site that merely happens to host bios. For a curated file,
+// say what the rows are and skip the guess. A per-row Directory column still wins.
+const DIRECTORY = argOf('--directory', '');
 
 // normalised header -> canonical field. Every spelling seen in a real export is listed; an
 // unmapped column is reported rather than ignored.
@@ -71,6 +77,24 @@ function buildRecords(text, genderMap) {
 
   const today = new Date().toISOString().slice(0, 10);
   const get = (row, f) => (colOf[f] == null ? '' : String(row[colOf[f]] == null ? '' : row[colOf[f]]).trim());
+
+  // A Gender column holding ONE value for every row is a label, not a measurement -- the same
+  // reading Email Type gets below. Lennar Mortgage's export says "M" for all 458 rows, 191 of whom
+  // the name map knows as women. So: uniform column -> ignore it and classify from the first name,
+  // leaving blank where the map has never seen the name. A column that actually varies was filled
+  // in per person and still wins, because a curated value beats a statistical one.
+  const letter = (g) => (/^m/i.test(g) ? 'M' : /^f/i.test(g) ? 'F' : '');
+  const seen = new Set();
+  for (let r = 1; r < rows.length; r++) { const v = letter(get(rows[r] || [], 'gender')); if (v) seen.add(v); }
+  const genderIsLabel = colOf.gender != null && seen.size === 1 && rows.length > 20;
+  let genderFixed = 0, genderBlank = 0;
+  const genderOf = (fileVal, first) => {
+    if (!genderIsLabel) return letter(fileVal);
+    const g = letter(genderMap[String(first || '').toLowerCase()] || '');
+    if (!g) { genderBlank++; return ''; }
+    if (g !== letter(fileVal)) genderFixed++;
+    return g;
+  };
   const byEmail = new Map();
   const records = [], noEmailRows = [];
   let read = 0, blank = 0, noUrl = 0, dupes = 0;
@@ -79,7 +103,13 @@ function buildRecords(text, genderMap) {
     const row = rows[r];
     if (!row || !row.length || row.every((c) => !String(c || '').trim())) { blank++; continue; }
     read++;
-    const url = get(row, 'url').split('#')[0].split('?')[0];
+    // Exports disagree about whether the URL carries a scheme -- "lennarmortgage.com/JaneDoe" is a
+    // real value from a real file. Bare, classifyDirectory throws on new URL() and getBaseDomain
+    // answers "" without complaining, so every row would import domain-less. Add the scheme.
+    const rawUrl = get(row, 'url').split('#')[0].split('?')[0];
+    const url = rawUrl && !/^[a-z][a-z0-9+.-]*:\/\//i.test(rawUrl) && /^[^/\s]+\.[^/\s]/.test(rawUrl)
+      ? 'https://' + rawUrl
+      : rawUrl;
     const email = ex.cleanEmail(get(row, 'email'));
     const domain = ex.getBaseDomain(url) || get(row, 'domain').toLowerCase();
     const cc = ex.countryCodeFromDomain(domain);
@@ -89,14 +119,14 @@ function buildRecords(text, genderMap) {
       'Time Stamp': /^\d{4}-\d{2}-\d{2}$/.test(get(row, 'time_stamp')) ? get(row, 'time_stamp') : today,
       'Source': get(row, 'source') || SOURCE,
       'Web Source URL': url,
-      'Directory': get(row, 'directory') || (pathHit ? 'Team' : (url ? ex.classifyDirectory(url, '', {}, genderMap) : '')),
+      'Directory': get(row, 'directory') || DIRECTORY || (pathHit ? 'Team' : (url ? ex.classifyDirectory(url, '', {}, genderMap) : '')),
       'Path ID': get(row, 'path_id') || (pathHit ? pathHit.id : ''),
       'Domain': domain,
       'Last Path': get(row, 'last_path'),
       'Bio Check': get(row, 'bio_check'),
       'First': get(row, 'first'),
       'Last': get(row, 'last'),
-      'Gender': /^m/i.test(get(row, 'gender')) ? 'M' : /^f/i.test(get(row, 'gender')) ? 'F' : '',
+      'Gender': genderOf(get(row, 'gender'), get(row, 'first')),
       // Position and Title mirror each other here, as the backfills in db-pg do: the exports carry
       // one job-title column and which name it uses varies by source.
       'Title': position,
@@ -129,7 +159,8 @@ function buildRecords(text, genderMap) {
     byEmail.set(key, rec);                              // last row for an address wins
   }
   for (const v of byEmail.values()) records.push(v);
-  return { records, noEmailRows, stats: { read, blank, noUrl, dupes, noEmail: noEmailRows.length }, unmapped, mapped };
+  return { records, noEmailRows, unmapped, mapped,
+    stats: { read, blank, noUrl, dupes, noEmail: noEmailRows.length, genderIsLabel, genderFixed, genderBlank } };
 }
 
 (async () => {
@@ -150,6 +181,10 @@ function buildRecords(text, genderMap) {
   console.log('rows   : ' + N(stats.read) + ' data, ' + N(stats.blank) + ' blank, ' + N(stats.dupes) + ' duplicate email(s) collapsed');
   console.log('         ' + N(records.length) + ' writable, ' + N(stats.noEmail) + ' without an email (cannot be stored: email is the key)');
   if (stats.noUrl) console.log('         ' + N(stats.noUrl) + ' row(s) without a bio URL');
+  if (stats.genderIsLabel) {
+    console.log('gender : column holds ONE value for every row — treated as a label, classified from the name map');
+    console.log('         ' + N(stats.genderFixed) + ' corrected, ' + N(stats.genderBlank) + ' left blank (name unknown to the map)');
+  }
   for (const r of noEmailRows) console.log('    no email: ' + (r.First + ' ' + r.Last).trim() + '  ' + (r.Position || ''));
 
   console.log('\nsample:');
