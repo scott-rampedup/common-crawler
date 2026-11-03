@@ -32,8 +32,30 @@ const SOURCE = argOf('--source', '') || (CSV ? path.basename(CSV).replace(/\.csv
 // directory term in it -- lennarmortgage.com/AbrahamContreras is a person page that looks like none.
 // data/bio-domain-allotments.txt fixes that per DOMAIN, but it applies to every page on the domain
 // forever, which is wrong for a company site that merely happens to host bios. For a curated file,
-// say what the rows are and skip the guess. A per-row Directory column still wins.
+// say what the rows are and skip the guess. A per-row Directory column still wins -- EXCEPT when it
+// says "Company", which is classifyDirectory's fall-through for "no directory term in the path",
+// not an assertion that the page is a company page. An export carries that default back in as if
+// it were a finding: New American Funding's file says "Company" for 289 rows that are all
+// /mortgage-loans/<person> bio pages. A stated --directory outranks the guess; "Team" still wins.
 const DIRECTORY = argOf('--directory', '');
+// A Gender column can be unreliable without being uniform, so the "one value for every row" test
+// below cannot catch it. New American Funding's file disagrees with the name map on 58 of the 216
+// rows the map can judge, in BOTH directions -- 54 women marked M, and Alvaro/Charlie/Xavier/
+// Anthony marked F -- and the map is right every time it was spot-checked. Opt in per file rather
+// than widening the automatic rule, which would override columns that were genuinely filled in by
+// hand. Where the map has never seen the name there is nothing better, so the file's value stands.
+const GENDER_FROM_NAMES = has('--gender-from-names');
+// Accept the date spellings exports actually use. An unparsed Time Stamp silently became today,
+// which overwrites when a person was last seen with when they were re-imported.
+const isoDate = (v) => {
+  const s = String(v || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);                       // M/D/YYYY (US)
+  if (!m) return '';
+  const [, mo, d, y] = m;
+  if (+mo < 1 || +mo > 12 || +d < 1 || +d > 31) return '';
+  return y + '-' + String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+};
 
 // normalised header -> canonical field. Every spelling seen in a real export is listed; an
 // unmapped column is reported rather than ignored.
@@ -87,11 +109,14 @@ function buildRecords(text, genderMap) {
   const seen = new Set();
   for (let r = 1; r < rows.length; r++) { const v = letter(get(rows[r] || [], 'gender')); if (v) seen.add(v); }
   const genderIsLabel = colOf.gender != null && seen.size === 1 && rows.length > 20;
+  const useMap = genderIsLabel || GENDER_FROM_NAMES;
   let genderFixed = 0, genderBlank = 0;
   const genderOf = (fileVal, first) => {
-    if (!genderIsLabel) return letter(fileVal);
+    if (!useMap) return letter(fileVal);
     const g = letter(genderMap[String(first || '').toLowerCase()] || '');
-    if (!g) { genderBlank++; return ''; }
+    // A uniform column carries no information, so an unknown name is left blank rather than given
+    // the repeated value back. A varying column does carry some, so it stands where the map is silent.
+    if (!g) { genderBlank++; return genderIsLabel ? '' : letter(fileVal); }
     if (g !== letter(fileVal)) genderFixed++;
     return g;
   };
@@ -116,10 +141,11 @@ function buildRecords(text, genderMap) {
     const pathHit = url ? ex.pathIdFromUrl(url) : null;
     const position = get(row, 'position') || get(row, 'title');
     const rec = {
-      'Time Stamp': /^\d{4}-\d{2}-\d{2}$/.test(get(row, 'time_stamp')) ? get(row, 'time_stamp') : today,
+      'Time Stamp': isoDate(get(row, 'time_stamp')) || today,
       'Source': get(row, 'source') || SOURCE,
       'Web Source URL': url,
-      'Directory': get(row, 'directory') || DIRECTORY || (pathHit ? 'Team' : (url ? ex.classifyDirectory(url, '', {}, genderMap) : '')),
+      'Directory': (DIRECTORY && /^company$/i.test(get(row, 'directory')) ? DIRECTORY : get(row, 'directory'))
+        || DIRECTORY || (pathHit ? 'Team' : (url ? ex.classifyDirectory(url, '', {}, genderMap) : '')),
       'Path ID': get(row, 'path_id') || (pathHit ? pathHit.id : ''),
       'Domain': domain,
       'Last Path': get(row, 'last_path'),
@@ -160,7 +186,8 @@ function buildRecords(text, genderMap) {
   }
   for (const v of byEmail.values()) records.push(v);
   return { records, noEmailRows, unmapped, mapped,
-    stats: { read, blank, noUrl, dupes, noEmail: noEmailRows.length, genderIsLabel, genderFixed, genderBlank } };
+    stats: { read, blank, noUrl, dupes, noEmail: noEmailRows.length,
+      genderIsLabel, genderFromNames: GENDER_FROM_NAMES, genderFixed, genderBlank } };
 }
 
 (async () => {
@@ -181,9 +208,12 @@ function buildRecords(text, genderMap) {
   console.log('rows   : ' + N(stats.read) + ' data, ' + N(stats.blank) + ' blank, ' + N(stats.dupes) + ' duplicate email(s) collapsed');
   console.log('         ' + N(records.length) + ' writable, ' + N(stats.noEmail) + ' without an email (cannot be stored: email is the key)');
   if (stats.noUrl) console.log('         ' + N(stats.noUrl) + ' row(s) without a bio URL');
-  if (stats.genderIsLabel) {
-    console.log('gender : column holds ONE value for every row — treated as a label, classified from the name map');
-    console.log('         ' + N(stats.genderFixed) + ' corrected, ' + N(stats.genderBlank) + ' left blank (name unknown to the map)');
+  if (stats.genderIsLabel || stats.genderFromNames) {
+    console.log('gender : ' + (stats.genderIsLabel
+      ? 'column holds ONE value for every row — treated as a label, classified from the name map'
+      : '--gender-from-names: the name map outranks the column where it knows the first name'));
+    console.log('         ' + N(stats.genderFixed) + ' corrected, ' + N(stats.genderBlank) +
+      (stats.genderIsLabel ? ' left blank' : ' kept from the file') + ' (name unknown to the map)');
   }
   for (const r of noEmailRows) console.log('    no email: ' + (r.First + ' ' + r.Last).trim() + '  ' + (r.Position || ''));
 
