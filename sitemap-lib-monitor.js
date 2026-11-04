@@ -42,6 +42,7 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
   // which is the same gate the drain uses. Using a different definition of "known" in the producer than in
   // the consumer is what let the queue compound.
   const { knownSet } = require('./skip-known');
+  const ledger = require('./crawl-ledger');
   async function haveSet(urls) {
     if (!contactsClient || !urls.length) return new Set();
     // preProcessCountsAsKnown: a placeholder means we have already recorded this URL, so the sweep must
@@ -78,7 +79,8 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
     const t0 = Date.now();
     const summary = { startedAt, finishedAt: null, seconds: 0, total: 0, scanned: 0, withGap: 0,
       newUrls: 0, seenUrls: 0, liveQueued: 0, jobs: 0, noUrls: 0, errors: 0, liveCapReached: false, top: [],
-      stateOk: 0, stateErrors: 0, stateRejected: 0, stateSample: '', retired: 0, outstanding: null, ok: false };
+      stateOk: 0, stateErrors: 0, stateRejected: 0, stateSample: '', retired: 0, outstanding: null,
+      discovered: 0, discoverErrors: 0, ok: false };
     // A sitemap that fetches nothing ONCE is usually a block or a timeout, not a dead sitemap — 9,026 of
     // them fetched 0 on 2026-08-26 having produced an average of 366 URLs before, and monitor_note cannot
     // tell a hard block from an empty file. Retiring on a single zero would have thrown those away. Retire
@@ -109,6 +111,29 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
       if (stateBuf.length >= stateFlush) await flushState();
     };
 
+    // Recording the discovery belongs HERE, beside the queue write, and not in either caller's extract
+    // callback. It was first wired into ui-server's, which the nightly sweep never runs: sitemap-sweep.js
+    // builds its own monitor with its own callback and queues straight to S3. The 2026-11-04 pass queued
+    // 1,130,898 URLs and wrote 0 ledger entries because of it. One place, so a third caller cannot miss it.
+    const ledgerWrites = [];
+    // crawl_log predates queued_at and ensureIndex only ever CREATES, so an existing index would leave the
+    // new field to dynamic mapping, which types a date by guessing at its first value. Push it once.
+    let ledgerReady = null;
+    const noteDiscovered = (urls) => {
+      if (!contactsClient || !urls.length) return;
+      if (!ledgerReady) {
+        ledgerReady = ledger.ensureIndex(contactsClient)
+          .then(() => ledger.ensureFields(contactsClient))
+          .catch(() => {});
+      }
+      ledgerWrites.push(
+        ledgerReady
+          .then(() => ledger.recordDiscovered(contactsClient, urls, { source: 'Sitemap Monitor' }))
+          .then((r) => { summary.discovered += (r && r.indexed) || 0; summary.discoverErrors += (r && r.errors) || 0; })
+          .catch(() => { summary.discoverErrors += urls.length; })
+      );
+    };
+
     const doFlush = () => {
       if (!buffer.length) return;
       const urls = buffer; buffer = [];
@@ -117,6 +142,9 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
       if (live) summary.liveQueued += urls.length; else summary.liveCapReached = true;
       try { extract(urls, `Sitemap Monitor: ${urls.length} new bio URL(s)`, { live }); summary.jobs++; }
       catch (e) { summary.errors++; }
+      // After extract, never before: the queue write is the durable record, and a URL must not be marked
+      // discovered if handing it to the queue threw.
+      noteDiscovered(urls);
     };
 
     const processOne = async (d) => {
@@ -191,6 +219,9 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
       summary.finishedAt = new Date().toISOString();
       summary.seconds = Math.round((Date.now() - t0) / 1000);
       try { await flushState(); } catch (e) { /* */ }
+      // Discovery writes are fire-and-forget during the pass so they never slow the sweep, but the pass
+      // is not finished until they land -- `outstanding` below counts them, and the next pass reads them.
+      try { await Promise.all(ledgerWrites); } catch (e) { /* counted per-batch already */ }
       // A sweep is only "ok" if it covered everything AND its writes actually landed. Coverage alone was
       // the old bar, and a pass that stamped nothing still read as a clean run.
       summary.ok = summary.total > 0 && summary.scanned >= summary.total && summary.stateErrors === 0;
@@ -199,7 +230,6 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
       // the two are different questions and reporting only the first is what made a stalled consumer look
       // like a productive producer for ten weeks.
       try {
-        const ledger = require('./crawl-ledger');
         const r = await contactsClient.count({ index: ledger.INDEX, body: { query: { term: { outcome: 'queued' } } } });
         summary.outstanding = ((r.body || r).count);
       } catch (e) { /* reporting only — never fail a pass over it */ }
@@ -210,6 +240,8 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
           `state writes ${summary.stateOk.toLocaleString()} ok / ${summary.stateErrors.toLocaleString()} failed` +
           `${summary.stateRejected ? ` (${summary.stateRejected.toLocaleString()} rejected by OpenSearch)` : ''}, ` +
           `${summary.retired.toLocaleString()} retired after ${ZERO_RETIRE_PASSES} zero passes, ` +
+          `${summary.discovered.toLocaleString()} discovery ledger write(s)` +
+          `${summary.discoverErrors ? ` / ${summary.discoverErrors.toLocaleString()} failed` : ''}, ` +
           `${summary.outstanding == null ? 'outstanding unknown' : `${summary.outstanding.toLocaleString()} outstanding (queued, not yet crawled)`}, ` +
           `${summary.seconds}s`);
     }
