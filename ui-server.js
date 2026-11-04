@@ -3130,19 +3130,32 @@ const server = http.createServer(async (req, res) => {
         // write-through map), so set it with a direct partial update — same shape enrich-contacts.js uses.
         // NOTE: the ~6h domain->company enrichment can re-fill this for contacts whose domain matches a company.
         if (isCompanyField) {
-          if (!reader._os) { jsonErr(res, 503, 'Search index not available'); return; }
-          let updated = 0, errors = 0;
+          // reader._os is a BOOLEAN flag ("the read backend is OpenSearch"); the client is reader.client.
+          // Calling .bulk() on the flag threw every time, the catch below turned the throw into
+          // errors += chunk.length, and the reason was discarded -- so every Company bulk edit ever run
+          // reported "0 updated, <selection size> error(s)" and looked like a per-record data problem.
+          if (!reader._os || !reader.client) { jsonErr(res, 503, 'Search index not available'); return; }
+          let updated = 0, errors = 0, reason = '';
           for (let i = 0; i < emails.length; i += 500) {
             const chunk = emails.slice(i, i + 500);
             const b = [];
             for (const email of chunk) b.push({ update: { _index: openSearch.INDEX, _id: email } }, { doc: { company_name: value } });
             try {
-              const r = await reader._os.bulk({ body: b, refresh: false });
-              for (const it of (((r.body || r).items) || [])) { const u = it.update || {}; if (u.error || (u.status && u.status >= 400)) errors++; else updated++; }
-            } catch (e) { errors += chunk.length; }
+              const r = await reader.client.bulk({ body: b, refresh: false });
+              for (const it of (((r.body || r).items) || [])) {
+                const u = it.update || {};
+                if (u.error || (u.status && u.status >= 400)) {
+                  errors++;
+                  // Keep the FIRST reason: a count alone cannot distinguish a missing document from a
+                  // broken call, which is exactly what hid this bug.
+                  if (!reason) reason = (u.error && (u.error.reason || u.error.type)) || `status ${u.status}`;
+                } else updated++;
+              }
+            } catch (e) { errors += chunk.length; if (!reason) reason = e.message || String(e); }
           }
-          try { await reader._os.indices.refresh({ index: openSearch.INDEX }); } catch (e) { /* best-effort */ }
-          sendJson(res, { ok: true, updated, errors, total: emails.length });
+          if (reason) console.error(`bulk-update Company: ${errors} error(s) — ${reason}`);
+          try { await reader.client.indices.refresh({ index: openSearch.INDEX }); } catch (e) { /* best-effort */ }
+          sendJson(res, { ok: true, updated, errors, total: emails.length, ...(reason ? { reason } : {}) });
           return;
         }
 

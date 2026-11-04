@@ -915,7 +915,8 @@ function openBulkEditModal() {
       if (out.protected) parts.push(`${out.protected.toLocaleString()} kept (verified email)`);
       if (out.skipped) parts.push(`${out.skipped.toLocaleString()} skipped`);
       if (out.companiesUpdated) parts.push(`${out.companiesUpdated.toLocaleString()} company record(s) tagged`);
-      if (out.errors) parts.push(`${out.errors.toLocaleString()} error(s)`);
+      // Show WHY, not just how many: a bare count reads as a data problem even when the call itself broke.
+      if (out.errors) parts.push(`${out.errors.toLocaleString()} error(s)${out.reason ? ` — ${out.reason}` : ''}`);
       alert('Bulk edit complete: ' + parts.join(', ') + '.');
     } catch (e) {
       saveBtn.disabled = false; cancelBtn.disabled = false;

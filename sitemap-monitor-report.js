@@ -36,11 +36,18 @@ async function recordRun(client, summary) {
     let runs = [];
     try { const g = await client.get({ index: CONFIG_INDEX, id: RUNS_ID }); runs = ((g.body || g)._source || {}).runs || []; }
     catch (e) { if (!isNotFound(e)) throw e; }
+    // This is an EXPLICIT field list, so a field added to the summary is silently dropped unless it is
+    // added here too. That is how the 2026-11-04 pass came to have no record of `discovered` (the ledger
+    // writes) or `outstanding` (the step-3 count the whole exercise exists to produce): both were computed,
+    // logged to a stream nobody keeps, and then thrown away at this line.
     runs.unshift({ startedAt: summary.startedAt, finishedAt: summary.finishedAt, seconds: summary.seconds,
       total: summary.total, scanned: summary.scanned, withGap: summary.withGap, newUrls: summary.newUrls,
       liveQueued: summary.liveQueued, noUrls: summary.noUrls, errors: summary.errors,
       seenUrls: summary.seenUrls, stateOk: summary.stateOk, stateErrors: summary.stateErrors,
-      queueErrors: summary.queueErrors, ok: !!summary.ok });
+      queueErrors: summary.queueErrors,
+      discovered: summary.discovered, discoverErrors: summary.discoverErrors,
+      outstanding: summary.outstanding, retired: summary.retired,
+      ok: !!summary.ok });
     await client.index({ index: CONFIG_INDEX, id: RUNS_ID, body: { runs: runs.slice(0, KEEP_RUNS) }, refresh: true });
   } catch (e) { console.error('[monitor-report] could not record run:', e.message); }
 }
