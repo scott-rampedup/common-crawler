@@ -45,6 +45,18 @@ const DIRECTORY = argOf('--directory', '');
 // than widening the automatic rule, which would override columns that were genuinely filled in by
 // hand. Where the map has never seen the name there is nothing better, so the file's value stands.
 const GENDER_FROM_NAMES = has('--gender-from-names');
+// A column called "Source" means PROVENANCE in a job export and the PAGE URL in a scraped team sheet,
+// and nothing in the file tells them apart -- so ALIAS cannot decide it and guessing from the values
+// would silently re-point a rescued job's provenance. Name the column instead. Without this, a sheet
+// whose only URL lives under "Source" imports every row with no Web Source URL, no Domain and no
+// Directory, and reports them as "no url" rather than failing.
+const URL_COLUMN = argOf('--url-column', '');
+// Domain normally follows the page, which is right when the page belongs to the employer. It is wrong
+// for a holding company's team page: groupe-adit.fr lists 16 executives and not one of them has an
+// email there -- they sit at adit.fr, nsi-adit.com, stratinfo.fr, madame-bovary.fr, groupegeos.com and
+// salveo.international. Storing the group's domain would point every firmographic lookup at the parent.
+// Web Source URL still records the page they were found on; this only changes whose company they are.
+const DOMAIN_FROM_EMAIL = has('--domain-from-email');
 // Accept the date spellings exports actually use. An unparsed Time Stamp silently became today,
 // which overwrites when a person was last seen with when they were re-imported.
 const isoDate = (v) => {
@@ -97,6 +109,17 @@ function buildRecords(text, genderMap) {
     if (colOf[f] == null) { colOf[f] = i; mapped[rows[0][i]] = f; }
   });
 
+  // --url-column overrides ALIAS for one named header. A typo throws rather than falling back, because
+  // the fallback is the exact silent failure the flag exists to prevent.
+  if (URL_COLUMN) {
+    const want = norm(URL_COLUMN);
+    const i = header.indexOf(want);
+    if (i < 0) throw new Error(`--url-column "${URL_COLUMN}" is not in the header: ${rows[0].join(', ')}`);
+    for (const f of Object.keys(colOf)) if (colOf[f] === i) { delete colOf[f]; delete mapped[rows[0][i]]; }
+    colOf.url = i;
+    mapped[rows[0][i]] = 'url';
+  }
+
   const today = new Date().toISOString().slice(0, 10);
   const get = (row, f) => (colOf[f] == null ? '' : String(row[colOf[f]] == null ? '' : row[colOf[f]]).trim());
 
@@ -136,7 +159,12 @@ function buildRecords(text, genderMap) {
       ? 'https://' + rawUrl
       : rawUrl;
     const email = ex.cleanEmail(get(row, 'email'));
-    const domain = ex.getBaseDomain(url) || get(row, 'domain').toLowerCase();
+    // Run the email's host through getBaseDomain too, so it is normalised the same way a URL's is
+    // (sub-domains stripped, multi-part TLDs respected) rather than taken raw off the address.
+    const emailHost = email.includes('@') ? email.split('@').pop().toLowerCase() : '';
+    const emailDomain = emailHost ? (ex.getBaseDomain('https://' + emailHost) || emailHost) : '';
+    const domain = (DOMAIN_FROM_EMAIL ? emailDomain : '')
+      || ex.getBaseDomain(url) || get(row, 'domain').toLowerCase();
     const cc = ex.countryCodeFromDomain(domain);
     const pathHit = url ? ex.pathIdFromUrl(url) : null;
     const position = get(row, 'position') || get(row, 'title');
