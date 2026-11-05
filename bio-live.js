@@ -97,6 +97,20 @@ const prioOfKey = (k) => {
     } catch (e) { console.error(`  read failed ${f.key}: ${e.message}`); }
     consumed.push(f);
   }
+  // Apply the gate HERE, not only inside the shard. live-fleet-shard filters on arrival, which is correct
+  // but far too late to be useful: on 2026-11-05 it dropped 53,006 of 53,081 URLs, so nine machines booted
+  // to crawl 75. Filtering before the count means MIN_URLS and the shard sizing below both see the real
+  // workload, and a batch that is entirely blocked wakes no fleet at all.
+  const liveHostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./i, '').toLowerCase(); } catch (e) { return ''; } };
+  try {
+    const blocked = await require('./domain-gate').loadSet(osc);
+    if (blocked.size) {
+      let dropped = 0;
+      for (const u of [...urls]) if (blocked.has(liveHostOf(u))) { urls.delete(u); prioUrls.delete(u); dropped++; }
+      console.error(`  domain gate: ${blocked.size} domain(s) blocked — dropped ${dropped.toLocaleString()} URL(s) before sizing the fleet`);
+    }
+  } catch (e) { console.error('  domain gate unavailable (' + e.message + ') — crawling everything'); }
+
   console.error(`  ${urls.size.toLocaleString()} distinct URL(s)` + (prioUrls.size ? `, ${prioUrls.size.toLocaleString()} at priority` : ''));
 
   // The cursor may only advance over files this pass actually read. It stops at MAX_URLS and now reads

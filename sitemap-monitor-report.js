@@ -47,6 +47,7 @@ async function recordRun(client, summary) {
       queueErrors: summary.queueErrors,
       discovered: summary.discovered, discoverErrors: summary.discoverErrors,
       outstanding: summary.outstanding, retired: summary.retired,
+      blockedSitemaps: summary.blockedSitemaps, blockedUrls: summary.blockedUrls,
       ok: !!summary.ok });
     await client.index({ index: CONFIG_INDEX, id: RUNS_ID, body: { runs: runs.slice(0, KEEP_RUNS) }, refresh: true });
   } catch (e) { console.error('[monitor-report] could not record run:', e.message); }
@@ -68,6 +69,11 @@ function build(summary, extra = {}) {
     ['New BIO URLs found', `<strong>${n(summary.newUrls)}</strong>`],
     ['Queued for extraction', `${n(summary.newUrls)} (${n(summary.liveQueued)} also started live)`],
     ['Sitemaps returning no URLs', n(summary.noUrls)],
+    // Say what the gate saved, not just what got through. A sweep that quietly skips 80% of its library
+    // looks identical to one whose library shrank, and the difference matters when someone unblocks a
+    // domain and wants to know why the counts moved.
+    ...(summary.blockedSitemaps ? [['Skipped — blocked domain', `${n(summary.blockedSitemaps)} sitemap(s) not fetched`]] : []),
+    ...(summary.blockedUrls ? [['Blocked URLs not queued', n(summary.blockedUrls)]] : []),
     ['Errors', n(summary.errors)],
     ['Index writes', `${n(summary.stateOk)} ok${summary.stateErrors ? ` · <strong style="color:#b91c1c">${n(summary.stateErrors)} FAILED</strong>` : ''}`],
     ['Sweep duration', `${mins} min`],

@@ -127,6 +127,21 @@ async function getCursor(osc) {
       consumed.push(f);
     } catch (e) { console.error(`  read failed ${f.key}: ${e.message}`); consumed.push(f); }
   }
+  // The crawl blocklist, before the Athena resolve rather than after it. bio-etl applied this and
+  // bio-feed — which replaced it as the live path — did not, so every blocked URL was still paid for
+  // twice: once scanning Common Crawl for a pointer, then again as a miss-list entry that bio-live
+  // handed to a fleet which dropped it on arrival. The 4.5M-URL backlog still holds these, so filtering
+  // here matters as much as filtering at discovery does.
+  const feedHostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./i, '').toLowerCase(); } catch (e) { return ''; } };
+  try {
+    const blocked = await require('./domain-gate').loadSet(osc);
+    if (blocked.size) {
+      let dropped = 0;
+      for (const u of [...urls]) if (blocked.has(feedHostOf(u))) { urls.delete(u); prioOf.delete(u); dropped++; }
+      console.error(`  domain gate: ${blocked.size} domain(s) blocked — dropped ${dropped.toLocaleString()} URL(s), ${urls.size.toLocaleString()} left`);
+    }
+  } catch (e) { console.error('  domain gate unavailable (' + e.message + ') — resolving everything'); }
+
   // A loop, not Math.max(...values): this map can hold 250,000 entries and a spread that wide
   // overflows the argument stack.
   let topPrio = 0;

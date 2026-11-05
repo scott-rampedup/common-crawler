@@ -24,6 +24,19 @@ function keywordTokens(keyword) {
   return out;
 }
 
+// The crawl blocklist, applied at DISCOVERY. It used to be read only by bio-etl and live-fleet-shard —
+// the last two stages — so a blocked domain was still fetched, parsed, compared, queued to S3, written to
+// the ledger, resolved against Common Crawl and shipped to a fleet, and only then dropped. Measured on the
+// 2026-11-05 sweep: 80.1% of the 599,335 URLs queued that night were on domains already blocked, and the
+// fleet discarded 53,006 of 53,081 (99.86%) on arrival — nine machines booted to crawl 75 URLs.
+//
+// Worse, it was self-sustaining. A dropped URL never gets a crawl_log outcome, so the ledger keeps
+// offering it, so the sweep re-reports the same sitemaps in full every night: realsearch.com.au 48,215
+// new of 48,215 seen, topcreditcardprocessors 30,598 of 30,602. Blocking at the source is what breaks
+// that loop — the first pass after this writes real outcomes for nothing, but it also stops creating the
+// work that was never going to be done.
+const blockHostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./i, '').toLowerCase(); } catch (e) { return ''; } };
+
 module.exports.makeLibMonitor = function makeLibMonitor(deps) {
   const { sitemaps, sitemapsClient, contactsClient, contactsIndex, ccEngine, extract,
     directoryRules = {}, genderMap = {}, bioSitemapNames = null, locationSitemapNames = null,
@@ -80,7 +93,16 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
     const summary = { startedAt, finishedAt: null, seconds: 0, total: 0, scanned: 0, withGap: 0,
       newUrls: 0, seenUrls: 0, liveQueued: 0, jobs: 0, noUrls: 0, errors: 0, liveCapReached: false, top: [],
       stateOk: 0, stateErrors: 0, stateRejected: 0, stateSample: '', retired: 0, outstanding: null,
-      discovered: 0, discoverErrors: 0, ok: false };
+      discovered: 0, discoverErrors: 0, blockedSitemaps: 0, blockedUrls: 0, ok: false };
+    // One read per pass, not per sitemap. An unreadable list must not silently turn the gate off, so say
+    // so loudly: crawling everything is the expensive failure mode this whole change exists to stop.
+    let blockedDomains = new Set();
+    try {
+      blockedDomains = await require('./domain-gate').loadSet(contactsClient);
+      log(`domain gate: ${blockedDomains.size} domain(s) blocked — skipped before the fetch`);
+    } catch (e) {
+      log(`domain gate UNAVAILABLE (${e.message}) — sweeping every domain, including blocked ones`);
+    }
     // A sitemap that fetches nothing ONCE is usually a block or a timeout, not a dead sitemap — 9,026 of
     // them fetched 0 on 2026-08-26 having produced an average of 366 URLs before, and monitor_note cannot
     // tell a hard block from an empty file. Retiring on a single zero would have thrown those away. Retire
@@ -149,6 +171,17 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
 
     const processOne = async (d) => {
       summary.scanned++;
+      // Before the fetch, which is the whole point: the sweep's cost is dominated by fetching and parsing
+      // sitemaps, so a domain we have decided not to crawl should not cost us a request. State is still
+      // written so last_checked stays honest and the sitemap is not mistaken for one the sweep missed.
+      // zero_passes is deliberately NOT touched — "we chose not to look" must not retire a live sitemap
+      // as dead, because unblocking the domain has to bring it straight back.
+      const smDomain = String(d.domain || '').replace(/^www\./i, '').toLowerCase() || blockHostOf(d.sitemap_url);
+      if (smDomain && blockedDomains.has(smDomain)) {
+        summary.blockedSitemaps++;
+        try { await putState(d.sitemap_url, { last_checked: nowIso, last_new: 0, monitor_note: 'skipped: domain is on the crawl blocklist' }); } catch (e) { /* reporting only */ }
+        return;
+      }
       try {
         const { watches } = await ccEngine.discoverSitemaps({ urls: [d.sitemap_url], directoryRules, genderMap, bioSitemapNames, locationSitemapNames, _fetchDoc: swFetch });
         let pageUrls = peopleUrls(watches);
@@ -163,6 +196,13 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
         summary.seenUrls += pageUrls.length;
         if (pageUrls.length) { const have = await haveSet(pageUrls); missing = pageUrls.filter((u) => !have.has(u)); }
         else summary.noUrls++;
+        // The sitemap's own domain passing the gate does not mean every URL in it does — an index or a
+        // directory site lists pages on other hosts. Filter per URL as well, so nothing blocked is queued.
+        if (missing.length && blockedDomains.size) {
+          const before = missing.length;
+          missing = missing.filter((u) => !blockedDomains.has(blockHostOf(u)));
+          summary.blockedUrls += before - missing.length;
+        }
         if (missing.length) {
           summary.withGap++; summary.newUrls += missing.length;
           byDomain.set(d.domain || d.sitemap_url, (byDomain.get(d.domain || d.sitemap_url) || 0) + missing.length);
