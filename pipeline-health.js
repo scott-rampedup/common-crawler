@@ -93,9 +93,17 @@ async function measure(client, { from, to }) {
 }
 
 function build(m) {
-  const ok = m.discovered === 0 || m.conversion >= MIN_PCT;
+  // A window with NO discoveries is not a pass. The sweep runs nightly and records every URL it finds, so
+  // zero means either the sweep did not run or it is not recording -- which is exactly the bug that went
+  // unnoticed from 2026-08 to 2026-11-05, when the ledger write sat in a callback the nightly sweep never
+  // used. The first version of this check emailed "Pipeline OK — 0% of 0", which is the precise failure
+  // this file exists to prevent: a monitor reporting health when it has no evidence of any.
+  const noData = m.discovered === 0;
+  const ok = !noData && m.conversion >= MIN_PCT;
   const day = String(m.from).slice(0, 10);
-  const subject = `${ok ? 'Pipeline OK' : 'PIPELINE STALLED'} — ${m.conversion}% of ${N(m.discovered)} discovered BIO URLs were crawled (${day})`;
+  const subject = noData
+    ? `NO DISCOVERIES RECORDED — the sweep logged no BIO URLs for ${day}`
+    : `${ok ? 'Pipeline OK' : 'PIPELINE STALLED'} — ${m.conversion}% of ${N(m.discovered)} discovered BIO URLs were crawled (${day})`;
 
   const rows = [
     ['Discovered (ledger queued_at)', N(m.discovered)],
@@ -105,9 +113,11 @@ function build(m) {
     ['Yielded a page we extracted', `${N(m.extracted)} (${m.yield}% of discovered)`],
     ['Contacts landed (Sitemap Monitor)', m.contacts < 0 ? 'n/a' : N(m.contacts)],
   ];
-  const banner = ok
-    ? `<p style="margin:0 0 16px;padding:10px 14px;background:#ecfdf5;border-left:3px solid #059669;color:#065f46">${m.conversion}% of what was discovered got crawled.</p>`
-    : `<p style="margin:0 0 16px;padding:10px 14px;background:#fef2f2;border-left:3px solid #dc2626;color:#991b1b">Only ${m.conversion}% of discovered BIO URLs were crawled (threshold ${MIN_PCT}%). ${N(m.stillQueued)} are still sitting at "queued" — something between discovery and the crawl is not running.</p>`;
+  const banner = noData
+    ? `<p style="margin:0 0 16px;padding:10px 14px;background:#fffbeb;border-left:3px solid #d97706;color:#92400e">No BIO URLs were recorded as discovered in this window at all. Either the sweep did not run, or it ran and did not write to the crawl ledger. This is not a pass — there is nothing to measure.</p>`
+    : ok
+      ? `<p style="margin:0 0 16px;padding:10px 14px;background:#ecfdf5;border-left:3px solid #059669;color:#065f46">${m.conversion}% of what was discovered got crawled.</p>`
+      : `<p style="margin:0 0 16px;padding:10px 14px;background:#fef2f2;border-left:3px solid #dc2626;color:#991b1b">Only ${m.conversion}% of discovered BIO URLs were crawled (threshold ${MIN_PCT}%). ${N(m.stillQueued)} are still sitting at "queued" — something between discovery and the crawl is not running.</p>`;
 
   const stuck = m.topStuck.length ? `<h3 style="font-size:14px;margin:24px 0 8px;color:#111827">Where the uncrawled URLs are</h3>
     <table style="border-collapse:collapse;font-size:13px">${m.topStuck.map((t) => `<tr><td style="padding:4px 16px 4px 0;color:#374151">${t.domain || '(none)'}</td><td style="padding:4px 0;text-align:right;font-variant-numeric:tabular-nums">${N(t.count)}</td></tr>`).join('')}</table>` : '';
@@ -125,8 +135,9 @@ function build(m) {
   </div>`;
 
   const text = [`BIO-URL pipeline — discovery to crawl (${day})`, '',
-    ok ? `OK: ${m.conversion}% of discovered URLs were crawled.`
-       : `STALLED: only ${m.conversion}% crawled (threshold ${MIN_PCT}%). ${N(m.stillQueued)} still queued.`, '',
+    noData ? 'NO DISCOVERIES RECORDED: nothing was logged as discovered in this window, so there is nothing to measure. Either the sweep did not run or it is not writing to the crawl ledger.'
+      : ok ? `OK: ${m.conversion}% of discovered URLs were crawled.`
+           : `STALLED: only ${m.conversion}% crawled (threshold ${MIN_PCT}%). ${N(m.stillQueued)} still queued.`, '',
     ...rows.map(([k, v]) => `${k}: ${String(v).replace(/<[^>]+>/g, '')}`),
     ...(m.topStuck.length ? ['', 'Uncrawled by domain:', ...m.topStuck.map((t) => `  ${t.domain || '(none)'}: ${N(t.count)}`)] : []),
     '', '— Common Crawler'].join('\n');
