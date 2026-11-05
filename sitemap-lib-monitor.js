@@ -82,7 +82,14 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
   // So: the comparison is now uncapped and streamed. `liveCap` bounds only how many URLs get an INLINE live
   // crawl job; past it the URLs still go to the durable S3 queue for the ETL. A backlog can delay when a new
   // bio is turned into a contact. It can no longer stop us from finding it.
-  async function runPass({ liveCap = 300000, conc = 64, flush = 3000, kind = 'People', type = '',
+  // kind defaults to '' — EVERY active, monitored sitemap, whatever it was classified as. It used to be
+  // 'People', which sounds like scope and behaved like a gate: 11,732 Location rows were excluded and only
+  // 2 of them had ever been swept, so "Location sitemaps don't have bios" was never a finding, just an
+  // assumption that fetched nothing to test itself. The contract is that a sitemap producing BIO URLs gets
+  // scanned, and the only way to know is to look. Extraction already decides — peopleUrls() returns what is
+  // actually there — and a sitemap that keeps returning nothing retires itself via ZERO_RETIRE_PASSES, so
+  // the cost of being wrong is three passes. Pass kind explicitly to narrow it.
+  async function runPass({ liveCap = 300000, conc = 64, flush = 3000, kind = '', type = '',
                            page = 5000, cap = null, maxSitemaps = 0, fetchTimeout = 8000,
                            fetchMaxBytes = 8 * 1024 * 1024, stateFlush = 500, onProgress = null } = {}) {
     if (running) { log('monitor pass already running — skipping'); return { skipped: true }; }

@@ -28,7 +28,9 @@ const num = (f, d) => Number(arg(f, '')) || d;
 const CONC = num('--conc', Number(process.env.SWEEP_CONC) || 64);
 const LIVE_CAP = num('--live-cap', Number(process.env.SWEEP_LIVE_CAP) || 0);
 const MAX_SITEMAPS = num('--max-sitemaps', 0);
-const KIND = arg('--kind', 'People');
+// '' = every monitored sitemap regardless of kind. See runPass: 'People' read as scope but acted as a gate,
+// excluding 11,732 Location rows of which only 2 had ever been fetched. --kind People still narrows it.
+const KIND = arg('--kind', '');
 const TYPE = arg('--type', process.env.SWEEP_TYPE || '');
 const NO_EMAIL = process.argv.includes('--no-email');
 const DRAIN_AFTER = !/^(0|false|no|off)$/i.test(process.env.SWEEP_DRAIN_AFTER || '1');
