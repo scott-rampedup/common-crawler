@@ -186,6 +186,29 @@ JOBS.push(
     },
   },
   {
+    id: 'pipeline_health',
+    label: 'did yesterday\'s discovered BIO URLs actually get crawled?',
+    everyMs: hours(Math.max(1, Number(process.env.PIPELINE_HEALTH_HOURS) || 24)),
+    // ON by default, and deliberately so. Every other job here defends against doing too much work; this
+    // one defends against doing none, and a check that has to be switched on is a check that is off on the
+    // day it was needed. It costs six counts and two aggregations against one night's ledger rows.
+    //
+    // It exists because every stage of this pipeline reports its own success and nothing has ever checked
+    // the joint between two stages. The sweep said "ok: true, 599,335 new BIO URLs" on a night when 2,499
+    // were fetched; the fleet discarded 53,006 of 53,081 at the domain gate and exited 0, which Fly reports
+    // identically to finishing. This reads 0.4% the next morning and names the domains it is stuck on.
+    //
+    // Light enough to run here rather than on its own machine -- no fan-out, no scan, no fleet.
+    enabled: () => process.env.SCHED_PIPELINE_HEALTH !== '0',
+    async run(ctx) {
+      const r = await require('./pipeline-health').run({});
+      ctx.log(`discovered ${r.discovered.toLocaleString()}, crawled since discovery ${r.crawled.toLocaleString()}`
+        + ` (${r.conversion}%), still queued ${r.stillQueued.toLocaleString()}`);
+      if (!r.ok) ctx.log(`PIPELINE STALLED — below ${Number(process.env.PIPELINE_HEALTH_MIN_PCT) || 50}%`);
+      return { discovered: r.discovered, crawled: r.crawled, conversion: r.conversion, ok: r.ok };
+    },
+  },
+  {
     id: 'bio_live',
     label: 'live-crawl the bio URLs Common Crawl lacks',
     // Half of every bio-feed batch resolves to a WARC pointer and flows to the continuous workers; the
