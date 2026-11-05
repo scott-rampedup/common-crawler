@@ -148,10 +148,11 @@ async function bulkUpsert(client, docs, nowIso) {
 // EVERY active sitemap of the kind — monitoring is on for the whole Library; `monitored=false` is an
 // explicit opt-out (e.g. junk). Capped at the result window; the last_checked ordering rotates coverage
 // across passes so the whole Library gets re-checked over time.
+// Superseded by monitoredCursor and currently unused, but it shares kindFilter rather than keeping its own
+// copy: a third version of this predicate that quietly disagrees with the other two is how the Library came
+// to have 129,744 rows marked monitored that no pass ever visited.
 async function monitoredBatch(client, size = 50000, kind = 'People') {
-  const filter = [];
-  if (kind) filter.push({ term: { kind } });
-  const bool = { filter, must_not: [{ term: { monitored: false } }, { term: { status: 'inactive' } }] };
+  const bool = { filter: kindFilter(kind), must_not: [{ term: { monitored: false } }, { term: { status: 'inactive' } }] };
   const r = await client.search({ index: INDEX, body: {
     size: Math.min(50000, size), query: { bool },
     sort: [{ last_checked: { order: 'asc', missing: 0 } }, { sitemap_url: 'asc' }],   // see monitoredCursor: '_first' emits an unparseable sentinel
@@ -416,9 +417,36 @@ async function each(client, f, onRow, cap = 200000) {
 //
 // Excluding anything stamped at or after the pass started makes the cursor immune to its own writes, and
 // makes a re-run resume rather than restart.
+// The sweep's selection predicate, in ONE place so the cursor and the count cannot disagree about what a
+// pass covers — two copies of the same condition is how a sweep comes to report 194,499 of 194,499 while
+// skipping a third of the Library.
+//
+// UNCLASSIFIED ROWS ARE SWEPT. A blank `kind` does not mean "not a people sitemap", it means the classifier
+// returned nothing WHEN THE ROW WAS LOADED — a failed fetch, a timeout, a sitemap that was empty that day.
+// load-child-sitemaps and sitemap-lib-ingest both store docFromUrl() with kind:'' in that case. Those rows
+// are then written with monitored:true, which reads everywhere in the UI as "this is being scanned", and a
+// `term` query on kind never matches an empty string, so 129,744 of them were silently excluded — 126,291
+// from child-sitemaps-2 and 3,448 from the Data Importer. Someone typing a sitemap into the importer got a
+// row that said monitored and was never looked at.
+//
+// The sweep is the right place to settle it, because it already fetches each sitemap and runs the same
+// classifier. A blank-kind sitemap that yields people URLs is a people sitemap, and the monitor writes the
+// kind back so the next pass treats it as classified. One that yields nothing retires itself through the
+// existing ZERO_RETIRE_PASSES run, so the cost of including them is bounded and temporary.
+//
+// Location is still excluded: Phase 1 is People -> contacts, and that is a scope decision, not an accident.
+function kindFilter(kind) {
+  if (!kind) return [];
+  if (kind !== 'People') return [{ term: { kind } }];
+  return [{ bool: { minimum_should_match: 1, should: [
+    { term: { kind: 'People' } },
+    { term: { kind: '' } },                                   // stored blank by docFromUrl
+    { bool: { must_not: [{ exists: { field: 'kind' } }] } },   // field absent entirely
+  ] } }];
+}
+
 async function* monitoredCursor(client, { kind = 'People', type = '', page = 5000, notCheckedSince = '' } = {}) {
-  const filter = [];
-  if (kind) filter.push({ term: { kind } });
+  const filter = [...kindFilter(kind)];
   if (type) filter.push({ term: { type } });
   const must_not = [{ term: { monitored: false } }, { term: { status: 'inactive' } }];
   if (notCheckedSince) must_not.push({ range: { last_checked: { gte: notCheckedSince } } });
@@ -449,8 +477,7 @@ async function* monitoredCursor(client, { kind = 'People', type = '', page = 500
 
 // How many sitemaps a full sweep will visit — so the pass can report progress against a real total.
 async function monitoredCount(client, { kind = 'People', type = '' } = {}) {
-  const filter = [];
-  if (kind) filter.push({ term: { kind } });
+  const filter = [...kindFilter(kind)];
   if (type) filter.push({ term: { type } });
   const bool = { filter, must_not: [{ term: { monitored: false } }, { term: { status: 'inactive' } }] };
   const r = await client.count({ index: INDEX, body: { query: { bool } } });

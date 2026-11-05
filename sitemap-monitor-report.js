@@ -48,6 +48,7 @@ async function recordRun(client, summary) {
       discovered: summary.discovered, discoverErrors: summary.discoverErrors,
       outstanding: summary.outstanding, retired: summary.retired,
       blockedSitemaps: summary.blockedSitemaps, blockedUrls: summary.blockedUrls,
+      classified: summary.classified,
       ok: !!summary.ok });
     await client.index({ index: CONFIG_INDEX, id: RUNS_ID, body: { runs: runs.slice(0, KEEP_RUNS) }, refresh: true });
   } catch (e) { console.error('[monitor-report] could not record run:', e.message); }
@@ -74,6 +75,9 @@ function build(summary, extra = {}) {
     // domain and wants to know why the counts moved.
     ...(summary.blockedSitemaps ? [['Skipped — blocked domain', `${n(summary.blockedSitemaps)} sitemap(s) not fetched`]] : []),
     ...(summary.blockedUrls ? [['Blocked URLs not queued', n(summary.blockedUrls)]] : []),
+    // Previously-unclassified sitemaps the sweep settled this pass. Expect a large first number and then
+    // near zero — if it stays high, the classifier is failing at load time and that is the thing to fix.
+    ...(summary.classified ? [['Newly classified as People', n(summary.classified)]] : []),
     ['Errors', n(summary.errors)],
     ['Index writes', `${n(summary.stateOk)} ok${summary.stateErrors ? ` · <strong style="color:#b91c1c">${n(summary.stateErrors)} FAILED</strong>` : ''}`],
     ['Sweep duration', `${mins} min`],

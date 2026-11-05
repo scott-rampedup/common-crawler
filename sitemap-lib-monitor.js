@@ -93,7 +93,7 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
     const summary = { startedAt, finishedAt: null, seconds: 0, total: 0, scanned: 0, withGap: 0,
       newUrls: 0, seenUrls: 0, liveQueued: 0, jobs: 0, noUrls: 0, errors: 0, liveCapReached: false, top: [],
       stateOk: 0, stateErrors: 0, stateRejected: 0, stateSample: '', retired: 0, outstanding: null,
-      discovered: 0, discoverErrors: 0, blockedSitemaps: 0, blockedUrls: 0, ok: false };
+      discovered: 0, discoverErrors: 0, blockedSitemaps: 0, blockedUrls: 0, classified: 0, ok: false };
     // One read per pass, not per sitemap. An unreadable list must not silently turn the gate off, so say
     // so loudly: crawling everything is the expensive failure mode this whole change exists to stop.
     let blockedDomains = new Set();
@@ -215,10 +215,18 @@ module.exports.makeLibMonitor = function makeLibMonitor(deps) {
         const zeroPasses = pageUrls.length ? 0 : (Number(d.zero_passes) || 0) + 1;
         const retire = zeroPasses >= ZERO_RETIRE_PASSES;
         if (retire) summary.retired++;
+        // Settle an unclassified row rather than leaving it unclassified forever. These arrive with kind:''
+        // because the classifier returned nothing at LOAD time — a failed fetch, a timeout, an empty file —
+        // and a blank kind used to exclude them from the sweep silently. The sweep has just fetched the
+        // sitemap and run the same classifier, so if it yielded people URLs the question is answered and the
+        // answer is written back. One that keeps yielding nothing retires through zero_passes below.
+        const classify = (!String(d.kind || '').trim() && pageUrls.length) ? { kind: 'People' } : {};
+        if (classify.kind) summary.classified++;
         await putState(d.sitemap_url, {
           last_checked: nowIso, last_new: missing.length, last_seen_urls: pageUrls.length,
           total_new: (Number(d.total_new) || 0) + missing.length,
           ...(missing.length ? { last_new_at: nowIso } : {}),
+          ...classify,
           zero_passes: zeroPasses,
           monitor_note: pageUrls.length ? '' : 'no urls fetched',
           ...(retire ? { monitored: false, monitor_note: `retired: 0 bio URLs on ${zeroPasses} consecutive passes` } : {}),

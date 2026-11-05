@@ -478,8 +478,14 @@ const { ingestSitemapsToLibrary } = require('./sitemap-lib-ingest');
 // Fire-and-forget: classify sitemaps submitted to the Data Ingest UI with our ingest logic and upsert them
 // into the Sitemap Library (source='imported'). Non-blocking so it never delays the crawl or the response.
 function libraryIngest(urls, content) {
-  if (!sitemapsClient || !Array.isArray(urls) || !urls.length) return;   // need real URLs to key the Library
-  ingestSitemapsToLibrary({ sitemaps, sitemapsClient, ccEngine, urls, content: content || '',
+  // Content counts too. This used to require urls.length, on the reasoning that pasted XML has no URL to
+  // key a Library row on — but discoverSitemaps expands pasted content into child watches that carry their
+  // OWN sitemap_url, which is exactly what the Library keys on. The effect of the old guard was that a
+  // pasted sitemap or an uploaded .xml.gz was crawled once and never recorded, so it was never monitored
+  // for new hires: silently a one-shot, while a typed URL was permanent.
+  const list = Array.isArray(urls) ? urls : [];
+  if (!sitemapsClient || (!list.length && !String(content || '').trim())) return;
+  ingestSitemapsToLibrary({ sitemaps, sitemapsClient, ccEngine, urls: list, content: content || '',
     genderMap: GENDER_MAP, bioSitemapNames: BIO_SITEMAP_NAMES, locationSitemapNames: LOCATION_SITEMAP_NAMES, source: 'imported' })
     .then((r) => console.log(`[lib-ingest] Library += ${r.upserted} sitemap(s) from ingest (${r.classified} classified, ${r.unknown} unknown, ${r.errors} err)`))
     .catch((e) => console.error('[lib-ingest] failed:', e.message));
