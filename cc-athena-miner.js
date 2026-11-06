@@ -99,8 +99,31 @@ LOCATION 's3://${bucket}/${prefix}'`;
 
 // JOIN the keys table against ccindex on the normalized key, across one or more crawls, and keep the
 // FRESHEST capture per key (row_number over fetch_time). Output is the load-queue/--warc-file shape.
-function buildResolveSql({ crawls, keysTable, db = DB }) {
+// Athena caps a query string at 262,144 characters, so the host list below cannot grow without bound.
+// Budget the literals well under that and split the resolve into one query per chunk: each chunk scans a
+// fraction of the partition, which is the entire point of the filter.
+const HOST_LITERAL_BUDGET = Math.max(1000, Number(process.env.RESOLVE_HOST_BUDGET) || 120000);
+function hostChunks(hosts, budget) {
+  const out = []; let cur = [], size = 0;
+  for (const h of hosts) {
+    const cost = (h.length + 3) * 2 + 10;            // 'h' and 'www.h', plus quotes and commas
+    if (cur.length && size + cost > budget) { out.push(cur); cur = []; size = 0; }
+    cur.push(h); size += cost;
+  }
+  if (cur.length) out.push(cur);
+  return out.length ? out : [[]];                    // no hosts -> one unfiltered query (old behaviour)
+}
+
+function buildResolveSql({ crawls, keysTable, hosts, db = DB }) {
   const crawlList = crawls.map((c) => `'${String(c).replace(/'/g, "''")}'`).join(",");
+  const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
+  // url_host_name is a bare column, so Parquet row-group statistics can skip most of the partition
+  // before a byte is read. Both forms are emitted because normalizeKey strips a leading www. from the
+  // key side, so the index may hold either. No hosts -> no filter, i.e. the old full-partition scan.
+  const hostFilter = (hosts && hosts.length)
+    ? `
+    AND i.url_host_name IN (${hosts.flatMap((h) => [q(h), q("www." + h)]).join(",")})`
+    : "";
   return `SELECT url, filename, "offset", length, "timestamp"
 FROM (
   SELECT i.url AS url,
@@ -114,7 +137,7 @@ FROM (
     ON r.k = concat(regexp_replace(lower(i.url_host_name), '^www\\.', ''), '|', lower(rtrim(i.url_path, '/')))
   WHERE i.crawl IN (${crawlList}) AND i.subset='warc'
     AND i.fetch_status=200
-    AND i.content_mime_detected IN ('text/html','application/xhtml+xml')
+    AND i.content_mime_detected IN ('text/html','application/xhtml+xml')${hostFilter}
 )
 WHERE rn = 1`;
 }
@@ -513,29 +536,57 @@ async function main() {
     await runAthena(A, buildKeysTableSql({ keysTable, bucket, prefix }), output, "create keys tbl");
 
     // 3) JOIN -> stream the matched WARC pointers to the JSONL the fleet's load-queue consumes.
-    const { id } = await runAthena(A, buildResolveSql({ crawls, keysTable }), output, "resolve");
-    const loc = (await A.athena.send(new A.GetQueryExecutionCommand({ QueryExecutionId: id }))).QueryExecution.ResultConfiguration.OutputLocation;
-    // A large S3 result read can drop mid-body (transient socket reset). The Athena result is immutable,
-    // so on failure retry the whole stream from the start (createWriteStream truncates warcOut each try).
-    let seen = 0, written = 0;
-    for (let attempt = 1; ; attempt++) {
-      try {
-        seen = 0; written = 0;
-        const ws = fs.createWriteStream(warcOut);
-        await s3StreamRows(A, loc, async (r) => {
-          if (seen++ === 0 && r[0] === "url") return;            // header
-          const [url, filename, offset, length, timestamp] = r;
-          if (!url || !filename) return;
-          written++;
-          if (!ws.write(JSON.stringify({ url, filename, offset, length, timestamp }) + "\n"))
-            await new Promise((resolve) => ws.once("drain", resolve));
-        });
-        await new Promise((resolve) => ws.end(resolve));
-        break;
-      } catch (e) {
-        if (attempt >= 3) throw e;
-        console.error(`  result stream attempt ${attempt} failed (${(e && e.message) || e}); retrying…`);
+    // Every column in the JOIN key is wrapped in a function (lower / regexp_replace / rtrim, on both the
+    // host and the path), so Athena can push nothing down and reads the whole crawl partition -- 260-285GB
+    // per attempt, measured. Against s3://commoncrawl, a bucket shared with every other user of the
+    // archive, that came back as "HIVE_S3_THROTTLING: S3 throttling" and burned all six retries on eight
+    // consecutive nights. url_host_name is a bare column, so an IN list of the hosts we actually want lets
+    // Parquet row-group statistics skip most of the partition before a byte is read.
+    const hosts = [...new Set([...keys].map((k) => k.slice(0, k.indexOf("|"))).filter(Boolean))];
+    const chunks = hostChunks(hosts, HOST_LITERAL_BUDGET);
+    console.error(`  ${hosts.length.toLocaleString()} distinct host(s) -> ${chunks.length} resolve quer${chunks.length === 1 ? "y" : "ies"}`);
+    let written = 0;
+    const parts = [];
+    for (let ci = 0; ci < chunks.length; ci++) {
+      const label = chunks.length > 1 ? `resolve ${ci + 1}/${chunks.length}` : "resolve";
+      const { id } = await runAthena(A, buildResolveSql({ crawls, keysTable, hosts: chunks[ci] }), output, label);
+      const loc = (await A.athena.send(new A.GetQueryExecutionCommand({ QueryExecutionId: id }))).QueryExecution.ResultConfiguration.OutputLocation;
+      // A large S3 result read can drop mid-body (transient socket reset). The Athena result is immutable,
+      // so on failure retry the whole stream from the start (createWriteStream truncates the part each try).
+      const part = chunks.length > 1 ? `${warcOut}.part${ci}` : warcOut;
+      for (let attempt = 1; ; attempt++) {
+        let seen = 0, got = 0;
+        try {
+          const ws = fs.createWriteStream(part);
+          await s3StreamRows(A, loc, async (r) => {
+            if (seen++ === 0 && r[0] === "url") return;            // header
+            const [url, filename, offset, length, timestamp] = r;
+            if (!url || !filename) return;
+            got++;
+            if (!ws.write(JSON.stringify({ url, filename, offset, length, timestamp }) + "\n"))
+              await new Promise((resolve) => ws.once("drain", resolve));
+          });
+          await new Promise((resolve) => ws.end(resolve));
+          written += got;                                          // only count a part that finished
+          break;
+        } catch (e) {
+          if (attempt >= 3) throw e;
+          console.error(`  result stream attempt ${attempt} failed (${(e && e.message) || e}); retrying…`);
+        }
       }
+      parts.push(part);
+    }
+    // One query per host chunk means one result file per chunk; load-queue.js wants a single JSONL.
+    if (chunks.length > 1) {
+      const ws = fs.createWriteStream(warcOut);
+      for (const p of parts) {
+        await new Promise((res, rej) => {
+          const rs = fs.createReadStream(p);
+          rs.on("error", rej); rs.on("end", res); rs.pipe(ws, { end: false });
+        });
+      }
+      await new Promise((resolve) => ws.end(resolve));
+      for (const p of parts) { try { fs.unlinkSync(p); } catch (e) { } }
     }
     const pct = keys.size ? ((written / keys.size) * 100).toFixed(1) : "0";
     console.error(`\nResolved ${written.toLocaleString()} / ${keys.size.toLocaleString()} URL(s) in CC (${pct}% hit) -> ${warcOut}`);
