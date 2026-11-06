@@ -224,7 +224,11 @@ async function getCursor(osc) {
   fs.writeFileSync(fUrls, todo.join('\n') + '\n');
   let CRAWLS = arg('crawls', '') || process.env.CRAWLS || '';
   if (!CRAWLS) {
-    const n = Number(process.env.CRAWLS_N) || 4;
+    // One crawl, not four. Every extra crawl is another partition the resolve scans, and four of them
+    // turned a comfortable ~0.7GB chunk into ~7.8GB, which is where s3://commoncrawl starts throttling.
+    // Narrowing to the newest crawl costs coverage, but a URL the resolve misses is not lost: it goes to
+    // bio-live and the live fleet fetches it directly. Raise CRAWLS_N once the resolve is proven steady.
+    const n = Number(process.env.CRAWLS_N) || 1;
     CRAWLS = (await require('./cc-athena-miner').latestCrawls(n, ['CC-MAIN-2026-39'])).join(',');
   }
   console.error(`  resolving ${todo.length.toLocaleString()} URL(s) against ${CRAWLS}`);

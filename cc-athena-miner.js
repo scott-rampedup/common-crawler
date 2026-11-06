@@ -107,6 +107,9 @@ const HOST_LITERAL_BUDGET = Math.max(1000, Number(process.env.RESOLVE_HOST_BUDGE
 // chunk spans, not how many characters the SQL takes. 3,038 hosts in two chunks scanned 40-109GB each
 // and still throttled; ~100 hosts spans a narrow enough band to come in under 10GB.
 const HOSTS_PER_QUERY = Math.max(1, Number(process.env.RESOLVE_HOSTS_PER_QUERY) || 100);
+// A pause between chunks for the same reason: 31 back-to-back scans of the same public bucket is
+// itself the throttle trigger. Costs ~8 minutes on a 31-chunk pass and buys the pass completing.
+const CHUNK_PAUSE_MS = Math.max(0, Number(process.env.RESOLVE_CHUNK_PAUSE_MS) || 15000);
 
 // cc-index sorts by url_surtkey: the host reversed and comma-joined, then ")" and the path. So
 // "careers.acme.com" sorts as "com,acme,careers)". Sorting our hosts the same way is what makes a
@@ -395,7 +398,11 @@ async function ensureBucket(A, bucket) {
 // 147 seconds in, after the keys were already uploaded and the partitions already built. Re-running by
 // hand is not a protocol, so the retryable reasons are retried here where they happen.
 const ATHENA_RETRYABLE = /THROTTL|SlowDown|TOO_MANY_REQUESTS|INTERNAL_ERROR|InternalError|exhausted resources|CANNOT_OPEN_SPLIT/i;
-const ATHENA_TRIES = Math.max(1, Number(process.env.ATHENA_TRIES) || 6);
+const ATHENA_TRIES = Math.max(1, Number(process.env.ATHENA_TRIES) || 8);
+// s3://commoncrawl throttles on sustained request rate, not on one big query: the first chunk of a
+// pass succeeds and the ones behind it fail. A 60s ceiling retried straight back into the same
+// throttle, so all attempts burned inside two minutes. Let the budget actually recover.
+const ATHENA_MAX_BACKOFF_MS = Math.max(1000, Number(process.env.ATHENA_MAX_BACKOFF_MS) || 300000);
 
 // Run a query; resolve { id, scanned, output } when SUCCEEDED, throw on a non-retryable FAILED/CANCELLED.
 async function runAthena(A, sql, output, label, attempt) {
@@ -415,7 +422,7 @@ async function runAthena(A, sql, output, label, attempt) {
     if (st === "FAILED" || st === "CANCELLED") {
       const why = q.QueryExecution.Status.StateChangeReason || "";
       if (ATHENA_RETRYABLE.test(why) && attempt + 1 < ATHENA_TRIES) {
-        const wait = Math.min(60000, 4000 * 2 ** attempt);
+        const wait = Math.min(ATHENA_MAX_BACKOFF_MS, 4000 * 2 ** attempt);
         console.error(`  [${label || "query"}] ${st}: ${why.slice(0, 140)}`);
         console.error(`  [${label || "query"}] retryable — attempt ${attempt + 2}/${ATHENA_TRIES} in ${Math.round(wait / 1000)}s`);
         await sleep(wait);
@@ -597,6 +604,7 @@ async function main() {
         }
       }
       parts.push(part);
+      if (ci + 1 < chunks.length && CHUNK_PAUSE_MS) await sleep(CHUNK_PAUSE_MS);
     }
     // One query per host chunk means one result file per chunk; load-queue.js wants a single JSONL.
     if (chunks.length > 1) {
