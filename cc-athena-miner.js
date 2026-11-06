@@ -102,12 +102,24 @@ LOCATION 's3://${bucket}/${prefix}'`;
 // Athena caps a query string at 262,144 characters, so the host list below cannot grow without bound.
 // Budget the literals well under that and split the resolve into one query per chunk: each chunk scans a
 // fraction of the partition, which is the entire point of the filter.
-const HOST_LITERAL_BUDGET = Math.max(1000, Number(process.env.RESOLVE_HOST_BUDGET) || 120000);
-function hostChunks(hosts, budget) {
+const HOST_LITERAL_BUDGET = Math.max(1000, Number(process.env.RESOLVE_HOST_BUDGET) || 20000);
+// A chunk is also capped by host COUNT, because what drives the scan is how wide a surtkey range the
+// chunk spans, not how many characters the SQL takes. 3,038 hosts in two chunks scanned 40-109GB each
+// and still throttled; ~100 hosts spans a narrow enough band to come in under 10GB.
+const HOSTS_PER_QUERY = Math.max(1, Number(process.env.RESOLVE_HOSTS_PER_QUERY) || 100);
+
+// cc-index sorts by url_surtkey: the host reversed and comma-joined, then ")" and the path. So
+// "careers.acme.com" sorts as "com,acme,careers)". Sorting our hosts the same way is what makes a
+// chunk a CONTIGUOUS slice of the index, which is the only reason a range predicate can prune.
+const surtPrefix = (h) => String(h).split(".").filter(Boolean).reverse().join(",");
+
+function hostChunks(hosts, budget, perQuery) {
+  perQuery = perQuery || HOSTS_PER_QUERY;
+  const sorted = [...hosts].sort((a, b) => (surtPrefix(a) < surtPrefix(b) ? -1 : surtPrefix(a) > surtPrefix(b) ? 1 : 0));
   const out = []; let cur = [], size = 0;
-  for (const h of hosts) {
+  for (const h of sorted) {
     const cost = (h.length + 3) * 2 + 10;            // 'h' and 'www.h', plus quotes and commas
-    if (cur.length && size + cost > budget) { out.push(cur); cur = []; size = 0; }
+    if (cur.length && (size + cost > budget || cur.length >= perQuery)) { out.push(cur); cur = []; size = 0; }
     cur.push(h); size += cost;
   }
   if (cur.length) out.push(cur);
@@ -120,6 +132,16 @@ function buildResolveSql({ crawls, keysTable, hosts, db = DB }) {
   // url_host_name is a bare column, so Parquet row-group statistics can skip most of the partition
   // before a byte is read. Both forms are emitted because normalizeKey strips a leading www. from the
   // key side, so the index may hold either. No hosts -> no filter, i.e. the old full-partition scan.
+  // url_host_name is NOT the sort column, so its row-group statistics barely prune: a row group
+  // covering "com,*" has min "aaa.com" and max "zzz.com". url_surtkey IS the sort column. Bounds are
+  // taken off the chunk's own hosts, so they hold whatever order the caller passed. The upper bound
+  // ends in "-" (0x2D), which sits above both ")" (0x29) and "," (0x2C), so a host and all of its
+  // subdomains stay inside the range while the next host along does not.
+  const surts = (hosts || []).map((h) => String(h).split(".").filter(Boolean).reverse().join(",")).sort();
+  const rangeFilter = surts.length
+    ? `
+    AND i.url_surtkey >= ${q(surts[0])} AND i.url_surtkey < ${q(surts[surts.length - 1] + "-")}`
+    : "";
   const hostFilter = (hosts && hosts.length)
     ? `
     AND i.url_host_name IN (${hosts.flatMap((h) => [q(h), q("www." + h)]).join(",")})`
@@ -137,7 +159,7 @@ FROM (
     ON r.k = concat(regexp_replace(lower(i.url_host_name), '^www\\.', ''), '|', lower(rtrim(i.url_path, '/')))
   WHERE i.crawl IN (${crawlList}) AND i.subset='warc'
     AND i.fetch_status=200
-    AND i.content_mime_detected IN ('text/html','application/xhtml+xml')${hostFilter}
+    AND i.content_mime_detected IN ('text/html','application/xhtml+xml')${rangeFilter}${hostFilter}
 )
 WHERE rn = 1`;
 }
