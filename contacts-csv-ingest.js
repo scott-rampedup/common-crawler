@@ -200,9 +200,17 @@ function buildRecords(text, genderMap) {
       // Extensions are dropped, not mangled: no phone in the 15M-record store carries one, so there
       // is nowhere to put "ext 109" and the main number is what every consumer expects.
       'Phone': ex.toE164(get(row, 'phone'), cc),
-      'Phone Type': '', 'Phone Location': '',
+      // Honour the mapped columns instead of discarding them. ALIAS has listed phone_type and
+      // phone_location for as long as it has listed the rest, and the dry run prints
+      // "Phone type -> phone_type" among the columns it mapped -- but these four were pinned to ''
+      // regardless, so a file that carried Mobile/Office was read, reported as mapped, and written
+      // blank. A loader that says it took a column has to take it; teamtarter's 21 rows lost their
+      // phone type that way. Still EMPTY when the file has no such column: Type and Location are
+      // derived from the number elsewhere in the pipeline, and inventing them here would freeze a
+      // guess over a measurement.
+      'Phone Type': get(row, 'phone_type'), 'Phone Location': get(row, 'phone_location'),
       'Phone 2': ex.toE164(get(row, 'phone_2'), cc),
-      'Phone 2 Type': '', 'Phone 2 Location': '',
+      'Phone 2 Type': get(row, 'phone_2_type'), 'Phone 2 Location': '',
       'Employer': get(row, 'employer'),
       'Work Location': get(row, 'work_location'),
     };

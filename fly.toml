@@ -7,6 +7,14 @@ primary_region = 'ewr'   # must match the existing 'data' volume's region
 [env]
   DATA_DIR = '/data'
   DEMO_MODE = 'false'
+  # Deliverability checks are OFF. The validation API currently answers status:"error" for every
+  # address -- verified live on 2026-11-12 against info@microsoft.com and support@github.com, not
+  # just modelled guesses -- so every call is a dead round-trip. email-model treats an API error as
+  # "keep the best guess", so the addresses were never actually being dropped; the only thing
+  # verification was still buying was one failed HTTP request per candidate per record, which over a
+  # 230,898-record backlog is the difference between an afternoon and a week. With this unset again,
+  # modelling returns to stored pattern -> learned pattern -> {first}.{last}@domain, no network.
+  EMAIL_VERIFY = '0'
   SEARCH_BACKEND = 'opensearch'   # serve the Master DB read path from the OpenSearch production store (needs OPENSEARCH_ENDPOINT secret)
   NODE_OPTIONS = '--max-old-space-size=6144'   # let V8 use the 8GB box (default ~2GB caused SIGABRT)
   LIVE_MAX_PAGES = '300'        # max pages the live crawler fetches per domain (sitemap-driven)
