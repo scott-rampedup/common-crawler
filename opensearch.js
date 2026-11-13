@@ -124,6 +124,29 @@ let _che = null, _gmap = null, _li = null;
 const _cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : '';
 const _gmapLoad = () => { if (!_gmap) { try { _gmap = require('./extractor').loadGenderMap(require('path').join(__dirname, 'names-genders.csv')); } catch (e) { _gmap = {}; } } return _gmap; };
 const _liLoad = () => { if (_li === null) { try { _li = require('./li-name'); } catch (e) { _li = false; } } return _li; };
+// OpenSearch refuses any keyword term over 32,766 BYTES and rejects the WHOLE document with
+// illegal_argument_exception. The bulk item fails while bulkUpsert still counts it toward `indexed`,
+// so the contact silently never arrives and no total looks wrong. Two real sources found on
+// 2026-11-10 while reconciling 199 missing rows: `image_url` holding an inline
+// `data:image/png;base64,...` payload instead of a URL, and a whole scraped page stored as a
+// `title`. 22 contacts had been silently unindexable since 2026-10-27 because of it.
+const KW_MAX = 8000;                 // 8k chars is under 32,766 bytes even at 4 bytes/char
+const KW_FIELDS = ['title', 'position', 'last_path', 'path_id', 'company', 'domain', 'phone',
+  'phone_type', 'phone_location', 'phone_2', 'phone_2_type', 'phone_2_location', 'linkedin_url',
+  'facebook', 'twitter', 'whatsapp', 'google_maps', 'vcard', 'web_source_url', 'directory',
+  'source', 'email_type', 'gender', 'first', 'last', 'name'];
+function capKeywordFields(doc) {
+  if (!doc) return doc;
+  const img = String(doc.image_url || '');
+  // an inline image is not a URL and is never useful here; drop rather than truncate to a broken prefix
+  if (/^data:/i.test(img) || Buffer.byteLength(img, 'utf8') > 2048) doc.image_url = '';
+  for (const f of KW_FIELDS) {
+    const v = doc[f];
+    if (typeof v === 'string' && Buffer.byteLength(v, 'utf8') > KW_MAX) doc[f] = v.slice(0, KW_MAX);
+  }
+  return doc;
+}
+
 function ensureNameGender(doc) {
   try {
     // 1) blank name + a dotted email -> firstname.lastname. (The linkedin.com/in slug is handled in (3),
@@ -150,7 +173,7 @@ function ensureNameGender(doc) {
       }
     }
   } catch (e) { /* best-effort */ }
-  return doc;
+  return capKeywordFields(doc);        // last gate before indexing: no oversized keyword terms
 }
 
 // Map a Postgres contacts row (snake_case columns) to an OpenSearch document.
@@ -293,7 +316,10 @@ async function bulkUpsert(client, docs, { clearPlaceholder = true } = {}) {
       else if (it.delete && it.delete.error) errors++;
     }
   }
-  return { indexed: docs.length - skipped, skipped, errors };
+  // `indexed` must mean STORED, not ATTEMPTED. It previously counted every doc that was sent, so a
+  // batch where every item was rejected still reported a full success -- which is how 22 contacts
+  // with oversized keyword terms were reported as pushed while none of them arrived.
+  return { indexed: Math.max(0, docs.length - skipped - errors), skipped, errors };
 }
 
 // ---------------------------------------------------------------------------------------------------
