@@ -71,10 +71,14 @@ function inferEmailPattern(samples) {
     const v = patternVotes.get(tpl) || 0;
     if (v > best) { best = v; pattern = tpl; }
   }
-  let domain = '', bestD = -1;
-  for (const [d, v] of domainVotes) if (v > bestD) { bestD = v; domain = d; }
+  let domain = '', bestD = -1, totalD = 0;
+  for (const [d, v] of domainVotes) { totalD += v; if (v > bestD) { bestD = v; domain = d; } }
 
-  return { pattern, domain, samples: best };
+  // How strongly the winning mail domain actually won. A bare plurality is not the same as a
+  // consensus, and the caller needs to tell them apart: adopting a mail domain that is NOT the
+  // site's own is a strong claim, and on an aggregator (a platform listing many practices or
+  // agencies) the plurality winner belongs to one tenant and is wrong for everyone else.
+  return { pattern, domain, samples: best, domainSamples: bestD, domainShare: totalD ? bestD / totalD : 0 };
 }
 
 // Model an email for `first`/`last` from the company's known samples, or "" if the

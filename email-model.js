@@ -42,7 +42,18 @@ function registrableDomain(host) {
 // against the deliverability API and different patterns/domains are tried until one is GOOD (verified
 // mailbox or catch-all domain). `requireGood` (default true when verifying): if no candidate is GOOD,
 // leave the record unmodelled rather than inventing a bad address (API errors fall back to a best guess).
-async function modelMissingEmails(records, { dbQuery = null, patternQuery = null, defaultPattern = null, verify = null, requireGood = true } = {}) {
+// `onPattern(domain, pattern, emailDomain, sampleCount)` is called when a pattern is LEARNED from
+// observed addresses and no stored model already covered the domain. It lets the caller persist what
+// was worked out, so the next job on that domain reads it instead of re-deriving it -- and so a
+// domain resolved once is resolved for good, which is the only way this scales past the handful of
+// domains any single crawl happens to touch.
+const MIN_SAMPLES_TO_CACHE = 2;   // one address is an anecdote, not a pattern -- never cache off it
+// Before a domain's people are given addresses at a DIFFERENT domain, that many samples must agree,
+// and that share of them. Deliberately stricter than MIN_SAMPLES_TO_CACHE: this is the error that
+// sends mail to the wrong company entirely.
+const CROSS_DOMAIN_MIN_SAMPLES = Number(process.env.EMAIL_CROSS_DOMAIN_MIN_SAMPLES) || 5;
+const CROSS_DOMAIN_MIN_SHARE = Number(process.env.EMAIL_CROSS_DOMAIN_MIN_SHARE) || 0.7;
+async function modelMissingEmails(records, { dbQuery = null, patternQuery = null, defaultPattern = null, verify = null, requireGood = true, onPattern = null } = {}) {
   const list = records || [];
   const missing = list.filter((r) => !cleanEmail(r['Email Address']) && r['First'] && r['Last'] && r['Gender']);
   if (!missing.length) return 0;
@@ -63,10 +74,50 @@ async function modelMissingEmails(records, { dbQuery = null, patternQuery = null
     let stored = null;
     if (patternQuery) { try { stored = await patternQuery(domain); } catch (e) { /* */ } }
     const samples = [];
-    const addSample = (r) => { const email = cleanEmail(r['Email Address']); if (email && r['First'] && r['Last'] && classifyEmail(email) === 'Professional') samples.push({ first: r['First'], last: r['Last'], email }); };
+    // A sample must be an OBSERVED address, never one we invented.
+    //
+    // classifyEmail() reads the SHAPE of an address, not its provenance: a modelled
+    // jane.smith@acme.com is not role-based and not free-mail, so it comes back 'Professional' and
+    // would be fed straight back in as evidence for the pattern that produced it. The Postgres side
+    // never had this problem -- dbQuery filters on the stored email_type column -- but records held
+    // in the job itself were matched on shape alone, so a job carrying modelled rows could teach the
+    // learner its own guesses and have them come back out as a "learned" pattern.
+    const addSample = (r) => {
+      const email = cleanEmail(r['Email Address']);
+      if (!email || !r['First'] || !r['Last']) return;
+      if (String(r['Email Type'] || '').trim().toLowerCase() === 'modelled') return;
+      if (classifyEmail(email) !== 'Professional') return;
+      samples.push({ first: r['First'], last: r['Last'], email });
+    };
     for (const r of list) if (domainOf(r) === domain) addSample(r);
     if (dbQuery) { try { for (const r of (await dbQuery(domain)) || []) addSample(r); } catch (e) { /* */ } }
-    const learned = samples.length ? inferEmailPattern(samples) : null;
+    let learned = samples.length ? inferEmailPattern(samples) : null;
+    // Guard the cross-domain claim.
+    //
+    // Keeping the local-part pattern is low-risk -- the worst case is the wrong separator on the
+    // site's own domain. Switching the MAIL DOMAIN is different: get it wrong and every address is
+    // addressed to a company that has nothing to do with this person. Verified cases where it is
+    // right (cumedicine.us -> ucdenver.edu, biox.stanford.edu -> stanford.edu) look identical in the
+    // data to cases where it is wrong (myprivia.com -> sunnypeds.com, chosen by 4 samples on a
+    // platform hosting hundreds of unrelated practices). The only thing that separates them is how
+    // much of the evidence agrees, so require a real majority of a real sample before believing it.
+    if (learned && learned.domain) {
+      const own = registrableDomain(domain);
+      const foreign = own && learned.domain !== own && learned.domain !== domain;
+      const thin = (learned.domainSamples || 0) < CROSS_DOMAIN_MIN_SAMPLES
+                || (learned.domainShare || 0) < CROSS_DOMAIN_MIN_SHARE;
+      if (foreign && thin) learned = { ...learned, domain: own, crossDomainRejected: true };
+    }
+    // Persist a learned pattern, but only one with real evidence behind it. Caching a pattern
+    // inferred from a single address would write a guess into the companies index, where every
+    // later job would read it back as established fact -- the same feedback loop addSample now
+    // refuses, one level up.
+    // Never cache a pattern whose cross-domain claim we just refused: the fallback is a safe default
+    // for this run, not a fact worth writing where every later job will read it as one.
+    if (onPattern && learned && learned.pattern && !learned.crossDomainRejected && !stored && samples.length >= MIN_SAMPLES_TO_CACHE) {
+      try { await onPattern(domain, learned.pattern, learned.domain || null, samples.length); }
+      catch (e) { /* caching is best-effort; never let it break modelling */ }
+    }
 
     if (!verify) {
       // ---- Unverified path (existing behavior): stored -> learned -> default ----
@@ -74,8 +125,17 @@ async function modelMissingEmails(records, { dbQuery = null, patternQuery = null
         for (const r of people) { const l = render(stored.pattern, r['First'], r['Last']); if (l) { r['Email Address'] = `${l}@${stored.email_domain}`; r['Email Type'] = 'Modelled'; modelled++; } }
         continue;
       }
-      if (learned) {
-        for (const r of people) { const email = modelEmail(samples, r['First'], r['Last']); if (email) { r['Email Address'] = email; r['Email Type'] = 'Modelled'; modelled++; } }
+      if (learned && learned.pattern && learned.domain) {
+        // Render from the GUARDED `learned`, not via modelEmail(samples, ...). modelEmail re-runs
+        // inferEmailPattern on the raw samples internally, so it silently discarded the cross-domain
+        // check above and kept addressing people at a tenant domain the evidence did not support.
+        for (const r of people) {
+          const l = render(learned.pattern, r['First'], r['Last']);
+          if (!l) continue;
+          r['Email Address'] = l + '@' + learned.domain;
+          r['Email Type'] = 'Modelled';
+          modelled++;
+        }
       }
       continue;   // remaining handled by the default-fallback block below
     }
