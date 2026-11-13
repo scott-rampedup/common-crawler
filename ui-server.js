@@ -401,6 +401,7 @@ let db = sqliteDb;                 // contacts backend (writes/edits) — reassi
 // OpenSearch production store instead of the processing DB. `reader` is what those read endpoints use;
 // it points at OpenSearch when SEARCH_BACKEND=opensearch (+ OPENSEARCH_ENDPOINT), else at `db`.
 const openSearch = require('./opensearch');
+const pp = require('./pp-source');       // Public Prospects: observed addresses, for learning and for proof
 let reader = db;                   // read backend for search/export/facets/stats — set in startup()
 function makeOsReader(endpoint) {
   const client = openSearch.makeClient(endpoint);
@@ -907,6 +908,12 @@ function jobSummary(job) {
     // Whether this job's records actually reached the Master DB. null = the merge never ran, which is
     // a different thing from "merged 0 rows" and the UI says so.
     merge: job.merge || null,
+    // How many of this job's records are NOT in the Master DB right now. The merge receipt alone
+    // could not answer that -- `partial` says the merge was never finalized, which is not the same
+    // as records being missing, and the badge read alarm-red for both. With this the UI can say
+    // "all in" for a job that drained as it went but never got its completion pass.
+    unmerged: unmergedCount(job),
+    resumeAttempts: job.resumeAttempts || 0,
     bioList: job.bioList || null,       // a pushed BIO URL list: where it came from and how many
     // Team Page read: pages fetched, people emitted, bare names dropped, and how many per-person
     // bio pages the cards linked to (downloadable, not queued).
@@ -947,6 +954,12 @@ function persistJob(job) {
     // is its entire reason for existing. Nothing else was wrong with either feature: they were simply
     // absent from this object.
     merge: job.merge || null,
+    // Without this the auto-resume budget resets on every deploy, and a job that can never finish
+    // gets retried forever -- which is how 1,001 zombies accumulated the first time.
+    resumeAttempts: job.resumeAttempts || 0,
+    // When this job last went through the vCard/modelling/geocode chain. Without it on disk, every
+    // restart would re-run metered deliverability checks over the whole backlog.
+    enrichedAt: job.enrichedAt || null,
     bioList: job.bioList || null,
     teamPage: job.teamPage || null,     // Team Page read stats -- same reason as the two above
     records: jobRawRecords(job),
@@ -999,6 +1012,8 @@ function loadJobs() {
         totalOverride: j.totalOverride, doneOverride: j.doneOverride, recordCount: j.recordCount,
         error: j.error || null, recordsByEmail, lastProgress: null,
         merge: j.merge || null,         // survives restarts; null means the merge never ran
+        resumeAttempts: j.resumeAttempts || 0,   // auto-resume budget already spent on this job
+        enrichedAt: j.enrichedAt || null,        // null = never had its modelling pass
         bioList: j.bioList || null,     // a pushed BIO URL list keeps its provenance across restarts
         teamPage: j.teamPage || null,   // ...and a Team Page job keeps its read stats
       });
@@ -1018,7 +1033,11 @@ function pruneOldJobs() {
   const RETAIN = Math.max(0, Number(process.env.JOBS_RETAIN) || 100);
   const ACTIVE = new Set(['running', 'interrupted', 'queued', 'starting']);
   const terminal = [...jobs.values()]
-    .filter((j) => j.id !== SHEET_JOB_ID && !ACTIVE.has(j.status))
+    // NEVER prune a job whose records are not in the Master DB. This file is the only copy they
+    // exist in, so deleting it is permanent data loss -- and with 106 completed jobs against a
+    // RETAIN of 100, the old filter was one restart away from doing exactly that to the 224,972
+    // stranded records the reconciler was built to rescue. A job becomes prunable once it drains.
+    .filter((j) => j.id !== SHEET_JOB_ID && !ACTIVE.has(j.status) && isDrained(j) && !j._mergeWaiting)
     .sort((a, b) => String(b.finishedAt || b.createdAt || '').localeCompare(String(a.finishedAt || a.createdAt || '')));
   const drop = terminal.slice(RETAIN);
   if (!drop.length) return;
@@ -1053,10 +1072,52 @@ async function modelMissingEmailsForRecords(records) {
   // modelling below, and means the modelled address is built from the corrected name.
   try { liName.applyToRecords(records); } catch (e) { /* best-effort */ }
   return emailModel.modelMissingEmails(records, {
-    dbQuery: (domain) => db.query({ domain, emailType: 'Professional', pageSize: 500 }).then((r) => r.rows || []),
+    // Ask BOTH stores for observed addresses on this domain.
+    //
+    // This used to ask only the processing DB (~5.2M contacts) while the production store it feeds
+    // holds ~14.7M -- so a domain could be declared pattern-less here while its staff addresses sat
+    // in OpenSearch. Measured on 2026-11-12 against 500 domains that modelled blind: 115 of them had
+    // observed Professional addresses in OpenSearch after all, covering 20,012 of the 44,059 modelled
+    // rows in that sample. Nearly half the blind volume was a missing-source problem, not an unknown
+    // pattern. Deduped by address, so one sighting in both stores is one vote, not two.
+    dbQuery: async (domain) => {
+      const out = []; const seen = new Set();
+      const take = (rows) => {
+        for (const r of rows || []) {
+          const e = String(r['Email Address'] || '').trim().toLowerCase();
+          if (!e || seen.has(e)) continue;
+          seen.add(e); out.push(r);
+        }
+      };
+      try { take((await db.query({ domain, emailType: 'Professional', pageSize: 500 })).rows); }
+      catch (e) { console.error(`[email-model] sample read (processing DB) failed for ${domain}:`, e.message); }
+      if (reader && reader._os && reader !== db) {
+        try { take((await reader.query({ domain, emailType: 'Professional', pageSize: 500 })).rows); }
+        catch (e) { console.error(`[email-model] sample read (OpenSearch) failed for ${domain}:`, e.message); }
+      }
+      // ...and Public Prospects, which is the only one of the three big enough to answer for a
+      // domain we have never crawled. Our own two stores only know a company if we already found
+      // someone there, which is precisely not the case for a domain that is about to model blind.
+      // Asked LAST and deduped, so our own observations still outvote it where we have them.
+      if (pp.enabled()) {
+        try { take(await pp.patternSamples([domain, emailModel.registrableDomain(domain)])); }
+        catch (e) { console.error(`[email-model] sample read (Public Prospects) failed for ${domain}:`, e.message); }
+      }
+      return out;
+    },
     // Prefer a company's stored email model (set via Bulk Edit) over guessing from samples. Fall back to
     // the registrable domain so a model stored on massmutual.com also covers financialprofessionals.massmutual.com.
     patternQuery: companiesClient ? async (domain) => (await companies.getEmailModel(companiesClient, domain)) || (await companies.getEmailModel(companiesClient, emailModel.registrableDomain(domain))) : null,
+    // Write a learned pattern back onto the companies index, so it becomes the stored model that
+    // patternQuery above reads first next time. Without this every job re-derives the same pattern
+    // from scratch and a domain whose samples happen to be absent that day falls back to a blind
+    // guess, even though we worked the answer out last week.
+    onPattern: companiesClient ? async (domain, pattern, emailDomain, n) => {
+      try {
+        const r = await companies.setEmailModelByDomain(companiesClient, domain, { pattern, email_domain: emailDomain || domain });
+        if (r && r.updated) console.log(`[email-model] learned "${pattern}" for ${domain} from ${n} observed address(es) -> cached on ${r.updated} company row(s).`);
+      } catch (e) { console.error('[email-model] pattern cache write failed:', e.message); }
+    } : null,
     // Going forward: model an email for EVERY email-less record that has a gender (a recognized person),
     // using {first}.{last}@<registrable-domain> when no stored/learned pattern exists, so no gendered bio
     // is dropped for lack of an email. Env override: EMAIL_DEFAULT_PATTERN=0 disables, or set a template.
@@ -1069,11 +1130,89 @@ async function modelMissingEmailsForRecords(records) {
   });
 }
 
+// Email-less records this job holds that modelling is SUPPOSED to rescue: a recognized person (one
+// with a gender) whose bio published no address. Per the defaultPattern note below, those get
+// {first}.{last}@<registrable-domain> so they are not dropped at the email-keyed upsert.
+function modellableCount(job) {
+  let n = 0;
+  if (!job || !job.recordsByEmail) return 0;
+  for (const rec of job.recordsByEmail.values()) {
+    if (String(rec['Email Address'] || '').trim()) continue;
+    // A LinkedIn URL counts too: modelMissingEmailsForRecords runs liName.applyToRecords first,
+    // which recovers a name and gender from a linkedin.com/in slug -- so a row with no gender YET
+    // can still come out of the chain with one, and gating on Gender alone would skip its job.
+    if (String(rec['Gender'] || '').trim() || /linkedin\.com\/in\//i.test(String(rec['LinkedIn URL'] || ''))) n++;
+  }
+  return n;
+}
+
+// The chain that turns raw crawl rows into mergeable contacts: vCards, then a modelled email for
+// every email-less bio that has a gender, then geocoding.
+//
+// This lived inline at the end of runJobDomains, which meant an INTERRUPTED job never got any of it.
+// The modelling step is not cosmetic -- it is what keeps a bio with a name and a gender but no
+// published address from being thrown away at the email-keyed upsert -- so skipping it does not just
+// delay those records, it loses them. On 2026-11-12, 465 jobs on disk held 204,582 email-less
+// records between them, none of which had ever been through this.
+async function enrichJob(job) {
+  try {
+    const v = await vcard.enrichRecords([...job.recordsByEmail.values()], { genderMap: GENDER_MAP });
+    if (v.fetched) console.log(`Job ${job.id}: read ${v.fetched} vCard(s), enriched ${v.applied} record(s).`);
+  } catch (e) { console.error('vCard enrichment failed:', e.message); }
+  try { await modelMissingEmails(job); }                            // model emails for email-less bios
+  catch (e) { console.error('email modelling failed:', e.message); }
+  try { await geocodeRecords([...job.recordsByEmail.values()]); }   // City, Region, Country
+  catch (e) { console.error('geocode failed:', e.message); }
+  job.enrichedAt = new Date().toISOString();
+  persistJob(job);
+}
+
+// Promote the guesses that turn out not to be guesses.
+//
+// A modelled address is a prediction. Public Prospects is 185.7M addresses observed on public pages
+// with evidence of where and when -- so if our prediction is sitting in there, it was never a guess,
+// it is an address we derived and the world independently published. Measured 2026-11-12 on an
+// 8,000-address sample: 4.04% matched, every one of them a `personal` mailbox, none a role or system
+// address, and 38% of the matches had been seen by two or more independent sources.
+//
+// This is also the closest thing to working deliverability validation we currently have: the Exhaust
+// API answers status:"error" for every address, including info@microsoft.com (see fly.toml). An
+// address observed in the wild is weaker evidence than a live mailbox probe, but it is evidence,
+// and it is evidence we already own.
+//
+// Only ever upgrades Modelled -> Professional. It never touches an address someone actually
+// published, and it never downgrades: a non-match means "not observed", which is not the same as
+// "wrong", and treating it as wrong would throw away most of the set for no reason.
+const PP_MIN_SOURCES = Math.max(1, Number(process.env.PP_UPGRADE_MIN_SOURCES) || 1);
+async function confirmModelledAgainstPP(records) {
+  if (!pp.enabled()) return 0;
+  const modelled = (records || []).filter((r) => String(r['Email Type'] || '').trim().toLowerCase() === 'modelled'
+    && String(r['Email Address'] || '').trim());
+  if (!modelled.length) return 0;
+  let found;
+  try { found = await pp.observed(modelled.map((r) => r['Email Address'])); }
+  catch (e) { console.error('[pp] confirmation lookup failed:', e.message); return 0; }
+  if (!found || !found.size) return 0;
+  let upgraded = 0;
+  for (const r of modelled) {
+    const ev = found.get(pp.normEmail(r['Email Address']));
+    if (!ev || ev.sources < PP_MIN_SOURCES) continue;
+    r['Email Type'] = 'Professional';
+    upgraded++;
+  }
+  return upgraded;
+}
+
 async function modelMissingEmails(job) {
   // Model missing emails for ALL job modes now (not just sitemap/webpage): any email-less record with a
   // gender gets a modelled address so it isn't dropped at the email-keyed upsert.
-  const n = await modelMissingEmailsForRecords([...job.recordsByEmail.values()]);
+  const recs = [...job.recordsByEmail.values()];
+  const n = await modelMissingEmailsForRecords(recs);
   if (n) console.log(`Job ${job.id}: modelled ${n} missing email(s).`);
+  try {
+    const up = await confirmModelledAgainstPP(recs);
+    if (up) console.log(`Job ${job.id}: ${up} modelled address(es) confirmed in Public Prospects -> Professional.`);
+  } catch (e) { console.error('[pp] confirmation pass failed:', e.message); }
   return n;
 }
 
@@ -1089,40 +1228,322 @@ async function modelMissingEmails(job) {
 // job's total size. upsertMany is email-keyed, score-gated and idempotent, so a record sent twice
 // (a resumed job, an overlapping batch) is harmless.
 const MERGE_EVERY = Number(process.env.JOB_MERGE_EVERY || 250);   // unsent records that trigger a merge
-function mergeIncremental(job, force = false) {
-  // Keyed on the ROW, not just the email. onRecord overwrites recordsByEmail[k] when the same person
-  // turns up again with more fields, and a set of merged emails would treat that improved record as
-  // already sent and drop the improvement on the floor. Comparing the object identity catches it:
-  // a replaced row is a different object, so it goes again (and upsertMany's score gate decides).
+// Rows this job holds that upsertMany has not confirmed yet.
+//
+// Keyed on the ROW, not just the email. onRecord overwrites recordsByEmail[k] when the same person
+// turns up again with more fields, and a set of merged emails would treat that improved record as
+// already sent and drop the improvement on the floor. Comparing object identity catches it: a
+// replaced row is a different object, so it goes again (and upsertMany's score gate decides).
+function pendingRows(job) {
   if (!job._mergedRows) job._mergedRows = new Map();
-  if (job._mergeInFlight) return;                       // one at a time; the next domain will retry
   const pending = [];
-  for (const [k, rec] of job.recordsByEmail) if (job._mergedRows.get(k) !== rec) pending.push([k, rec]);
-  if (!pending.length || (!force && pending.length < MERGE_EVERY)) return;
+  for (const [k, rec] of job.recordsByEmail) {
+    if (job._mergedRows.get(k) === rec) continue;
+    // An email-less row is NOT "already merged", it is NOT YET MERGEABLE. Sending it marks it as
+    // accounted for, and because email modelling mutates the row IN PLACE the object identity never
+    // changes -- so when that row later gains a modelled address, pendingRows would never pick it up
+    // again and the modelled contact would be silently dropped. Holding it back here is what lets
+    // modelling work on a job bigger than MERGE_EVERY, where the incremental pass would otherwise
+    // have "sent" (and the upsert discarded) most email-less rows long before modelling ran.
+    if (!mergeableRow(rec)) continue;
+    pending.push([k, rec]);
+  }
+  return pending;
+}
+// A record upsertMany can actually write. rowValues() returns null without an email address, so a
+// row that has none is dropped before it reaches the INSERT and was never counted in a receipt.
+//
+// This is not an edge case, it is most of the data: across the 465 jobs carrying an apparent merge
+// shortfall on 2026-11-12, 204,582 of 356,443 held records had no email at all. Counting them as
+// outstanding is what made the backlog look like 224,972 missing contacts when the real figure was
+// 4,550 -- and a dashboard that reports a six-figure loss every day is one nobody reads.
+function mergeableRow(rec) {
+  return !!(rec && String(rec['Email Address'] || '').trim());
+}
+// How many of this job's records are not in the Master DB AND could be written if they were. A
+// pushed BIO list has no merge step at all -- its URLs go straight to the queue -- so it is never
+// "unmerged".
+//
+// Counts without building the array: jobSummary calls this for EVERY job on every dashboard poll,
+// and with ~550 jobs holding ~385k records between them, allocating a pending list each time would
+// put real garbage pressure on the request path for a number we only want the size of.
+function unmergedCount(job) {
+  if (!job || job.bioList || !job.recordsByEmail) return 0;
+  const merged = job._mergedRows;
+  let n = 0;
+  for (const [k, rec] of job.recordsByEmail) {
+    if (merged && merged.get(k) === rec) continue;
+    if (mergeableRow(rec)) n++;
+  }
+  return n;
+}
+// A job whose records are all in, on a crawl that is over. This is the only form of the question
+// that survives a restart (_mergedRows does not), so it is the one the pruner is allowed to trust.
+function isDrained(job) {
+  return !!(job.bioList || (job.merge && !job.merge.partial && !job.merge.error));
+}
 
-  job._mergeInFlight = true;
-  const stamp = new Date().toISOString();
-  Promise.resolve(db.upsertMany(pending.map(([, rec]) => rec)))
-    .then((res) => {
-      for (const [k, rec] of pending) job._mergedRows.set(k, rec);
-      const prev = job.merge || { processed: 0, added: 0, changed: 0 };
-      job.merge = {
-        at: stamp,
-        processed: (prev.processed || 0) + (res.processed || 0),
-        added: (prev.added || 0) + (res.added || 0),
-        changed: (prev.changed || 0) + (res.changed || 0),
-        partial: true,                                   // cleared when the job finishes
-        error: null,
-      };
-      console.log(`Central DB (incremental): merged ${res.processed} of ${pending.length} pending record(s), +${res.added} new`);
-    })
+// Push this job's unsent rows to the Master DB.
+//
+// The ONE place that writes job.merge, so the receipt reads the same whoever asked for it: the
+// per-domain incremental pass, the completion path, the reconciler sweep, or the manual button.
+// `finalize` means "no more records are coming" and is what clears `partial` -- the thing that turns
+// the badge green. A still-running job always leaves it set.
+async function drainJob(job, { finalize = false } = {}) {
+  // Serialized HERE, not in the callers, because there are now four of them: the incremental pass,
+  // the completion path, the reconciler sweep and the manual button. Two can want the same job at the
+  // same moment -- a sweep picks up a stalled job just as a late domain-done fires -- and without
+  // this both would read the same pending set and upsert it twice. upsertMany is idempotent so the
+  // data would survive, but `added` would land against whichever transaction lost the race, and the
+  // receipt is the only thing anyone can check afterwards.
+  //
+  // Callers QUEUE rather than skip. Skipping looks equivalent and is not: if an incremental pass
+  // happens to be in flight at the moment a crawl ends, a skipped completion pass leaves the job
+  // reading `partial` and waiting on the reconciler for work that was already done.
+  const prev = job._mergeChain || Promise.resolve();
+  const next = prev.catch(() => {}).then(() => drainJobLocked(job, finalize));
+  job._mergeChain = next;
+  job._mergeWaiting = (job._mergeWaiting || 0) + 1;
+  try {
+    return await next;
+  } finally {
+    job._mergeWaiting -= 1;
+    if (job._mergeChain === next) job._mergeChain = null;
+  }
+}
+
+// Writable rows this job has accounted for -- the honest "merged N" for a receipt.
+function accountedRows(job) {
+  let n = 0;
+  if (job._mergedRows) for (const rec of job._mergedRows.values()) if (mergeableRow(rec)) n++;
+  return n;
+}
+
+async function drainJobLocked(job, finalize) {
+  const pending = pendingRows(job);
+  const prev = job.merge || { processed: 0, added: 0, changed: 0 };
+  if (!pending.length) {
+    // Nothing outstanding. If the crawl is over, say so. A job whose records all went in through the
+    // incremental pass used to sit on `partial` forever, because the only thing that ever cleared it
+    // was a completion path that -- for an interrupted job -- never ran.
+    if (finalize && job.merge && !job.merge.error && job.merge.partial) {
+      job.merge = { ...job.merge, partial: false, at: new Date().toISOString() };
+      persistJob(job);
+    }
+    return { processed: 0, added: 0, changed: 0 };
+  }
+  const res = await db.upsertMany(pending.map(([, rec]) => rec));
+  for (const [k, rec] of pending) job._mergedRows.set(k, rec);
+  job.merge = {
+    at: new Date().toISOString(),
+    // WHICH store took the rows. On 2026-11-10 the Postgres volume hit 90%, Fly set the database
+    // read-only, makeContactsPg's CREATE TABLE threw, and the catch in startup() fell back to
+    // SQLite. Every job then reported processed/added with error:null while writing to a file
+    // nothing reads -- 15 extension jobs looked clean and delivered nobody. A receipt that says
+    // how many rows went in but not where they went cannot distinguish that from a good run.
+    backend: (db === sqliteDb ? 'sqlite' : 'postgres'),
+    // A COUNT, not a running sum. _mergedRows does not survive a restart, so the old accumulator
+    // added the whole re-sent set on top of what disk already claimed, and the badge could read
+    // `merged 9,400` on a 5,000-record job. The size of the confirmed set is the same number
+    // however many passes it took to get there, and it self-corrects after a restart.
+    //
+    // Counted over writable rows only, for the same reason unmergedCount is: _mergedRows tracks
+    // everything we have ACCOUNTED FOR, which includes email-less rows we deliberately never send,
+    // and reporting those as merged would overstate every receipt by roughly half.
+    processed: accountedRows(job),
+    added: (prev.added || 0) + (res.added || 0),
+    changed: (prev.changed || 0) + (res.changed || 0),
+    partial: !finalize,
+    error: null,
+  };
+  persistJob(job);
+  if (job.merge.backend === 'sqlite') console.error(`  WARNING: job ${job.id} merged to SQLITE -- these rows will NOT reach the Contact Crawler.`);
+  return res;
+}
+
+function mergeIncremental(job, force = false) {
+  if (job._mergeWaiting) return;                        // one at a time; the next domain will retry
+  const pending = pendingRows(job);
+  if (!pending.length || (!force && pending.length < MERGE_EVERY)) return;
+  drainJob(job, { finalize: false })
+    .then((res) => { console.log(`Central DB (incremental): merged ${res.processed} of ${pending.length} pending record(s), +${res.added} new`); })
     .catch((e) => {
       // Leave the keys unmarked so the next pass retries them, and make the failure visible on the job
       // rather than only in a log line nobody reads.
-      job.merge = { ...(job.merge || { processed: 0, added: 0, changed: 0 }), at: stamp, partial: true, error: e.message || String(e) };
+      job.merge = { ...(job.merge || { processed: 0, added: 0, changed: 0 }), at: new Date().toISOString(), partial: true, error: e.message || String(e) };
+      persistJob(job);
       console.error('Central DB (incremental) merge failed:', e.message);
-    })
-    .finally(() => { job._mergeInFlight = false; });
+    });
+}
+
+// ---------------------------------------------------------------------------
+// The reconciler. Nobody should ever have to click Merge.
+//
+// A merge is cheap, local and idempotent: it reads the job's own records and upserts them
+// email-keyed and score-gated. It costs no crawl slots, touches no external service, and running it
+// twice changes nothing. There was never a good reason for it to need a human, and leaving it manual
+// cost real data -- a census of /data/jobs on 2026-11-12 found 502 jobs holding 224,972 records that
+// were not in the Master DB, every one of them created in the preceding three days. Nothing was
+// wrong with the merge itself. It simply never ran, because the process was restarted before the
+// completion path was reached, and nothing ever went back for them.
+//
+// This sweep is that "going back", and it closes the loop for good: records now reach the Master DB
+// whether or not the crawl that found them ever finishes.
+const SWEEP_MIN       = Math.max(1, Number(process.env.JOBS_SWEEP_MINUTES) || 2);
+const SWEEP_BATCH     = Math.max(1, Number(process.env.JOBS_SWEEP_BATCH) || 8);
+const SWEEP_STALL_MIN = Math.max(1, Number(process.env.JOBS_SWEEP_STALL_MINUTES) || 10);
+// Jobs per tick that may run the full enrichment chain. Deliberately far smaller than SWEEP_BATCH:
+// merging is local and cheap, enrichment is network-bound and metered, so the backlog drains its
+// records immediately and gains its modelled addresses at a steadier pace.
+const SWEEP_ENRICH    = Math.max(0, Number(process.env.JOBS_SWEEP_ENRICH) || 4);
+let sweepRunning = false;
+
+function sweepCandidates() {
+  const stallMs = SWEEP_STALL_MIN * 60000;
+  const now = Date.now();
+  const out = [];
+  for (const job of jobs.values()) {
+    if (job.deleted || job.bioList || job._mergeWaiting) continue;
+    if (job.id === SHEET_JOB_ID) continue;
+    if (job._sweepUntil && now < job._sweepUntil) continue;          // backing off after a failure
+    // A running job drains itself every MERGE_EVERY records, so leave it alone -- UNLESS it has gone
+    // quiet. The incremental pass only fires on a domain-done event, so a crawl that stalls mid-domain
+    // stops merging without ever stopping, and that is precisely the case nothing else covers.
+    if (job.status === 'running' && (now - (job._lastProgressMs || 0)) < stallMs) continue;
+    if (!unmergedCount(job)) {
+      // Nothing outstanding, but the receipt can still say `partial` because the completion path
+      // never ran. Clearing it is what makes the badge tell the truth.
+      if (job.status !== 'running' && job.merge && job.merge.partial && !job.merge.error) out.push(job);
+      continue;
+    }
+    out.push(job);
+  }
+  // Newest first: a list someone uploaded this morning matters more than a zombie from last week.
+  out.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+  return out;
+}
+
+async function sweepMerges() {
+  if (sweepRunning || !db) return;
+  sweepRunning = true;
+  try {
+    const all = sweepCandidates();
+
+    // Enrichment is chosen SEPARATELY, and OLDEST-FIRST, while merging stays newest-first.
+    //
+    // The two want opposite orders and sharing one batch starves the backlog. Merging should favour
+    // the newest, so a list someone uploaded a minute ago reaches the Master DB at once. Enrichment
+    // should favour the OLDEST, because the jobs needing a modelling pass are by definition the old
+    // ones that never reached a completion path -- a job that completes normally is enriched on its
+    // way out and never appears here at all. Taking both from one newest-first batch meant every
+    // tick enriched four jobs created today while the 2026-11-09 backlog sat untouched, and with new
+    // jobs arriving continuously it would have sat there indefinitely.
+    const enrichList = [...jobs.values()]
+      .filter((j) => !j.deleted && !j.bioList && j.status !== 'running' && !j.enrichedAt)
+      .filter((j) => !(j._sweepUntil && Date.now() < j._sweepUntil))
+      .filter((j) => j.recordsByEmail && j.recordsByEmail.size && modellableCount(j) > 0)
+      .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))
+      .slice(0, SWEEP_ENRICH);
+
+    const batch = all.slice(0, SWEEP_BATCH);
+    if (!batch.length && !enrichList.length) return;
+    let ok = 0, rows = 0, added = 0, failed = 0, enriched = 0, recovered = 0;
+
+    // Enrich, then drain immediately: the modelled addresses are only worth anything once they are
+    // in the Master DB, and leaving them for a later tick risks a restart in between.
+    const handled = new Set();
+    for (const job of enrichList) {
+      try {
+        const before = unmergedCount(job);
+        await enrichJob(job);
+        const gained = unmergedCount(job) - before;
+        enriched++; recovered += Math.max(0, gained);
+        console.log(`Reconciler: enriched job ${job.id} (${String(job.createdAt || '').slice(0, 10)}) -- `
+          + (gained > 0 ? `${gained} email-less record(s) now have a modelled address` : 'no addresses could be modelled') + '.');
+        const res = await drainJob(job, { finalize: true });
+        handled.add(job.id); ok++; rows += res.processed || 0; added += res.added || 0;
+        job._sweepFails = 0;
+      } catch (e) {
+        failed++;
+        job._sweepFails = (job._sweepFails || 0) + 1;
+        job._sweepUntil = Date.now() + Math.min(60, Math.pow(2, job._sweepFails)) * 60000;
+        job.merge = { ...(job.merge || { processed: 0, added: 0, changed: 0 }), at: new Date().toISOString(), partial: true, error: e.message || String(e) };
+        persistJob(job);
+        console.error(`Reconciler: job ${job.id} enrich/merge failed (attempt ${job._sweepFails}):`, e.message);
+      }
+    }
+
+    for (const job of batch) {
+      if (handled.has(job.id)) continue;      // already enriched and drained above
+      // Only call it final when the crawl really is over. A stalled-but-still-running job gets its
+      // records banked without being declared complete.
+      const finalize = job.status !== 'running';
+      try {
+        const res = await drainJob(job, { finalize });
+        ok++; rows += res.processed || 0; added += res.added || 0;
+        job._sweepFails = 0;
+      } catch (e) {
+        failed++;
+        job._sweepFails = (job._sweepFails || 0) + 1;
+        // Exponential backoff, capped at an hour. A job whose rows Postgres keeps refusing must not
+        // eat the whole batch every two minutes and starve the jobs that would have succeeded.
+        job._sweepUntil = Date.now() + Math.min(60, Math.pow(2, job._sweepFails)) * 60000;
+        job.merge = { ...(job.merge || { processed: 0, added: 0, changed: 0 }), at: new Date().toISOString(), partial: true, error: e.message || String(e) };
+        persistJob(job);
+        console.error(`Reconciler: job ${job.id} merge failed (attempt ${job._sweepFails}):`, e.message);
+      }
+    }
+    if (rows || failed || enriched) {
+      // Report the ENRICHMENT backlog, not just the merge queue: merging keeps up easily, so the
+      // merge queue says little, while the number of jobs still awaiting a modelling pass is the one
+      // that tells anyone watching whether this will finish tonight or next week.
+      const enrichLeft = [...jobs.values()].filter((j) => !j.deleted && !j.bioList && j.status !== 'running'
+        && !j.enrichedAt && j.recordsByEmail && j.recordsByEmail.size && modellableCount(j) > 0).length;
+      console.log(`Reconciler: swept ${ok} job(s), merged ${rows} record(s), +${added} new`
+        + (enriched ? `, enriched ${enriched} (recovered ${recovered})` : '')
+        + (failed ? `, ${failed} failed` : '')
+        + `; ${enrichLeft} job(s) await enrichment.`);
+    }
+    // Prune here rather than only at boot. The pruner now refuses to delete an undrained job, so
+    // before the reconciler existed a boot-time-only prune was the only chance a job ever got to be
+    // cleaned up -- and a job that drained an hour after boot would sit on disk until the next
+    // deploy. Draining a job is exactly the event that makes it prunable, so check right after.
+    try { pruneOldJobs(); } catch (e) { console.error('Prune after sweep failed:', e.message); }
+  } finally { sweepRunning = false; }
+}
+
+// Auto-resume, governed.
+//
+// Resume is now about CRAWL completeness only -- the reconciler above already guarantees the records
+// reach the Master DB whether or not the crawl finishes. That separation is what makes this safe to
+// switch back on, because an unfinished job no longer means undelivered data.
+//
+// The version that was turned off resumed EVERY interrupted job on every boot: by 27 Aug there were
+// 1,001 of them, they saturated the 48 global crawl slots, none finished, and the next restart
+// resumed the same pile. The missing piece was never a smaller batch -- it was a STOPPING CONDITION.
+// Here an attempt that fails to complete a single new domain burns one of a small budget, and a job
+// that exhausts its budget is parked, so the set competing for slots can only shrink.
+const RESUME_EVERY_MIN    = Math.max(1, Number(process.env.JOBS_RESUME_MINUTES) || 5);
+const RESUME_CONCURRENT   = Math.max(1, Number(process.env.JOBS_RESUME_CONCURRENT) || 2);
+const RESUME_MAX_ATTEMPTS = Math.max(1, Number(process.env.JOBS_RESUME_MAX_ATTEMPTS) || 3);
+
+function resumeTick() {
+  if (!/^(1|true|yes|on)$/i.test(process.env.JOBS_AUTO_RESUME || '')) return;
+  const running = [...jobs.values()].filter((j) => j.status === 'running').length;
+  if (running >= RESUME_CONCURRENT) return;
+  const queue = [...jobs.values()]
+    .filter((j) => !j.deleted && !j.bioList && j.status === 'interrupted')
+    .filter((j) => (j.resumeAttempts || 0) < RESUME_MAX_ATTEMPTS)
+    .filter((j) => (j.domains || []).some((d) => !(j.doneDomains || []).includes(d)))
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+  for (const job of queue.slice(0, RESUME_CONCURRENT - running)) {
+    job.resumeAttempts = (job.resumeAttempts || 0) + 1;
+    job._resumeFrom = (job.doneDomains || []).length;     // did this attempt actually move the crawl?
+    persistJob(job);
+    const left = (job.domains || []).length - (job.doneDomains || []).length;
+    console.log(`Auto-resume: job ${job.id}, attempt ${job.resumeAttempts}/${RESUME_MAX_ATTEMPTS}, ${left} domain(s) left.`);
+    resumeJob(job.id);
+  }
 }
 
 // run a set of domains for a job, accumulating records + coverage, persisting per domain
@@ -1140,6 +1561,7 @@ async function runJobDomains(job, domainsToRun) {
   };
   const onProgress = (p) => {
     job.lastProgress = p;
+    job._lastProgressMs = Date.now();   // the reconciler reads this to tell a busy crawl from a stalled one
     if (p.domain && (p.status === 'domain-done' || p.status === 'no-candidates')) {
       if (!job.doneDomains.includes(p.domain)) job.doneDomains.push(p.domain);
       // tally coverage ourselves so it stays correct across resumes
@@ -1192,14 +1614,7 @@ async function runJobDomains(job, domainsToRun) {
   job.stopRequested = false;
   // read any linked .vcf vCards and merge their fields (name/email/title + cell => Mobile phone)
   // BEFORE email modelling, so a real vCard email wins over a modelled one.
-  try {
-    const v = await vcard.enrichRecords([...job.recordsByEmail.values()], { genderMap: GENDER_MAP });
-    if (v.fetched) console.log(`Job ${job.id}: read ${v.fetched} vCard(s), enriched ${v.applied} record(s).`);
-  } catch (e) { console.error('vCard enrichment failed:', e.message); }
-  try { await modelMissingEmails(job); }                            // model emails for email-less bios (sitemap/webpage)
-  catch (e) { console.error('email modelling failed:', e.message); }
-  try { await geocodeRecords([...job.recordsByEmail.values()]); }   // City, Region, Country
-  catch (e) { console.error('geocode failed:', e.message); }
+  await enrichJob(job);
   job.finishedAt = new Date().toISOString();
   persistJob(job);
   // Merge this job's records into the central database, and RECORD WHAT HAPPENED on the job itself.
@@ -1213,32 +1628,25 @@ async function runJobDomains(job, domainsToRun) {
   //
   // So the outcome is now part of the job: how many rows went in, how many were new, and the error if
   // it threw. The UI reads it as a separate "Merged" state next to the status.
-  const stamp = new Date().toISOString();
-  if (!job._mergedRows) job._mergedRows = new Map();
-  // Only what the incremental passes have not already sent, compared by row identity so a record that
-  // was improved after its first merge goes again. On a job that drained as it went this is the last
-  // few records; on a job that never got there it is everything, exactly as before.
-  const remaining = [];
-  for (const [k, rec] of job.recordsByEmail) if (job._mergedRows.get(k) !== rec) remaining.push([k, rec]);
-  const prev = job.merge || { processed: 0, added: 0, changed: 0 };
+  // Finalize through the one drain path, so a completed job's receipt is identical to the one the
+  // reconciler writes. A failure here is no longer terminal for the data: the sweep retries it, with
+  // backoff, until the rows are in -- which is the whole point of having a reconciler.
   try {
-    const merged = remaining.length ? await db.upsertMany(remaining.map(([, rec]) => rec))
-                                    : { processed: 0, added: 0, changed: 0, total: null };
-    for (const [k, rec] of remaining) job._mergedRows.set(k, rec);
-    job.merge = {
-      at: stamp,
-      processed: (prev.processed || 0) + (merged.processed || 0),
-      added: (prev.added || 0) + (merged.added || 0),
-      changed: (prev.changed || 0) + (merged.changed || 0),
-      partial: false,                    // the whole job is in
-      error: null,
-    };
-    console.log(`Central DB: merged ${merged.processed} final record(s), +${merged.added} new; job total ${job.merge.processed}.`);
+    const merged = await drainJob(job, { finalize: true });
+    console.log(`Central DB [${(job.merge && job.merge.backend) || '?'}]: merged ${merged.processed} final record(s), +${merged.added} new; job total ${(job.merge && job.merge.processed) || 0}.`);
   } catch (e) {
-    job.merge = { ...prev, at: stamp, partial: true, error: e.message || String(e) };
-    console.error('Central DB merge failed:', e.message);
+    job.merge = { ...(job.merge || { processed: 0, added: 0, changed: 0 }), at: new Date().toISOString(), backend: (db === sqliteDb ? 'sqlite' : 'postgres'), partial: true, error: e.message || String(e) };
+    persistJob(job);
+    console.error('Central DB merge failed (the reconciler will retry):', e.message);
   }
-  persistJob(job);                      // the merge result has to survive a restart like everything else
+  // An auto-resume attempt that actually moved the crawl forward earns a fresh budget; one that did
+  // not leaves the counter where it is, so a job that CANNOT progress is parked rather than retried
+  // forever. This is the stopping condition the old auto-resume lacked.
+  if (job._resumeFrom != null) {
+    if ((job.doneDomains || []).length > job._resumeFrom) job.resumeAttempts = 0;
+    job._resumeFrom = null;
+    persistJob(job);
+  }
   // the per-job engine CSV is throwaway (records are in our DB now) — delete it so it can't fill /data
   try { fs.unlinkSync(path.join(JOBS_DIR, `${job.id}.engine.csv`)); } catch (e) { /* may not exist */ }
   console.log(`Job ${job.id} ${job.status} — ${job.recordsByEmail.size} record(s)`);
@@ -1282,7 +1690,16 @@ function resumeJob(id) {
   if (!job) return null;
   if (job.status === 'running') return job;
   const remaining = job.domains.filter((d) => !job.doneDomains.includes(d));
-  if (remaining.length === 0) { job.status = 'completed'; persistJob(job); return job; }
+  if (remaining.length === 0) {
+    // Nothing left to crawl. This used to just relabel the job and return, so clicking Resume on a
+    // job that had finished its URLs but died before the completion path did NOTHING -- the records
+    // stayed in the file and the badge stayed amber. Finalizing is the step the job actually missed.
+    job.status = 'completed';
+    if (!job.finishedAt) job.finishedAt = new Date().toISOString();
+    persistJob(job);
+    drainJob(job, { finalize: true }).catch((e) => console.error(`Resume-finalize for ${id} failed:`, e.message));
+    return job;
+  }
   runJobDomains(job, remaining);          // fire and forget
   return job;
 }
@@ -3290,19 +3707,16 @@ const server = http.createServer(async (req, res) => {
     // showed the job as finished work. Idempotent: upsertMany is email-keyed and score-gated, so
     // running this on a job that already merged changes nothing.
     if (sub === '/merge' && req.method === 'POST') {
-      const recs = jobRecords(job);
-      if (!recs.length) { sendJson(res, { merged: 0, note: 'This job holds no records.' }); return; }
-      const stamp = new Date().toISOString();
+      // Kept as an operator override -- the reconciler now does this on its own within SWEEP_MIN --
+      // so that someone watching a specific list can push it through without waiting for the tick.
+      // It routes through drainJob so a hand-merge and an automatic one leave the same receipt.
+      if (!job.recordsByEmail.size) { sendJson(res, { merged: 0, note: 'This job holds no records.' }); return; }
       try {
-        const r = await db.upsertMany(recs);
-        job.merge = { at: stamp, processed: r.processed, added: r.added, changed: r.changed, partial: false, error: null };
-        if (!job._mergedRows) job._mergedRows = new Map();
-        for (const [k, rec] of job.recordsByEmail) job._mergedRows.set(k, rec);
-        persistJob(job);
+        const r = await drainJob(job, { finalize: job.status !== 'running' });
         console.log(`Central DB (manual): job ${id} merged ${r.processed} record(s), +${r.added} new`);
-        sendJson(res, { merged: r.processed, added: r.added, changed: r.changed, total: r.total, id });
+        sendJson(res, { merged: r.processed, added: r.added, changed: r.changed, id, unmerged: unmergedCount(job) });
       } catch (e) {
-        job.merge = { ...(job.merge || { processed: 0, added: 0, changed: 0 }), at: stamp, partial: true, error: e.message || String(e) };
+        job.merge = { ...(job.merge || { processed: 0, added: 0, changed: 0 }), at: new Date().toISOString(), partial: true, error: e.message || String(e) };
         persistJob(job);
         jsonErr(res, 500, 'Merge failed: ' + e.message);
       }
@@ -3912,38 +4326,38 @@ server.listen(PORT, async () => {
       } catch (e) { console.error('Remax loc-fix failed:', e.message); }
     }
 
-    // Resuming interrupted jobs is OFF by default, and bounded when on.
+    // The reconciler: the job records reach the Master DB on their own, always.
     //
-    // This resumed EVERY interrupted job on every boot. Interrupted jobs accumulate -- any restart marks
-    // whatever was mid-crawl as interrupted -- so the pile only grows, and by 27 Aug there were 1,001 of
-    // them, the oldest from 18 Aug. Each boot re-started all 1,001 at once; they then competed for the 48
-    // global crawl slots, none of them finished, and the next restart resumed the same pile again.
+    // This runs unconditionally and has no off switch by design. It writes only to Postgres, costs no
+    // crawl slots, and upsertMany is email-keyed, score-gated and idempotent, so the worst a redundant
+    // pass can do is spend a few milliseconds. The failure it exists to prevent -- a restart landing
+    // between the last incremental merge and the completion path, stranding every record found since --
+    // is not rare and not avoidable: a deploy IS a restart, and this app is deployed often.
     //
-    // The visible symptom was that the Data Importer stopped working: a freshly submitted job queued behind
-    // a week's worth of zombies and never got a slot. Submissions were accepted, reported "running", and
-    // did nothing -- indefinitely.
-    //
-    // A job whose records are already in the central DB is not worth auto-restarting at scale. Resume is
-    // now opt-in (JOBS_AUTO_RESUME=1) and capped (JOBS_RESUME_MAX, default 5, newest first), so a restart
-    // can never again flood the crawler with work nobody asked for.
+    // It runs once at boot so a backlog starts draining immediately rather than SWEEP_MIN later.
+    try {
+      const unmergedAtBoot = [...jobs.values()].filter((j) => !j.bioList && unmergedCount(j) > 0);
+      const rowsAtBoot = unmergedAtBoot.reduce((n, j) => n + unmergedCount(j), 0);
+      if (unmergedAtBoot.length) {
+        console.log(`Reconciler: ${unmergedAtBoot.length} job(s) holding ${rowsAtBoot} record(s) not yet in the Master DB; draining ${SWEEP_BATCH} job(s) every ${SWEEP_MIN}m.`);
+      }
+      sweepMerges().catch((e) => console.error('Reconciler sweep failed:', e.message));
+      setInterval(() => { sweepMerges().catch((e) => console.error('Reconciler sweep failed:', e.message)); }, SWEEP_MIN * 60 * 1000);
+    } catch (e) { console.error('Reconciler start failed:', e.message); }
+
+    // Auto-resume, now a governed supervisor rather than a boot-time stampede. Still opt-in, because
+    // unlike the merge it DOES consume crawl slots -- but it can no longer run away: see resumeTick.
     try {
       const AUTO = /^(1|true|yes|on)$/i.test(process.env.JOBS_AUTO_RESUME || '');
-      const interrupted = [...jobs.values()].filter((j) => j.status === 'interrupted')
-        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      const interrupted = [...jobs.values()].filter((j) => j.status === 'interrupted').length;
       if (!AUTO) {
-        if (interrupted.length) console.log(`${interrupted.length} interrupted job(s) left alone (set JOBS_AUTO_RESUME=1 to resume; they can also be resumed individually from the UI).`);
+        if (interrupted) console.log(`${interrupted} interrupted job(s) left alone (set JOBS_AUTO_RESUME=1 to crawl them out; their records are merged either way).`);
       } else {
-        const cap = Math.max(1, Number(process.env.JOBS_RESUME_MAX) || 5);
-        let resumed = 0;
-        for (const job of interrupted.slice(0, cap)) {
-          const remaining = job.domains.filter((d) => !job.doneDomains.includes(d)).length;
-          resumeJob(job.id);
-          resumed++;
-          console.log(`Resumed interrupted job ${job.id}: ${remaining}/${job.domains.length} domain(s) remaining.`);
-        }
-        if (interrupted.length > cap) console.log(`${interrupted.length - cap} older interrupted job(s) NOT resumed (cap ${cap}).`);
+        console.log(`Auto-resume ON: ${interrupted} interrupted job(s), max ${RESUME_CONCURRENT} at a time, ${RESUME_MAX_ATTEMPTS} attempts without progress before a job is parked.`);
+        setInterval(() => { try { resumeTick(); } catch (e) { console.error('Auto-resume tick failed:', e.message); } }, RESUME_EVERY_MIN * 60 * 1000);
+        resumeTick();
       }
-    } catch (e) { console.error('Resume interrupted jobs failed:', e.message); }
+    } catch (e) { console.error('Auto-resume start failed:', e.message); }
   })();
 });
 })();   // end contacts-backend bootstrap

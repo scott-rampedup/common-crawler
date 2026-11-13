@@ -897,13 +897,26 @@ function renderJobs() {
     const liveOnlyBit = job.liveOnly ? ' <span class="job-meta">· live-only</span>' : '';
     const errorBit = job.error ? `<span class="job-meta" style="color:#b91c1c">${escapeHtml(job.error)}</span>` : '';
 
+    // Why "merged N" can be smaller than this job's record count, said out loud where someone will
+    // see it. A record with no email address cannot be written -- the Master DB is keyed on email --
+    // so the crawler keeps it in the job but the merge skips it. Across the jobs on disk on
+    // 2026-11-12 that was 204,582 of 356,443 records, i.e. most of the difference anyone would
+    // notice, and nothing in the UI said so.
+    const noEmailNote = (j) => {
+      const none = Math.max(0, (j.recordCount || 0) - ((j.merge && j.merge.processed) || 0) - (j.unmerged || 0));
+      return none ? ` ${none} of its ${j.recordCount} record(s) carry no email address, so there is nothing to merge for them.` : '';
+    };
+
     // "Merged" is deliberately separate from the status. A job's status says whether the CRAWL
     // stopped; only the merge puts records in the Master DB, and the two are not the same event —
     // a job can read Completed with every record still sitting in its own file and nowhere else.
-    // Three distinct states, because "not merged yet" and "merged nothing" mean different things:
-    //   merged      the merge ran: how many rows went in, how many were new
-    //   NOT MERGED  the merge never ran (stalled, interrupted, or restarted mid-flight)
-    //   failed      the merge ran and threw — the reason is on the job
+    //
+    // What this reports is `job.unmerged`: how many records are outstanding RIGHT NOW. It used to
+    // report whether the merge step had run, which is a different question and gave the wrong answer
+    // in both directions — a job that drained every record incrementally but never reached its
+    // completion pass showed amber forever, and the red NOT MERGED fired on jobs whose records were
+    // already in. Since the reconciler sweeps continuously, outstanding records are now a progress
+    // note rather than a fault: nobody has to do anything about them.
     let mergeBit;
     // A pushed BIO URL list is a receipt: the URLs went straight into the queue and the pump turns
     // them into contacts on its own schedule. There is no merge step to report, and showing
@@ -916,15 +929,20 @@ function renderJobs() {
       mergeBit = `<span class="job-merge queued" data-list-id="${escapeHtml(job.id)}" style="color:#1d4ed8;font-weight:600;cursor:pointer;text-decoration:underline dotted" title="${escapeHtml((job.bioList && job.bioList.source) || '')} — pushed straight to the queue; the pump drains it continuously. Click to see what became of these URLs.">${n} URL(s) sent to the crawler</span>`
         + (prio ? ` <span class="job-merge" style="color:#b45309;font-weight:600" title="Priority ${prio}: claimed before any bulk backlog, and a URL already in the queue was moved up to match">front of queue</span>` : '');
     } else if (job.merge && job.merge.error) {
-      mergeBit = `<span class="job-merge bad" style="color:#b91c1c;font-weight:600" title="${escapeHtml(job.merge.error)}">merge failed</span>`;
+      // Still red, because a repeatedly failing merge is a real fault — but it is being retried, and
+      // saying so is the difference between "look into this" and "do something about this now".
+      mergeBit = `<span class="job-merge bad" style="color:#b91c1c;font-weight:600" title="${escapeHtml(job.merge.error)} — the reconciler retries this automatically, backing off after each failure.">merge failed · retrying</span>`;
+    } else if ((job.unmerged || 0) > 0) {
+      const done = (job.merge && job.merge.processed) || 0;
+      mergeBit = `<span class="job-merge pending" style="color:#92400e;font-weight:600" title="${job.unmerged} record(s) are not in the Master DB yet. The reconciler sweeps every couple of minutes and will put them in — no action needed.${noEmailNote(job)}">`
+        + `${done ? `merged ${done} · ` : ''}${job.unmerged} waiting</span>`;
     } else if (job.merge) {
+      // Nothing outstanding. A running job still says "so far" because more records are coming; for
+      // any other status this is the whole job, whether or not the completion pass was what finished it.
       const added = job.merge.added || 0;
-      // `partial` means the incremental drain has sent some of it but the job has not finished, so
-      // the count is a floor, not a total. Saying "merged 3,200" on a job still running would read
-      // as done.
-      const partial = job.merge.partial;
-      mergeBit = `<span class="job-merge ok" style="color:${partial ? '#92400e' : '#15803d'};font-weight:600" title="${partial ? 'Merged so far; the job has not finished.' : 'All of this job is in the Master DB.'} Last merge ${escapeHtml(job.merge.at || '')}">`
-        + `merged ${partial ? '' : ''}${job.merge.processed}${partial ? ' so far' : ''}${added ? ` · ${added} new` : ''}</span>`;
+      const more = job.status === 'running';
+      mergeBit = `<span class="job-merge ok" style="color:${more ? '#92400e' : '#15803d'};font-weight:600" title="${more ? 'Everything found so far is in the Master DB; the crawl is still running.' : 'All of this job is in the Master DB.'}${noEmailNote(job)} Last merge ${escapeHtml(job.merge.at || '')}">`
+        + `merged ${job.merge.processed}${more ? ' so far' : ''}${added ? ` · ${added} new` : ''}</span>`;
     } else if (job.status === 'running') {
       mergeBit = `<span class="job-merge pending" style="color:#92400e">not merged yet</span>`;
     } else if (job.finishedAt && job.finishedAt < MERGE_TRACKING_SINCE) {
@@ -933,7 +951,9 @@ function renderJobs() {
       // warning that cries wolf is worth less than no warning at all.
       mergeBit = `<span class="job-merge unknown" style="color:#6b7280" title="This job finished before merge results were recorded. Its records may or may not be in the Master DB.">merge unknown</span>`;
     } else {
-      mergeBit = `<span class="job-merge none" style="color:#b91c1c;font-weight:600" title="The merge step never ran, so this job's records are NOT in the Master DB — they exist only in the job file.">NOT MERGED</span>`;
+      // No receipt and nothing outstanding: the crawl found nobody. That is an empty result, not a
+      // failed merge, and the old red NOT MERGED here read as data loss when there was no data.
+      mergeBit = `<span class="job-merge none" style="color:#6b7280" title="This job produced no records, so there was nothing to merge.">no records</span>`;
     }
 
     // A BIO URL List receipt has no coverage figures and no record count of its own. The crawling
@@ -997,13 +1017,18 @@ function renderJobs() {
         actions.appendChild(stopBtn);
       }
 
-      // Merge what this job already found into the Master DB, without re-crawling it. Shown whenever
-      // a job holds records that are not recorded as merged — a stalled or restarted job otherwise has
-      // no way out of its own file.
-      if (job.recordCount > 0 && (!job.merge || job.merge.partial || job.merge.error)) {
+      // Merge what this job already found into the Master DB, without re-crawling it.
+      //
+      // This is now an OVERRIDE, not the way records get in: the reconciler sweeps every couple of
+      // minutes and will merge this job whether or not anyone clicks. It is still here for the case
+      // where someone is watching one specific list and does not want to wait for the tick. It is
+      // shown only when something is actually outstanding — the old condition keyed on `partial`,
+      // which stayed set on jobs whose records were all already in, so the button appeared on work
+      // that had nothing left to do.
+      if ((job.unmerged || 0) > 0 || (job.merge && job.merge.error)) {
         const mergeBtn = document.createElement('button');
-        mergeBtn.textContent = 'Merge';
-        mergeBtn.title = 'Add the records this job found to the Master DB (duplicates are skipped)';
+        mergeBtn.textContent = 'Merge now';
+        mergeBtn.title = `Push this job's ${job.unmerged || 0} outstanding record(s) to the Master DB now, instead of waiting for the next automatic sweep.`;
         mergeBtn.addEventListener('click', async () => {
           mergeBtn.disabled = true; mergeBtn.textContent = 'Merging…';
           try {
