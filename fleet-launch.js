@@ -151,22 +151,65 @@ async function launchFleet(o) {
   return out;
 }
 
-/** Remove stopped machines named with the fleet prefix, so the next launch can reuse the names. */
+// How long a shard may sit in `started` before it is presumed hung rather than working.
+//
+// On 2026-11-13 live-fleet-11 finished its slice at 10:26:47 -- it logged DONE and wrote its crawl
+// ledger -- and then never exited; Fly kept reporting it `started` for the next ten hours. Because
+// `busy` was read straight off that state, bio-pump skipped the live leg on every pass and 1,802,166
+// URLs banked up behind one machine that had nothing left to do. Worse, the reaper that would have
+// cleared it only runs inside bio-live, which is exactly what the machine was blocking.
+//
+// A real shard is nothing like that long. The fleet takes at most BIO_LIVE_MAX_URLS (400k) over 12
+// shards, ~33k URLs each, and the observed rate is ~10/s -- call it an hour, two on slow domains.
+// Three hours is therefore well clear of honest work while still catching a hang the same day.
+//
+// Per-prefix, and OFF by default everywhere else. Only live-fleet has a runtime bounded by a known
+// slice size; a bio-etl drain or a sitemap sweep can honestly run half a day, and declaring one of
+// those hung would invent an outage rather than cure one. FLEET_STALE_MS forces a threshold on every
+// fleet if that is ever wanted.
+const STALE_DEFAULTS = { 'live-fleet': 3 * 60 * 60 * 1000 };
+const staleFor = (prefix, override) =>
+  Number(override || 0) || Number(process.env.FLEET_STALE_MS || 0) || STALE_DEFAULTS[prefix] || 0;
+
+/** Epoch ms of the machine's most recent lifecycle event, or 0 when Fly reported none. */
+function lastEventAt(m) {
+  let t = 0;
+  for (const ev of (m.events || [])) { const v = Number(ev.timestamp) || 0; if (v > t) t = v; }
+  if (!t && m.updated_at) t = Date.parse(m.updated_at) || 0;
+  return t;
+}
+
+/** A shard still `started` long past any plausible runtime is hung, not busy. staleMs 0 = no guard. */
+function isStale(m, staleMs = 0) {
+  if (m.state !== 'started' || !(staleMs > 0)) return false;
+  const t = lastEventAt(m);
+  return !!t && (Date.now() - t) > staleMs;
+}
+
+/**
+ * Remove finished machines named with the fleet prefix, so the next launch can reuse the names.
+ *
+ * Hung shards are removed too. They hold a name that launchFleet needs, so leaving one in place turns
+ * a stalled fleet into a fleet that cannot start at all.
+ */
 async function reapFleet(o = {}) {
   const token = o.token || process.env.FLY_API_TOKEN;
   if (!token) return 0;
   const app = o.app || APP;
   const prefix = o.namePrefix || 'live-fleet';
   const log = o.log || ((m) => console.error(m));
+  const staleMs = staleFor(prefix, o.staleMs);
   const machines = await flyApi(`/apps/${app}/machines`, 'GET', null, token);
-  let n = 0;
+  let n = 0, hung = 0;
   for (const m of (machines || [])) {
     if (!String(m.name || '').startsWith(prefix)) continue;
-    if (m.state === 'started') continue;                       // never reap a live shard
+    const stale = isStale(m, staleMs);
+    if (m.state === 'started' && !stale) continue;             // never reap a shard that is still working
+    if (stale) { hung++; log(`[fleet] ${m.name} hung since ${new Date(lastEventAt(m)).toISOString()} — removing`); }
     try { await flyApi(`/apps/${app}/machines/${m.id}?force=true`, 'DELETE', null, token); n++; }
     catch (e) { log(`[fleet] could not remove ${m.name}: ${e.message}`); }
   }
-  if (n) log(`[fleet] removed ${n} finished machine(s)`);
+  if (n) log(`[fleet] removed ${n} machine(s)` + (hung ? ` (${hung} hung)` : ''));
   return n;
 }
 
@@ -180,12 +223,19 @@ async function reapFleet(o = {}) {
  *
  * A shard is FAILED if it stopped with a non-zero exit code (134 = V8 abort, 137 = OOM-kill) or was
  * oom_killed. Everything else stopped is treated as finished.
+ *
+ * A shard is STALE if Fly still calls it `started` long past any plausible runtime (see STALE_DEFAULTS).
+ * Stale shards are deliberately kept OUT of `running`, because the only consumer of `running` is a
+ * gate asking "may the next batch start yet?" and a hung machine must never be allowed to answer no
+ * forever. They are returned separately so the caller can say so out loud rather than silently
+ * discounting them.
  */
 async function fleetStatus(o = {}) {
   const token = o.token || process.env.FLY_API_TOKEN;
   if (!token) return { ok: false, reason: 'no FLY_API_TOKEN', shards: [] };
   const app = o.app || APP;
   const prefix = o.namePrefix || 'live-fleet';
+  const staleMs = staleFor(prefix, o.staleMs);
   const machines = await flyApi(`/apps/${app}/machines`, 'GET', null, token);
   const shards = [];
   for (const m of (machines || [])) {
@@ -200,14 +250,19 @@ async function fleetStatus(o = {}) {
     }
     const state = m.state;
     const failed = state !== 'started' && (oom || (exitCode !== null && exitCode !== 0));
-    shards.push({ id: m.id, name: m.name, state, exitCode, oom, failed });
+    const startedAt = lastEventAt(m);
+    const stale = isStale(m, staleMs);
+    shards.push({ id: m.id, name: m.name, state, exitCode, oom, failed, stale,
+      ageMs: startedAt ? Date.now() - startedAt : null });
   }
-  const running = shards.filter((s) => s.state === 'started').length;
+  const running = shards.filter((s) => s.state === 'started' && !s.stale).length;
   const failed = shards.filter((s) => s.failed);
-  return { ok: true, total: shards.length, running, done: shards.length - running - failed.length, failed, shards };
+  const stale = shards.filter((s) => s.stale);
+  return { ok: true, total: shards.length, running, stale,
+    done: shards.length - running - failed.length - stale.length, failed, shards };
 }
 
-module.exports = { launchFleet, reapFleet, currentImage, fleetStatus };
+module.exports = { launchFleet, reapFleet, currentImage, fleetStatus, isStale, staleFor };
 
 if (require.main === module) {
   const arg = (n, d) => { const i = process.argv.indexOf('--' + n); return i > 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : d; };

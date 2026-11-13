@@ -66,11 +66,21 @@ function liveDidWork(text) { return /shard\(s\) crawling/.test(text); }
 
 // Is a live fleet still working? The fleet is the one genuinely scarce resource here, so the next batch
 // of misses waits for it to finish -- not for a clock.
+//
+// "Still working" is not the same as "Fly says started". A shard that finishes its slice and then fails
+// to exit stays `started` indefinitely, and reading busy straight off that state once cost ten hours and
+// 1,802,166 banked URLs -- silently, because an idle pump looks exactly like an empty queue in the log.
+// fleetStatus now discounts hung shards from `running`; the only thing left to get wrong is doing it
+// quietly, so say which machine is being ignored and for how long.
 async function fleetBusy() {
   if (!process.env.FLY_API_TOKEN) return false;
   try {
     const { fleetStatus } = require('./fleet-launch');
     const st = await fleetStatus({ namePrefix: 'live-fleet' });
+    for (const s of ((st && st.stale) || [])) {
+      const hrs = s.ageMs ? (s.ageMs / 3600000).toFixed(1) + 'h' : 'unknown age';
+      console.error(`${ts()} fleet  ${s.name} still 'started' after ${hrs} — presumed hung, not counted as busy`);
+    }
     return !!(st && st.ok && st.running > 0);
   } catch (e) { return false; }           // can't tell -> don't block the pipeline on a status call
 }
