@@ -13,6 +13,7 @@
  *   const h = startSync({ endpoint, connectionString, ssl });   // h.stop() to halt
  *
  * Env knobs: OS_SYNC_INTERVAL_MS (idle poll, default 20000), OS_SYNC_BATCH (default 2000),
+ * OS_SYNC_LAG_MS (how far short of now the cursor stops, default 120000 -- see the note on the query),
  * OS_SYNC_FROM (initial watermark updated_at when sync_state is empty; default '' = full one-time catch-up).
  */
 const { Pool } = require('pg');
@@ -41,6 +42,9 @@ function startSync(opts = {}) {
   }
   const intervalMs = Number(opts.intervalMs || process.env.OS_SYNC_INTERVAL_MS || 20000);
   const batch = Number(opts.batch || process.env.OS_SYNC_BATCH || 2000);
+  // How far behind "now" the cursor is allowed to read. Must exceed the longest write transaction;
+  // bulk merges are the long ones. 120s is ample for those and still well inside a poll cycle.
+  const lagMs = Number(opts.lagMs || process.env.OS_SYNC_LAG_MS || 120000);
   const pool = new Pool({ connectionString, max: 2, ssl: opts.ssl || !!process.env.PGSSL });
   // An IDLE pg client can emit 'error' on its own -- the server restarts, a NAT drops the connection, a
   // reaper kills a long-lived session. node treats an unhandled 'error' event as fatal, so without this
@@ -69,10 +73,24 @@ function startSync(opts = {}) {
       for (;;) {
         if (stopped) break;
         // Row-value keyset: strict compound (updated_at, email) cursor guarantees forward progress even
-        // across rows that share an updated_at timestamp (no re-scan loop, no skips).
+        // across rows that share an updated_at timestamp (no re-scan loop).
+        //
+        // IT DOES NOT GUARANTEE NO SKIPS, which the previous version of this comment claimed. updated_at
+        // is stamped when a row is WRITTEN; the row becomes visible when its transaction COMMITS. A bulk
+        // merge that stamps 05:48:23 and commits at 05:48:41 is invisible to every read in between -- and
+        // if the cursor passed 05:48:23 during those 18 seconds, that row is behind the watermark the
+        // moment it appears and is never read again. Measured 2026-11-14: 0.87% of merged contacts were
+        // in Postgres, counted in a job's receipt, and absent from OpenSearch -- so they did not exist
+        // as far as the Contact Crawler UI was concerned. Every example was stamped two days earlier.
+        //
+        // The cursor therefore stops short of the present by `lagMs`. A transaction that commits within
+        // that window is still ahead of the watermark when it lands, so it is picked up normally. The
+        // cost is that a new contact takes up to lagMs longer to become searchable, which is a trade
+        // worth making against losing it silently and permanently.
+        const safeTo = new Date(Date.now() - lagMs);
         const rows = (await pool.query(
-          `SELECT * FROM contacts WHERE (updated_at, email) > ($1, $2)
-           ORDER BY updated_at, email LIMIT $3`, [wm.updated_at, wm.email, batch])).rows;
+          `SELECT * FROM contacts WHERE (updated_at, email) > ($1, $2) AND updated_at <= $4
+           ORDER BY updated_at, email LIMIT $3`, [wm.updated_at, wm.email, batch, safeTo])).rows;
         if (!rows.length) break;
         await bulkUpsert(os, rows.map(rowToDoc));
         const last = rows[rows.length - 1];
