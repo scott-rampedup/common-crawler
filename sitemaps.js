@@ -26,6 +26,8 @@ const MAPPING = {
       ratio:        { type: 'float' },
       by_name:      { type: 'boolean' },                                 // matched the name lexicon (vs ratio)
       industry:     { type: 'keyword' },
+      sector:       { type: 'keyword' },                                 // parent grouping above industry
+      company_employee_size_range: { type: 'keyword' },                  // e.g. '11-50 employees'
       company_id:   { type: 'keyword' },
       lastmod:      { type: 'keyword' },                                 // parent index <lastmod> for this child
       source:       { type: 'keyword' },                                 // discovered | reviewed
@@ -51,6 +53,8 @@ const makeClient = os.makeClient;
 // non-breaking). Keeps a live Library current with new columns (the monitor fields) without a reindex.
 const ADDED_FIELDS = {
   type:         { type: 'keyword' },
+  sector:       { type: 'keyword' },
+  company_employee_size_range: { type: 'keyword' },
   monitored:    { type: 'boolean' },
   last_checked: { type: 'date' },
   last_new:     { type: 'integer' },
@@ -129,6 +133,11 @@ async function bulkUpsert(client, docs, nowIso) {
       industry: d.industry || '', company_id: d.company_id || '', lastmod: d.lastmod || '',
       status: d.status || 'active', last_seen: now,
     };
+    // Firmographics are OPTIONAL on an upsert and absent from most callers. Writing `d.sector || ''`
+    // the way the fields above do would mean every discovery re-sight blanked whatever the Library
+    // already knew, so they are only written when the caller actually supplies one.
+    if (d.sector) mutable.sector = String(d.sector);
+    if (d.company_employee_size_range) mutable.company_employee_size_range = String(d.company_employee_size_range);
     // Monitoring is ON by default for every Library sitemap (the nightly monitor re-checks all of them for
     // deltas); set d.monitored=false only to opt a sitemap OUT. Only written on first insert (in `full`),
     // so a re-sight never flips an existing opt-out back on.
@@ -282,7 +291,8 @@ async function facets(client, f = {}) {
 }
 
 // Fields an admin may mass-edit in the Library UI.
-const EDITABLE = new Set(['kind', 'type', 'domain', 'industry', 'keyword', 'status', 'monitored']);
+const EDITABLE = new Set(['kind', 'type', 'domain', 'industry', 'sector', 'company_employee_size_range',
+  'keyword', 'status', 'monitored']);
 
 // Registrable-ish domain from a URL (host, minus a leading www.) — the default when a URL is (re)assigned.
 function hostDomain(url) {
@@ -376,7 +386,9 @@ async function bulkDelete(client, ids) {
 const EXPORT_COLS = [
   ['sitemap_url', 'Sitemap URL'], ['domain', 'Domain'], ['kind', 'Kind'], ['type', 'Type'],
   ['keyword', 'Keyword'], ['item_count', 'Pages'], ['url_count', 'Total URLs'], ['ratio', 'Ratio'],
-  ['by_name', 'By Name'], ['industry', 'Industry'], ['company_id', 'Company Id'], ['lastmod', 'Last Modified'],
+  ['by_name', 'By Name'], ['industry', 'Industry'], ['sector', 'Sector'],
+  ['company_employee_size_range', 'CompanyEmployeeSizeRange'],
+  ['company_id', 'Company Id'], ['lastmod', 'Last Modified'],
   ['source', 'Source'], ['discovered_at', 'Discovered At'], ['last_seen', 'Last Seen'],
 ];
 const csvCell = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
