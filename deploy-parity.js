@@ -140,7 +140,15 @@ async function run({ token = process.env.FLY_API_TOKEN, app = APP, fix = FIX, ro
   const m = await measure({ token, app });
   // --roll-all ignores the drift test entirely: it is for the secrets case, where there is nothing to
   // compare and the only safe assumption is that every worker is behind.
-  const targets = rollAll ? m.rows.filter((r) => r.state === 'started') : m.drifted;
+  //
+  // Never roll the machine this is running on. The first --roll-all did, and killed the ssh session it
+  // was being run through half way down the list, leaving two workers unrolled and the operator with no
+  // output saying which. Self is excluded rather than ordered last: finishing the list matters more than
+  // updating the one machine that `fly deploy` already handles, and which is the reference image here
+  // anyway -- rolling it onto its own image is a no-op bought with an outage.
+  const self = process.env.FLY_MACHINE_ID || '';
+  const targets = (rollAll ? m.rows.filter((r) => r.state === 'started') : m.drifted)
+    .filter((r) => r.id !== self && r.group !== 'app');
   const imageStr = `${m.want.registry}/${m.want.repository}:${m.want.tag}`;
 
   if (!JSON_OUT) {
