@@ -159,15 +159,24 @@ async function launchFleet(o) {
 // URLs banked up behind one machine that had nothing left to do. Worse, the reaper that would have
 // cleared it only runs inside bio-live, which is exactly what the machine was blocking.
 //
-// A real shard is nothing like that long. The fleet takes at most BIO_LIVE_MAX_URLS (400k) over 12
-// shards, ~33k URLs each, and the observed rate is ~10/s -- call it an hour, two on slow domains.
-// Three hours is therefore well clear of honest work while still catching a hang the same day.
+// This was first set to three hours on the reasoning that a fleet takes at most BIO_LIVE_MAX_URLS
+// (400k) over 12 shards, so ~33k each, an hour or two at the observed rate. That reasoning was wrong,
+// and the same day proved it: sharding is BY DOMAIN, so a domain bigger than an even slice cannot be
+// split and lands whole on one machine. biolive-20261113213650 put 318,718 roomvu.com URLs -- 52.7%
+// of a 604,724-URL batch -- on shard 0 while the other eleven took 26,000 each. At the 16/s that host
+// throttled us to, that shard needs five and a half hours of entirely honest work, and a three-hour
+// guard would have deleted it mid-crawl.
 //
-// Per-prefix, and OFF by default everywhere else. Only live-fleet has a runtime bounded by a known
-// slice size; a bio-etl drain or a sitemap sweep can honestly run half a day, and declaring one of
-// those hung would invent an outage rather than cure one. FLEET_STALE_MS forces a threshold on every
-// fleet if that is ever wanted.
-const STALE_DEFAULTS = { 'live-fleet': 3 * 60 * 60 * 1000 };
+// So eight hours, which is slack enough for a mega-domain while still bounding a hang to one night
+// rather than forever. It is a stopgap: an age cannot distinguish working from hung, which is the one
+// distinction this is for. The real fix is for the shard to heartbeat its progress and for staleness
+// to be measured on THAT, so a shard is hung when it stops advancing, not when it takes a long time.
+//
+// Per-prefix, and OFF by default everywhere else. Only live-fleet has a runtime worth bounding at all;
+// a bio-etl drain or a sitemap sweep can honestly run half a day, and declaring one of those hung
+// would invent an outage rather than cure one. FLEET_STALE_MS forces a threshold on every fleet if
+// that is ever wanted.
+const STALE_DEFAULTS = { 'live-fleet': 8 * 60 * 60 * 1000 };
 const staleFor = (prefix, override) =>
   Number(override || 0) || Number(process.env.FLEET_STALE_MS || 0) || STALE_DEFAULTS[prefix] || 0;
 
