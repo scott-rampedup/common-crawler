@@ -39,7 +39,6 @@ const ONLY = arg('only', '');
 const TICK_MS = Number(process.env.SCHED_TICK_MS) || 300000;
 const CFG = process.env.CC_CONFIG_INDEX || 'cc_config';
 
-if (!process.env.OPENSEARCH_ENDPOINT) { console.error('scheduler: OPENSEARCH_ENDPOINT required'); process.exit(1); }
 
 const hours = (n) => n * 3600 * 1000;
 const nowIso = () => new Date().toISOString();
@@ -388,7 +387,12 @@ async function evaluate(ctx) {
   }
 }
 
-(async () => {
+// Only run when this file IS the program. Without this guard, `require('./scheduler')` -- which anything
+// inspecting the job registry does -- silently starts a SECOND scheduler against the same state docs,
+// racing the real one on the same leases. It happened on 2026-11-14 from a one-line probe that only
+// wanted to list the registered jobs, and left a scheduler running on the web app machine.
+async function main() {
+  if (!process.env.OPENSEARCH_ENDPOINT) { console.error('scheduler: OPENSEARCH_ENDPOINT required'); process.exit(1); }
   const ctx = {
     contacts: os.makeClient(process.env.OPENSEARCH_ENDPOINT),
     companies: companies.makeClient(process.env.OPENSEARCH_ENDPOINT),
@@ -406,4 +410,10 @@ async function evaluate(ctx) {
   const bye = (sig) => { console.log(`scheduler: ${sig} — stopping`); clearInterval(timer); setTimeout(() => process.exit(0), 1000); };
   process.on('SIGTERM', () => bye('SIGTERM'));
   process.on('SIGINT', () => bye('SIGINT'));
-})().catch((e) => { console.error('scheduler: fatal', e && e.stack || e); process.exit(1); });
+}
+
+module.exports = { JOBS };
+
+if (require.main === module) {
+  main().catch((e) => { console.error('scheduler: fatal', e && e.stack || e); process.exit(1); });
+}
