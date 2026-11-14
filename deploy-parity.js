@@ -18,7 +18,19 @@
  *
  *   FLY_API_TOKEN=... node deploy-parity.js            # report; exit 1 if anything has drifted
  *   FLY_API_TOKEN=... node deploy-parity.js --fix      # roll the drifted machines onto the app image
+ *   FLY_API_TOKEN=... node deploy-parity.js --roll-all # roll ALL of them, drifted or not (see secrets)
  *   FLY_API_TOKEN=... node deploy-parity.js --json
+ *
+ * SECRETS HAVE THE SAME BLIND SPOT, AND IT CANNOT BE DETECTED HERE. `fly secrets set` also updates only
+ * the `app` process group, so every persistent worker keeps the OLD value until its config is rewritten.
+ * Worse, `fly machine restart` does NOT re-inject secrets -- it restarts the process with the environment
+ * it already had. Only an update (what --fix and --roll-all do) replaces it. Verified on 2026-11-14
+ * during an AWS key rotation: after restarting all seven workers, every one still held the superseded
+ * key, and deleting the old key at that point would have cut the entire pipeline off from AWS.
+ *
+ * The Machines API exposes no per-machine secrets version, so there is nothing to compare and this tool
+ * cannot tell you that a secret has drifted. That is why --roll-all exists: after `fly secrets set`, run
+ * it, because the alternative is reasoning about which machines were updated when.
  *
  * COMPARE DIGESTS, NOT THE IMAGE STRING. `fly deploy` records an image by tag
  * ("...:deployment-01M7DD5E...") and `fly machine update` records the same image by digest
@@ -38,7 +50,8 @@ const API = process.env.FLY_API_HOST || 'https://api.machines.dev/v1';
 
 const argv = process.argv.slice(2);
 const has = (f) => argv.includes('--' + f);
-const FIX = has('fix');
+const ROLL_ALL = has('roll-all');
+const FIX = has('fix') || ROLL_ALL;
 const JSON_OUT = has('json');
 
 async function flyApi(path, method, body, token) {
@@ -123,8 +136,11 @@ async function roll({ token = process.env.FLY_API_TOKEN, app = APP, id, image })
   return { ok: true };
 }
 
-async function run({ token = process.env.FLY_API_TOKEN, app = APP, fix = FIX, log = console.log } = {}) {
+async function run({ token = process.env.FLY_API_TOKEN, app = APP, fix = FIX, rollAll = ROLL_ALL, log = console.log } = {}) {
   const m = await measure({ token, app });
+  // --roll-all ignores the drift test entirely: it is for the secrets case, where there is nothing to
+  // compare and the only safe assumption is that every worker is behind.
+  const targets = rollAll ? m.rows.filter((r) => r.state === 'started') : m.drifted;
   const imageStr = `${m.want.registry}/${m.want.repository}:${m.want.tag}`;
 
   if (!JSON_OUT) {
@@ -137,9 +153,9 @@ async function run({ token = process.env.FLY_API_TOKEN, app = APP, fix = FIX, lo
   }
 
   const fixed = [];
-  if (fix && m.drifted.length) {
-    log(`rolling ${m.drifted.length} machine(s) onto ${m.want.tag}`);
-    for (const r of m.drifted) {
+  if (fix && targets.length) {
+    log(`rolling ${targets.length} machine(s) onto ${m.want.tag}${rollAll ? ' (--roll-all)' : ''}`);
+    for (const r of targets) {
       const res = await roll({ token, app, id: r.id, image: imageStr });
       log(`  ${r.name} ${res.ok ? 'updated' : 'FAILED: ' + res.error}`);
       fixed.push({ ...r, updated: res.ok, error: res.error });

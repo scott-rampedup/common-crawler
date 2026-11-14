@@ -101,7 +101,20 @@ const N = (n) => Number(n || 0).toLocaleString();
   if (process.argv.includes('--apply')) {
     const maxYield = Number(arg('max-yield', '0.02'));
     const minAtt = Number(arg('apply-min-attempts', String(MIN_ATTEMPTS)));
-    const pick = rows.filter((r) => r.yield < maxYield && r.attempts >= minAtt);
+    // A cap on ONE run. The gate is only as good as the measurement behind it, and the measurement is a
+    // join across two indices -- if the contacts side ever returns short (a failed msearch chunk shows as
+    // 0 contacts, as the catch above admits), every domain in that chunk looks dead at once. Blocking is
+    // reversible but a mass block is a bad afternoon, so a run that wants to condemn more than the cap
+    // stops and says so rather than doing it. Raise --apply-max deliberately after reading the list.
+    const applyMax = Number(arg('apply-max', '500')) || 500;
+    const all = rows.filter((r) => r.yield < maxYield && r.attempts >= minAtt);
+    if (all.length > applyMax) {
+      console.log(`
+NOT APPLIED: ${N(all.length)} domain(s) qualify, which is over --apply-max ${N(applyMax)}.`);
+      console.log('  Review the list above, then re-run with a higher --apply-max if it is right.');
+      return;
+    }
+    const pick = all;
     const stats = {};
     for (const r of pick) stats[r.domain] = { attempts: r.attempts, contacts: r.contacts };
     const gate = require('./domain-gate');

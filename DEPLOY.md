@@ -41,6 +41,23 @@ stragglers. (Compare digests, not the image string: `fly deploy` records an imag
 tag and `fly machine update` records the same image by digest, so a string comparison
 reports drift on machines that are perfectly current.)
 
+### ⚠️ `fly secrets set` doesn't reach them either — and `restart` won't fix it
+
+Same blind spot, worse failure mode. `fly secrets set` updates only the `app` group, and
+**`fly machine restart` does NOT re-inject secrets** — it restarts the process with the
+environment it already had. Only `fly machine update` replaces it.
+
+Verified 2026-11-14 during an AWS key rotation: after restarting all seven workers, every
+one still held the superseded key. Deleting the old key at that point would have cut the
+whole pipeline off from AWS.
+
+The Machines API exposes no per-machine secrets version, so nothing can detect this
+automatically. After any `fly secrets set`:
+
+```
+FLY_API_TOKEN=... node deploy-parity.js --roll-all
+```
+
 `scheduler-0` also runs this every 6 hours as the `deploy_parity` job — on by default,
 `SCHED_DEPLOY_PARITY=0` to disable, `DEPLOY_PARITY_FIX=0` to make it report-only.
 Note the scheduler can only fix *other* machines after it has itself been rolled, so a

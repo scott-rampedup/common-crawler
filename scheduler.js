@@ -186,6 +186,36 @@ JOBS.push(
     },
   },
   {
+    id: 'domain_yield',
+    label: 'stop fetching domains that have proven they return nothing',
+    everyMs: hours(Math.max(24, Number(process.env.DOMAIN_YIELD_HOURS) || 168)),
+    // domain-yield.js has existed since August and nothing ever called it. It measured the one thing that
+    // decides where the fleet's hours go -- cost per domain against contacts per domain -- printed a
+    // table, and stopped. Measured on 2026-11-14: 474 domains under 2% yield accounted for 6,331,300
+    // attempts, 68.7% of ALL fetching, and had returned 6,174 contacts between them. That is the
+    // pipeline's largest single inefficiency and it sat in a read-only script.
+    //
+    // Weekly, because yield is a slow signal and a domain deserves time to prove itself. The bar is
+    // deliberately two-sided: under 2% yield AND at least 2,000 recorded attempts, so a new site with a
+    // handful of fetches and no contacts yet is never condemned on a small sample.
+    //
+    // DOMAIN_YIELD_MAX caps one unattended run. The join behind this is across two indices and a failed
+    // contacts chunk reads as zero contacts, which would make a whole batch of domains look dead at
+    // once; a run that wants to block more than the cap refuses and asks for eyes instead.
+    enabled: () => process.env.SCHED_DOMAIN_YIELD !== '0',
+    async run(ctx) {
+      const args = ['--min-attempts', String(Number(process.env.DOMAIN_YIELD_MIN_ATTEMPTS) || 2000),
+                    '--max-yield', String(Number(process.env.DOMAIN_YIELD_MAX_YIELD) || 0.02),
+                    '--apply-max', String(Number(process.env.DOMAIN_YIELD_MAX) || 100)];
+      if (process.env.DOMAIN_YIELD_APPLY !== '0') args.push('--apply');
+      return launchOwnMachine({
+        namePrefix: 'domain-yield', memoryMb: 4096, cpus: 2,
+        cmd: ['node', '/app/domain-yield.js', ...args],
+        log: ctx.log,
+      });
+    },
+  },
+  {
     id: 'deploy_parity',
     label: 'are the persistent machines running the code that was deployed?',
     everyMs: hours(Math.max(1, Number(process.env.DEPLOY_PARITY_HOURS) || 6)),
