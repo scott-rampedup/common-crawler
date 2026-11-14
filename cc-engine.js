@@ -305,7 +305,21 @@ function normalizeUrlList(lines){
   const out = []; const seen = new Set();
   for(const line of lines){
     for(let u of String(line).split(/[|\r\n]+/)){              // pipe- OR line-delimited (commas can be in a URL)
-      u = (u.split(/,(?![^?]*=)/)[0]||"").trim();              // tolerate trailing CSV cols
+      // A COMMA IS A LEGAL URL CHARACTER AND MUST NOT BE TREATED AS A COLUMN BREAK.
+      //
+      // This used to strip everything from the first comma, guarded by /,(?![^?]*=)/ so that a comma
+      // followed by an "=" survived. Real URLs do not cooperate with that rule:
+      //   .../providers/Andrea%20Farris,%20NP-C        -> .../providers/Andrea%20Farris
+      //   ...?related=67,89,38290,93,...               -> ...?related=67
+      //   .../attorneys/aaron-g-stendell?c=,,          -> .../attorneys/aaron-g-stendell?c=
+      // The crawl still ran, but the URL recorded as done was the truncated one, so it never matched
+      // the URL in the job's list and the job could never reach done == total. On 2026-11-14 that had
+      // left 235 jobs parked at 99.9% "interrupted" with a Resume button, holding 169,645 records that
+      // were already merged. The fix is to stop guessing: without quoting there is no way to tell
+      // "url,extra-column" from a URL containing a comma, and truncating a real URL is far the worse
+      // error -- it crawls the wrong address AND breaks the bookkeeping, silently. A genuine CSV with
+      // extra columns should be quoted, which the CSV readers already handle.
+      u = String(u).trim();
       if(!u || /^(domain|url|webpage)$/i.test(u) || !u.includes(".")) continue;
       if(!/^https?:\/\//i.test(u)) u = "https://" + u;
       try{ new URL(u); }catch{ continue; }
