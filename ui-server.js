@@ -969,7 +969,7 @@ function persistJob(job) {
 }
 
 function loadJobs() {
-  let reconciled = 0;
+  let reconciled = 0, restoredJobs = 0, restoredRows = 0, repairedTotal = 0;
   let files = [];
   try { files = fs.readdirSync(JOBS_DIR).filter((f) => f.endsWith('.json')); } catch (e) { return; }
   for (const f of files) {
@@ -980,6 +980,28 @@ function loadJobs() {
         const k = String(r['Email Address'] || '').toLowerCase() || `_${recordsByEmail.size}`;
         recordsByEmail.set(k, r);
       }
+      // Rebuild what has ALREADY been merged, from the receipt on disk.
+      //
+      // _mergedRows exists only in memory and nothing restored it here, so every restart -- and a
+      // deploy is a restart -- made every already-merged record read as outstanding again. The
+      // dashboard then showed "merged 750 - 750 waiting" across 435 jobs at once, each with a Merge
+      // now button, which is exactly the manual clicking the reconciler was built to remove. The rows
+      // were in the Master DB the whole time; only the badge was wrong. The reconciler believed it
+      // too, and re-drained all 308,262 rows on every boot.
+      //
+      // The receipt can be trusted precisely when it is complete and covers at least what the job
+      // still holds. Anything less is left unseeded so the rows are re-drained: upsertMany is
+      // idempotent so that costs only work, whereas wrongly marking a row merged would lose it.
+      let mergedRows = null;
+      if (j.merge && !j.merge.partial && !j.merge.error) {
+        let mergeable = 0;
+        for (const r of recordsByEmail.values()) if (String((r && r['Email Address']) || '').trim()) mergeable++;
+        if ((j.merge.processed || 0) >= mergeable) {
+          mergedRows = new Map();
+          for (const [k, r] of recordsByEmail) if (String((r && r['Email Address']) || '').trim()) mergedRows.set(k, r);
+          restoredJobs++; restoredRows += mergedRows.size;
+        }
+      }
       // Reconcile a job that was mid-flight when the process died, and WRITE THE ANSWER BACK.
       //
       // This used to reclassify running -> interrupted in memory only, leaving the file saying
@@ -989,18 +1011,48 @@ function loadJobs() {
       // which is what made the Data Importer look like it held a huge backlog when 98.4% of the work
       // was done. Deriving from the work and persisting it means the file, the memory and reality
       // agree from the first boot after a crash.
+      // Repair the URLs that normalizeUrlList truncated at a comma.
+      //
+      // Until 2026-11-14 a URL containing a comma was cut at it, so the address recorded as done was a
+      // stump that could never match the full URL in the job's list -- and a job one URL short can
+      // never reach done == total. 235 jobs sat at 99.9% 'interrupted' with a Resume button because of
+      // it, holding 169,645 records that were ALREADY merged. The engine no longer truncates; this
+      // re-attaches the stumps already written to disk, so those jobs settle without anyone clicking.
+      //
+      // Only when the stump is not itself a submitted URL -- otherwise a list containing both
+      // `x.com/a` and `x.com/a,b` would have the genuine entry for the former stolen by the latter.
+      let repairedUrls = 0;
+      {
+        const domList = (j.domains || []).map(String);
+        const submitted = new Set(domList);
+        const doneSet = new Set((j.doneDomains || []).map(String));
+        for (const full of domList) {
+          if (doneSet.has(full)) continue;
+          const i = full.indexOf(',');
+          if (i <= 0) continue;
+          const stump = full.slice(0, i);
+          if (!doneSet.has(stump) || submitted.has(stump)) continue;
+          doneSet.delete(stump); doneSet.add(full); repairedUrls++;
+        }
+        if (repairedUrls) j.doneDomains = [...doneSet];
+      }
       const total = (j.domains || []).length, done = (j.doneDomains || []).length;
       let status = j.status;
-      if (status === 'running') status = (total > 0 && done >= total) ? 'completed' : 'interrupted';
+      // Re-derive for INTERRUPTED too, not just running. An interrupted job whose every URL is now
+      // accounted for is finished; leaving it amber means a Resume button that would crawl nothing.
+      if (status === 'running' || status === 'interrupted') {
+        if (total > 0 && done >= total) status = 'completed';
+        else if (status === 'running') status = 'interrupted';
+      }
       // Same repair for the receipts already on disk. 'queued' is assigned in exactly one place in this
       // server (recordBioUrlList) and no code path ever moved it, so a file still carrying it is a push
       // whose URLs went to S3 and through the queue long ago. Rewriting it here means the dashboard stops
       // showing a backlog that does not exist, without anyone editing 38 files by hand.
       if (status === 'queued') status = 'completed';
-      if (status !== j.status) {
+      if (status !== j.status || repairedUrls) {
         j.status = status;
         if (status === 'completed' && !j.finishedAt) j.finishedAt = new Date().toISOString();
-        try { fs.writeFileSync(path.join(JOBS_DIR, f), JSON.stringify(j)); reconciled++; }
+        try { fs.writeFileSync(path.join(JOBS_DIR, f), JSON.stringify(j)); reconciled++; repairedTotal += repairedUrls; }
         catch (e) { console.error(`Could not persist reconciled status for job ${j.id}:`, e.message); }
       }
       jobs.set(j.id, {
@@ -1011,6 +1063,8 @@ function loadJobs() {
         directoryFilter: j.directoryFilter || '', liveOnly: !!j.liveOnly, mode: j.mode || 'domain',
         totalOverride: j.totalOverride, doneOverride: j.doneOverride, recordCount: j.recordCount,
         error: j.error || null, recordsByEmail, lastProgress: null,
+        _mergedRows: mergedRows,        // null when the receipt could not vouch for the rows
+
         merge: j.merge || null,         // survives restarts; null means the merge never ran
         resumeAttempts: j.resumeAttempts || 0,   // auto-resume budget already spent on this job
         enrichedAt: j.enrichedAt || null,        // null = never had its modelling pass
@@ -1020,7 +1074,9 @@ function loadJobs() {
     } catch (e) { console.error(`Failed to load job file ${f}:`, e.message); }
   }
   console.log(`Loaded ${jobs.size} saved job(s) from ${JOBS_DIR}`
-    + (reconciled ? ` (${reconciled} stale status(es) reconciled and written back)` : ''));
+    + (reconciled ? ` (${reconciled} stale status(es) reconciled and written back)` : '')
+    + (restoredJobs ? `; ${restoredJobs} job(s) / ${restoredRows.toLocaleString()} record(s) already in the Master DB per their receipts` : '')
+    + (repairedTotal ? `; ${repairedTotal} comma-truncated URL(s) re-attached` : ''));
 }
 
 // Each job file embeds ALL its records (a big crawl/load can be tens of MB), and they accumulate
