@@ -87,7 +87,13 @@ function startSync(opts = {}) {
         // that window is still ahead of the watermark when it lands, so it is picked up normally. The
         // cost is that a new contact takes up to lagMs longer to become searchable, which is a trade
         // worth making against losing it silently and permanently.
-        const safeTo = new Date(Date.now() - lagMs);
+        // .toISOString() is not cosmetic. `updated_at` is a TEXT column holding ISO-8601 UTC, so this
+        // comparison is lexicographic, not chronological -- the two only agree while every value has
+        // the same shape. Handing node-postgres a Date lets IT choose the serialization, and outside a
+        // UTC container that is a local-offset string: '...T11:06:44.277-05:00' sorts below a stored
+        // '...T16:04:55.751Z' on the hour digits alone, so the guard would exclude rows it should pass
+        // and quietly stall the cursor. Pin the format to the one the column is written in.
+        const safeTo = new Date(Date.now() - lagMs).toISOString();
         const rows = (await pool.query(
           `SELECT * FROM contacts WHERE (updated_at, email) > ($1, $2) AND updated_at <= $4
            ORDER BY updated_at, email LIMIT $3`, [wm.updated_at, wm.email, batch, safeTo])).rows;
