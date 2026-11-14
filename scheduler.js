@@ -186,6 +186,34 @@ JOBS.push(
     },
   },
   {
+    id: 'deploy_parity',
+    label: 'are the persistent machines running the code that was deployed?',
+    everyMs: hours(Math.max(1, Number(process.env.DEPLOY_PARITY_HOURS) || 6)),
+    // ON by default, like pipeline_health and for the same reason: this defends against doing nothing,
+    // and a check that has to be switched on is a check that is off on the day it was needed.
+    //
+    // `fly deploy` only touches the `app` process group. Every worker that matters -- this scheduler,
+    // bio-pump, os-sync, the cq-live crawlers -- is a standalone machine outside it, so a deploy can
+    // report complete success while the fix it shipped runs nowhere. That has now happened at least
+    // twice: bio-pump on a seven-day-old image for 25,680 passes, and on 2026-11-14 os-sync and all
+    // four crawlers left behind for five days while the bugs they fixed kept costing contacts.
+    //
+    // It FIXES rather than reports, because a worker on the wrong code is worse than a worker that
+    // restarts, and every one of them recovers its own interrupted work on boot (worker.js reclaims
+    // stale claims, bio-pump re-feeds error rows, os-sync resumes from its watermark). Set
+    // DEPLOY_PARITY_FIX=0 to make it report-only.
+    enabled: () => process.env.SCHED_DEPLOY_PARITY !== '0',
+    async run(ctx) {
+      const fix = process.env.DEPLOY_PARITY_FIX !== '0';
+      const r = await require('./deploy-parity').run({ fix, log: ctx.log });
+      const rolled = (r.fixed || []).filter((x) => x.updated).map((x) => x.name);
+      if (rolled.length) ctx.log(`rolled onto ${r.want.tag}: ${rolled.join(', ')}`);
+      else if (r.ok) ctx.log(`all ${r.rows.length} persistent machine(s) on ${r.want.tag}`);
+      return { image: r.want.tag, checked: r.rows.length, drifted: r.drifted.length,
+               down: r.down.map((d) => d.name), rolled, ok: r.ok };
+    },
+  },
+  {
     id: 'pipeline_health',
     label: 'did yesterday\'s discovered BIO URLs actually get crawled?',
     everyMs: hours(Math.max(1, Number(process.env.PIPELINE_HEALTH_HOURS) || 24)),

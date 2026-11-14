@@ -11,6 +11,41 @@
 - **Note:** the machine is set `auto_stop_machines = false` so background jobs keep
   running between requests.
 
+### ⚠️ `fly deploy` does NOT update the workers
+
+`fly deploy` only touches the `app` process group — the web app machine. Every
+long-running worker is a **standalone machine outside that group** and keeps running
+whatever image it was last given:
+
+| machine | runs | what a stale image costs |
+|---|---|---|
+| `scheduler-0` | `scheduler.js` | every scheduled job runs old code |
+| `bio-pump-0` | `bio-pump.js` | feed/live-crawl loop, fleet reaping |
+| `os-sync-0` | `opensearch-sync.js` | contacts never become searchable |
+| `cq-live-0..3` | `worker.js` | the actual crawling |
+
+A deploy that leaves these behind still reports success, because the deploy did
+succeed — the fix just isn't running anywhere that matters. This has bitten twice:
+`bio-pump` ran 25,680 passes on a seven-day-old image, and on 2026-11-14 `os-sync-0`
+and all four crawlers sat five days behind while the bugs they'd been fixed for went
+on costing contacts.
+
+**So after every deploy:**
+
+```
+FLY_API_TOKEN=... node deploy-parity.js --fix
+```
+
+It compares each persistent machine's image **digest** against the app's and rolls the
+stragglers. (Compare digests, not the image string: `fly deploy` records an image by
+tag and `fly machine update` records the same image by digest, so a string comparison
+reports drift on machines that are perfectly current.)
+
+`scheduler-0` also runs this every 6 hours as the `deploy_parity` job — on by default,
+`SCHED_DEPLOY_PARITY=0` to disable, `DEPLOY_PARITY_FIX=0` to make it report-only.
+Note the scheduler can only fix *other* machines after it has itself been rolled, so a
+deploy that changes the scheduler still wants the manual command above.
+
 ### Residential proxy (for bot-protected sites)
 
 Some target sites (Akamai/Cloudflare, e.g. `howardhanna.com`) return **403** to a
