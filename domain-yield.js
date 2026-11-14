@@ -58,7 +58,13 @@ const N = (n) => Number(n || 0).toLocaleString();
   for (let i = 0; i < candidates.length; i += 100) {
     const chunk = candidates.slice(i, i + 100);
     const body = [];
-    for (const [d] of chunk) { body.push({ index: os.INDEX }); body.push({ size: 0, query: { term: { domain: d } } }); }
+    // track_total_hits: a bare count stops at 10,000 and reports exactly that, so every domain with
+    // more contacts than the cap reads as 10,000 and its yield comes out LOW. That is the wrong
+    // direction for a tool whose --apply blocks domains: roomvu.com measured 2.0% on 490,460
+    // attempts purely because its contacts were capped, and the top of this table -- medifind,
+    // bestlawyers, soho.ai, lawyergist -- was capped too. The productive domains are precisely the
+    // ones the cap hides.
+    for (const [d] of chunk) { body.push({ index: os.INDEX }); body.push({ size: 0, track_total_hits: true, query: { term: { domain: d } } }); }
     let responses = [];
     try { const r = await c.msearch({ body }); responses = ((r.body || r).responses) || []; }
     catch (e) { /* a failed chunk shows as 0 contacts; flagged by the caveat below */ }
