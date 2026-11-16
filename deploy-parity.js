@@ -124,13 +124,19 @@ async function measure({ token = process.env.FLY_API_TOKEN, app = APP } = {}) {
  * the rows it had claimed; bio-pump re-feeds error rows every pass; os-sync resumes from its watermark.
  * A worker running the wrong code is worse than a worker that restarts.
  */
+// One machine's failure must never end the run. Only the wait used to be guarded, so a GET or POST that
+// threw -- most easily a 409 "machine is replacing: concurrent update in progress", which is what you
+// get by rolling a machine someone just changed -- escaped the loop and left every machine after it on
+// the old image, with nothing in the output naming them. That is the same silent-partial-roll the
+// self-roll ordering was fixed for. Report the failure, carry on, and let the caller's exit code and
+// the re-measure at the end say what is still stale.
 async function roll({ token = process.env.FLY_API_TOKEN, app = APP, id, image }) {
-  const m = await flyApi(`/apps/${app}/machines/${id}`, 'GET', null, token);
-  const config = { ...(m.config || {}), image };
-  await flyApi(`/apps/${app}/machines/${id}`, 'POST', { config }, token);
-  // Wait for it to come back, so a --fix that reports success means the machine is actually up on the
-  // new image rather than merely accepted for update.
   try {
+    const m = await flyApi(`/apps/${app}/machines/${id}`, 'GET', null, token);
+    const config = { ...(m.config || {}), image };
+    await flyApi(`/apps/${app}/machines/${id}`, 'POST', { config }, token);
+    // Wait for it to come back, so a --fix that reports success means the machine is actually up on the
+    // new image rather than merely accepted for update.
     await flyApi(`/apps/${app}/machines/${id}/wait?state=started&timeout=60`, 'GET', null, token);
   } catch (e) { return { ok: false, error: e.message }; }
   return { ok: true };
