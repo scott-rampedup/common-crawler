@@ -35,6 +35,10 @@ const has = (f) => process.argv.includes('--' + f);
 const ONCE = has('once');
 const IDLE_MS = Number(process.env.BIO_PUMP_IDLE_MS) || 20000;
 const MIN_LIVE = Number(process.env.BIO_PUMP_MIN_LIVE) || 1;
+// Consecutive feed failures double the pause between attempts, capped. See the call site for why.
+const FEED_COOLDOWN_MS = Number(process.env.BIO_PUMP_FEED_COOLDOWN_MS) || 60000;
+const FEED_COOLDOWN_MAX_MS = Number(process.env.BIO_PUMP_FEED_COOLDOWN_MAX_MS) || 15 * 60 * 1000;
+let feedFails = 0;
 
 if (!process.env.OPENSEARCH_ENDPOINT) { console.error('bio-pump: OPENSEARCH_ENDPOINT required'); process.exit(1); }
 
@@ -91,6 +95,17 @@ function runPass(script, args) {
   });
 }
 
+// Why did a pass fail? The last three lines of its output are usually the least informative part of a
+// stack trace: on 2026-11-16 that excerpt printed two `at async` frames and a "resolve FAILED" summary,
+// while the line that actually mattered -- "HIVE_S3_THROTTLING: S3 throttling" -- scrolled past above
+// it and had to be recovered afterwards from Athena's own query history. Prefer lines that name a
+// failure over lines that merely locate one; fall back to the tail when nothing names it.
+function explainFailure(text) {
+  const lines = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const named = lines.filter((l) => !/^at /.test(l) && /THROTTL|FAILED|CANCELLED|Error|error:/i.test(l));
+  return (named.length ? named : lines).slice(-4).map((l) => '    ' + l.slice(0, 300)).join('\n');
+}
+
 // Did this pass actually move anything? Used to decide whether to go straight round again.
 function feedDidWork(text) {
   const m = /([\d,]+)\s+queued for the worker fleet/.exec(text);
@@ -134,14 +149,30 @@ for (const sig of ['SIGTERM', 'SIGINT']) {
 
     // ---- 1. feed: newly queued URLs -> resolved -> crawl_queue
     const feed = await runPass('bio-feed.js', []);
-    if (feed.timedOut) {
-      console.error(`${ts()} feed  pass killed after ${Math.round(feed.ms / 60000)}m — its objects are read again next pass`);
-    } else if (feed.code !== 0) {
-      console.error(`${ts()} feed pass FAILED (exit ${feed.code}) — retrying next pass`);
-      console.error(feed.text.split('\n').filter(Boolean).slice(-3).map((l) => '    ' + l).join('\n'));
-    } else if (feedDidWork(feed.text)) {
-      didSomething = true; fedTotal++;
-      for (const l of feed.text.split('\n')) if (/queued for the worker fleet|not in the archive|new row/.test(l)) console.log(`${ts()} feed  ${l.trim()}`);
+    if (feed.timedOut || feed.code !== 0) {
+      if (feed.timedOut) console.error(`${ts()} feed  pass killed after ${Math.round(feed.ms / 60000)}m — its objects are read again next pass`);
+      else {
+        console.error(`${ts()} feed pass FAILED (exit ${feed.code})`);
+        console.error(explainFailure(feed.text));
+      }
+      // Back off before trying again. s3://commoncrawl throttles on sustained request rate, and this
+      // loop was part of that rate: a pass that burned eight Athena attempts over sixteen minutes
+      // started the next one twenty seconds later, so the throttle budget never got to recover.
+      // Measured 2026-11-16: one resolve succeeded against twelve HIVE_S3_THROTTLING failures in half
+      // an hour of continuous retrying, where the day before ran 31 for 31. Waiting costs nothing --
+      // bio-feed advances its cursor only on success, so the objects are still there afterwards.
+      feedFails++;
+      const wait = Math.min(FEED_COOLDOWN_MAX_MS, FEED_COOLDOWN_MS * 2 ** (feedFails - 1));
+      console.error(`${ts()} feed  ${feedFails} consecutive failure(s) — waiting ${Math.round(wait / 60000)}m before the next attempt`);
+      await sleep(wait);
+    } else {
+      // Any clean exit clears the streak, including "nothing new" -- the cooldown exists to stop
+      // hammering a throttled bucket, and a pass that reached the end was not throttled.
+      feedFails = 0;
+      if (feedDidWork(feed.text)) {
+        didSomething = true; fedTotal++;
+        for (const l of feed.text.split('\n')) if (/queued for the worker fleet|not in the archive|new row/.test(l)) console.log(`${ts()} feed  ${l.trim()}`);
+      }
     }
 
     // ---- 1b. recover error rows. A worker killed mid-batch, or a transient Postgres deadlock, parks
