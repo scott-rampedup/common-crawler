@@ -51,6 +51,9 @@ const ALL = has('all');
 const SAMPLE = ALL ? Infinity : (Number(arg('sample', 2000)) || 2000);
 const FIX = has('fix');
 const BATCH = 500;
+// web_source_url has no index, so every lookup against it is a sequential scan of the whole contacts
+// table. Chunking that at BATCH would pay for the scan once per 500 URLs; one wide chunk pays once.
+const SCAN_BATCH = 20000;
 const N = (n) => Number(n || 0).toLocaleString();
 const pct = (a, b) => (b ? ((a / b) * 100).toFixed(1) + '%' : '—');
 
@@ -116,8 +119,8 @@ const readBody = async (b) => { const c = []; for await (const x of b) c.push(x)
   //    for the scan as few times as possible.
   const expected = pick.filter((u) => { const q = qrow.get(u); return q && q.status === 'done' && Number(q.records) > 0; });
   const rowsByUrl = new Map();
-  for (let i = 0; i < expected.length; i += BATCH) {
-    const chunk = expected.slice(i, i + BATCH);
+  for (let i = 0; i < expected.length; i += SCAN_BATCH) {
+    const chunk = expected.slice(i, i + SCAN_BATCH);
     const r = await pg.query(`SELECT * FROM contacts WHERE web_source_url = ANY($1)`, [chunk]);
     for (const row of r.rows) {
       if (!rowsByUrl.has(row.web_source_url)) rowsByUrl.set(row.web_source_url, []);
