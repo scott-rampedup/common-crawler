@@ -106,7 +106,13 @@ const HOST_LITERAL_BUDGET = Math.max(1000, Number(process.env.RESOLVE_HOST_BUDGE
 // A chunk is also capped by host COUNT, because what drives the scan is how wide a surtkey range the
 // chunk spans, not how many characters the SQL takes. 3,038 hosts in two chunks scanned 40-109GB each
 // and still throttled; ~100 hosts spans a narrow enough band to come in under 10GB.
-const HOSTS_PER_QUERY = Math.max(1, Number(process.env.RESOLVE_HOSTS_PER_QUERY) || 100);
+//
+// 40, not 100. "Under 10GB" turned out to be the wrong target: measured 2026-11-16 14:49-15:05 UTC, the
+// full 100-host chunks scanned 9.0-9.4GB and threw HIVE_S3_THROTTLING on roughly half of them, while the
+// short remainder chunk in the same pass scanned 3.0GB and succeeded. 9GB is not under the limit, it is
+// sitting on it. Narrower chunks mean more queries, which CHUNK_PAUSE_MS below already spaces out, and a
+// query that succeeds first time beats one that burns eight retries over sixteen minutes and fails.
+const HOSTS_PER_QUERY = Math.max(1, Number(process.env.RESOLVE_HOSTS_PER_QUERY) || 40);
 // A pause between chunks for the same reason: 31 back-to-back scans of the same public bucket is
 // itself the throttle trigger. Costs ~8 minutes on a 31-chunk pass and buys the pass completing.
 const CHUNK_PAUSE_MS = Math.max(0, Number(process.env.RESOLVE_CHUNK_PAUSE_MS) || 15000);
@@ -403,12 +409,6 @@ const ATHENA_TRIES = Math.max(1, Number(process.env.ATHENA_TRIES) || 8);
 // pass succeeds and the ones behind it fail. A 60s ceiling retried straight back into the same
 // throttle, so all attempts burned inside two minutes. Let the budget actually recover.
 const ATHENA_MAX_BACKOFF_MS = Math.max(1000, Number(process.env.ATHENA_MAX_BACKOFF_MS) || 300000);
-// Space the resolve chunks of one pass apart. The backoff above only applies AFTER a chunk has already
-// failed; nothing separated a successful chunk from the next one starting, and that gap is where the
-// throttle budget has to recover. Measured 2026-11-16 06:15-07:05 UTC: chunk 1 of a pass succeeded and
-// chunk 2 failed with HIVE_S3_THROTTLING, repeatedly -- 2 successes against 24 failures, on a day after
-// one that ran 29 for 29 with the work arriving in smaller, naturally-spaced bursts.
-const RESOLVE_CHUNK_GAP_MS = Math.max(0, Number(process.env.RESOLVE_CHUNK_GAP_MS) || 45000);
 
 // Run a query; resolve { id, scanned, output } when SUCCEEDED, throw on a non-retryable FAILED/CANCELLED.
 async function runAthena(A, sql, output, label, attempt) {
@@ -584,12 +584,6 @@ async function main() {
     const parts = [];
     for (let ci = 0; ci < chunks.length; ci++) {
       const label = chunks.length > 1 ? `resolve ${ci + 1}/${chunks.length}` : "resolve";
-      // Not before the first chunk -- there is nothing to recover from yet, and a single-chunk pass
-      // should not pay a penalty for a problem it cannot cause.
-      if (ci > 0 && RESOLVE_CHUNK_GAP_MS > 0) {
-        console.error(`  [${label}] waiting ${Math.round(RESOLVE_CHUNK_GAP_MS / 1000)}s before this chunk so the S3 request budget can recover`);
-        await sleep(RESOLVE_CHUNK_GAP_MS);
-      }
       const { id } = await runAthena(A, buildResolveSql({ crawls, keysTable, hosts: chunks[ci] }), output, label);
       const loc = (await A.athena.send(new A.GetQueryExecutionCommand({ QueryExecutionId: id }))).QueryExecution.ResultConfiguration.OutputLocation;
       // A large S3 result read can drop mid-body (transient socket reset). The Athena result is immutable,
