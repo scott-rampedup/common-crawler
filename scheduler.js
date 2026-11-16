@@ -129,7 +129,13 @@ JOBS.push(
     run(ctx) {
       return launchOwnMachine({
         namePrefix: 'bio-feed', memoryMb: 8192, cpus: 4,
-        env: { CRAWLS_N: String(Number(process.env.CRAWLS_N) || 4) },
+        // 1, matching bio-feed's own default and the reason recorded beside it: four crawls turn a
+        // ~0.7GB resolve chunk into ~7.8GB, which is where s3://commoncrawl starts throttling. This
+        // line said 4, so enabling the job would have silently overridden that lesson -- and on
+        // 2026-11-16 a CRAWLS_N=4 left on the bio-pump machine did exactly that, failing 24 resolves
+        // against 2 successes. Coverage lost here is not work lost: a URL the resolve misses goes to
+        // bio-live and the fleet fetches it directly.
+        env: { CRAWLS_N: String(Number(process.env.CRAWLS_N) || 1) },
         cmd: ['node', '/app/bio-feed.js'],
         log: ctx.log,
       });
