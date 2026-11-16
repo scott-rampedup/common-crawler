@@ -288,6 +288,37 @@ JOBS.push(
     },
   },
   {
+    id: 'sweep_verify',
+    label: 'prove the night\'s sweep reached the Contact Crawler',
+    everyMs: hours(24),
+    // The sweep already reports success, and so does every stage after it. What none of them report is
+    // whether a person searching the UI can find the contact -- which is the only definition of done we
+    // use. On 2026-11-14 a sync watermark bug left 0.87% of merged contacts in Postgres and absent from
+    // the index, and it was found by accident rather than by anything that was watching.
+    //
+    // Runs with --fix: a row that is in Postgres and not in the index is never something to think about,
+    // it is something to index, and waiting for a human to approve that is just a longer outage.
+    enabled: () => process.env.SCHED_SWEEP_VERIFY !== '0',
+    async run(ctx) {
+      // Only once the sweep window has closed AND the feed has had time to work through what it wrote.
+      // Checking at 12:01 would report the night's last objects as undelivered when they are merely
+      // recent, which is the kind of false alarm that teaches people to ignore a check.
+      const end = Number(process.env.SITEMAP_SWEEP_UTC_END || 12);
+      const after = end + Math.max(1, Number(process.env.SWEEP_VERIFY_LAG_HOURS) || 3);
+      const h = new Date().getUTCHours();
+      if (h < after) { ctx.log(`sweep window closes at ${end}h UTC; not checking until ${after}h (now ${h}h)`); return false; }
+      const start = Number(process.env.SITEMAP_SWEEP_UTC_START || 6);
+      const since = new Date().toISOString().slice(0, 10) + 'T' + String(start).padStart(2, '0') + ':00:00.000Z';
+      const args = ['--since', since, '--sample', String(Number(process.env.SWEEP_VERIFY_SAMPLE) || 5000)];
+      if (process.env.SWEEP_VERIFY_FIX !== '0') args.push('--fix');
+      return launchOwnMachine({
+        namePrefix: 'sweep-verify', memoryMb: 4096, cpus: 2,
+        cmd: ['node', '/app/sweep-verify.js', ...args],
+        log: ctx.log,
+      });
+    },
+  },
+  {
     id: 'sitemap_sweep',
     label: 'full sweep of every monitored People sitemap',
     everyMs: hours(24),
