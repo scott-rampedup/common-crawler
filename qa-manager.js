@@ -269,13 +269,22 @@ const CHECKS = [
     // outcome. Anything still 'queued' days later was dropped on the floor by a stall. Most of the pool
     // is legitimately blocked or already queued, so the count that matters is the actionable remainder.
     fixEveryMs: 20 * 3600000,                    // at most once a day; it scrolls the whole ledger
-    async measure(ctx) {
+    // A ledger entry stays 'queued' until something FETCHES the page, so re-queueing can never clear
+    // this by itself -- the first live run duly reported its own repair as "DID NOT CLEAR", which is a
+    // check that can never go green, the exact noise that teaches people to ignore alerts. Once the
+    // URLs are back in the monitor queue the work is handed off: feed_cursor owns whether the queue is
+    // being consumed, and crawl_queue_stuck owns whether the rows move. So a recent successful rescue
+    // satisfies this check, and it goes back to watching for a NEW pool building up behind a later stall.
+    async measure(ctx, prevState) {
       const c = await ctx.osc.count({ index: LEDGER, body: { query: { term: { outcome: 'queued' } } } });
       const total = ((c.body || c)).count;
       const est = await ctx.actionableQueued(total);
+      const lastFix = (prevState || {}).lastFixAt;
+      const handedOff = lastFix && agoMs(lastFix) < 20 * 3600000;
       return {
-        ok: est < Number(process.env.QA_ABANDONED_MAX || 5000),
-        detail: `${N(total)} ledger entr(y/ies) queued, ~${N(est)} genuinely uncrawled`,
+        ok: handedOff || est < Number(process.env.QA_ABANDONED_MAX || 5000),
+        detail: `${N(total)} ledger entr(y/ies) queued, ~${N(est)} genuinely uncrawled`
+          + (handedOff ? ` — re-queued ${hrs(agoMs(lastFix))} ago, the feed owns them now` : ''),
         metrics: { queued: total, actionable: est },
         severity: 'warn',
       };
@@ -441,8 +450,9 @@ async function run() {
   for (const chk of CHECKS) {
     if (ONLY && chk.id !== ONLY) continue;
     const row = { id: chk.id, what: chk.what };
+    const prevRow = (prev.checks || {})[chk.id];
     try {
-      const m = await chk.measure(ctx);
+      const m = await chk.measure(ctx, prevRow);
       Object.assign(row, m);
     } catch (e) {
       Object.assign(row, { ok: false, detail: 'CHECK ERRORED: ' + e.message, severity: 'fail' });
@@ -451,7 +461,7 @@ async function run() {
     // Fix, then MEASURE AGAIN. A fix that reports success is not the same as a problem that went away,
     // and the difference is the whole reason this exists rather than a cron that runs repairs blindly.
     if (!row.ok && !row.skipped && chk.fix && !DRY) {
-      const last = ((prev.checks || {})[chk.id] || {}).lastFixAt;
+      const last = (prevRow || {}).lastFixAt;
       const throttled = chk.fixEveryMs && last && agoMs(last) < chk.fixEveryMs;
       if (throttled) {
         row.fix = { skipped: `last fixed ${hrs(agoMs(last))} ago` };
@@ -460,7 +470,9 @@ async function run() {
           const f = await chk.fix(ctx);
           row.fix = { ...f, at: new Date().toISOString() };
           row.lastFixAt = row.fix.at;
-          const after = await chk.measure(ctx);
+          // Re-measure knowing the fix just happened, so a check whose repair is a hand-off rather than
+          // a cure can say so instead of reporting its own successful repair as a failure.
+          const after = await chk.measure(ctx, { ...(prevRow || {}), lastFixAt: row.lastFixAt });
           row.fix.verified = !!after.ok;
           row.fix.after = after.detail;
           row.ok = after.ok;
@@ -508,7 +520,9 @@ async function run() {
       const mailer = require('./mailer');
       if (mailer.mailEnabled()) {
         await mailer.sendMail({
-          to: mailer.adminEmail(),
+          // Same recipient the nightly sweep report uses. adminEmail() alone is the app's own
+          // contact@ address, which is nobody's inbox in the morning.
+          to: process.env.QA_REPORT_TO || process.env.MONITOR_REPORT_TO || mailer.adminEmail(),
           subject: unresolved.length
             ? `Contact Crawler QA — ${unresolved.length} unresolved: ${unresolved.map((r) => r.id).join(', ')}`
             : `Contact Crawler QA — fixed ${fixed.map((r) => r.id).join(', ')}`,
