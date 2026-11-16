@@ -294,6 +294,30 @@ JOBS.push(
     },
   },
   {
+    id: 'qa_manager',
+    label: 'where are we, and did every BIO URL reach the Contact Crawler',
+    // HOURLY, deliberately. Every fault this catches was previously found by a person noticing that
+    // nothing had arrived, typically hours after it stopped -- a stale image, a hidden env var, a
+    // throttled bucket, a stopped cursor, a hung shard, a read-only database. None of those announce
+    // themselves: the machines stay `started` and the logs go quiet. An hourly pass means the worst
+    // case is an hour of lost ingestion rather than a morning of it, and that whatever broke overnight
+    // is usually already fixed and verified before anyone looks.
+    //
+    // On its own machine rather than in-process: the repair for abandoned URLs scrolls the whole crawl
+    // ledger, and a scheduler tick blocked behind that would delay every other job.
+    everyMs: 60 * 1000 * Math.max(15, Number(process.env.QA_MANAGER_MINUTES) || 60),
+    enabled: () => process.env.SCHED_QA_MANAGER !== '0',
+    async run(ctx) {
+      const args = [];
+      if (process.env.QA_FIX === '0') args.push('--dry');
+      return launchOwnMachine({
+        namePrefix: 'qa-manager', memoryMb: 2048, cpus: 2,
+        cmd: ['node', '/app/qa-manager.js', ...args],
+        log: ctx.log,
+      });
+    },
+  },
+  {
     id: 'sweep_verify',
     label: 'prove the night\'s sweep reached the Contact Crawler',
     everyMs: hours(24),

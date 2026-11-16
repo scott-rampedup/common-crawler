@@ -142,13 +142,19 @@ const CHECKS = [
     what: 'Common Crawl lookups are succeeding',
     // The cause behind most stuck cursors. Reported separately so the report says WHY the feed stalled
     // rather than only that it did -- on 2026-11-16 that distinction was the whole diagnosis.
+    // Judged on the MOST RECENT resolves, not on the day. A daily ratio stays red for hours after an
+    // incident is over -- today's own numbers were 29 ok / 72 failed while the latest attempts were
+    // fine -- and a check that cannot go green again until midnight is one nobody trusts.
     async measure(ctx) {
-      const { ok: okN, failed } = await ctx.athenaToday();
-      if (okN + failed === 0) return { ok: true, skipped: true, detail: 'no resolves attempted today' };
-      const rate = failed / (okN + failed);
+      const recent = await ctx.athenaRecent(20);
+      if (!recent.length) return { ok: true, skipped: true, detail: 'no resolves attempted recently' };
+      const okN = recent.filter((r) => r.state === 'SUCCEEDED').length;
+      const failed = recent.length - okN;
+      const rate = failed / recent.length;
       return {
         ok: rate < 0.5,
-        detail: `${N(okN)} ok / ${N(failed)} failed today (${(rate * 100).toFixed(0)}% failing)`,
+        detail: `last ${recent.length}: ${N(okN)} ok / ${N(failed)} failed (${(rate * 100).toFixed(0)}% failing)`
+          + (failed ? `, newest failure: ${(recent.find((r) => r.state !== 'SUCCEEDED') || {}).why || ''}`.slice(0, 120) : ''),
         metrics: { ok: okN, failed, failRate: rate },
       };
     },
@@ -359,27 +365,31 @@ async function buildCtx() {
     return { objects, urls, oldest };
   };
 
-  ctx.athenaToday = async () => {
+  // The newest `limit` CC resolve queries, newest first. ListQueryExecutions returns newest first but
+  // mixes in the cheap DDL (CREATE DATABASE, ADD PARTITION) that always succeeds and would drown the
+  // signal, so only the resolve SELECT counts.
+  ctx.athenaRecent = async (limit = 20) => {
     const { AthenaClient, ListQueryExecutionsCommand, BatchGetQueryExecutionCommand } = require('@aws-sdk/client-athena');
     const a = new AthenaClient({ region: REGION });
     const wg = process.env.ATHENA_WORKGROUP || 'primary';
-    const today = new Date().toISOString().slice(0, 10);
-    let tok = null, ok = 0, failed = 0;
-    for (let page = 0; page < 6; page++) {
+    let tok = null; const out = [];
+    for (let page = 0; page < 6 && out.length < limit; page++) {
       const l = await a.send(new ListQueryExecutionsCommand({ WorkGroup: wg, MaxResults: 50, NextToken: tok || undefined }));
       const ids = l.QueryExecutionIds || [];
       if (!ids.length) break;
       const b = await a.send(new BatchGetQueryExecutionCommand({ QueryExecutionIds: ids }));
-      for (const q of (b.QueryExecutions || [])) {
-        if (!/^SELECT url, filename/.test((q.Query || '').trim())) continue;   // the resolve query only
-        const s = q.Status || {};
-        const at = s.SubmissionDateTime ? new Date(s.SubmissionDateTime).toISOString() : '';
-        if (at.slice(0, 10) !== today) continue;
-        if (s.State === 'SUCCEEDED') ok++; else if (s.State === 'FAILED' || s.State === 'CANCELLED') failed++;
-      }
+      const rows = (b.QueryExecutions || [])
+        .filter((q) => /^SELECT url, filename/.test((q.Query || '').trim()))
+        .map((q) => ({
+          at: (q.Status || {}).SubmissionDateTime ? new Date(q.Status.SubmissionDateTime).toISOString() : '',
+          state: (q.Status || {}).State,
+          why: ((q.Status || {}).StateChangeReason || '').slice(0, 80),
+        }));
+      out.push(...rows);
       tok = l.NextToken; if (!tok) break;
     }
-    return { ok, failed };
+    out.sort((x, y) => y.at.localeCompare(x.at));
+    return out.slice(0, limit);
   };
 
   ctx.missingFromIndex = async (emails) => {
