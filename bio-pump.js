@@ -43,16 +43,51 @@ const ts = () => new Date().toISOString().slice(11, 19);
 
 // Run a script to completion, capturing stderr so a pass can report what it did without the pump
 // having to parse a stream. Resolves even on failure -- a failed pass must not end the loop.
+//
+// BOUNDED, because an unbounded wait here stops everything. This function used to resolve only on
+// `close`, so a child that never exited -- an Athena resolve that hangs, a socket that never times out
+// -- parked the pump forever. The loop stays alive, the machine stays `started`, and the log goes
+// quiet: the exact shape of failure fleetBusy() documents below, where reading "still started" as
+// "still working" cost ten hours and 1,802,166 banked URLs. Nothing downstream notices either, because
+// an idle pump and an empty queue look identical from the outside.
+//
+// Killing a pass loses nothing. bio-feed advances its cursor only after the work is durably recorded
+// and bio-live manages its own, so the object a killed pass was reading is simply read again next
+// time; the cost is one repeated resolve. The timeout is deliberately generous -- a full BIO_FEED_MAX_URLS
+// slice is a quarter of a million URLs and legitimately slow -- because the point is to put a ceiling on
+// a hang, not to police a slow pass.
+const PASS_TIMEOUT_MS = Number(process.env.BIO_PUMP_PASS_TIMEOUT_MS) || 60 * 60 * 1000;
+
 function runPass(script, args) {
   return new Promise((resolve) => {
     const out = [];
+    const t0 = Date.now();
     const p = spawn(process.execPath, [path.join(__dirname, script), ...args], {
       cwd: __dirname, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
     });
+    let timer = null, timedOut = false;
+    // Say it is still going, every so often. A long pass and a hung pass are indistinguishable in this
+    // log otherwise -- both are simply silence -- and telling them apart meant reading /proc on the
+    // machine to see whether the child still existed.
+    const beat = setInterval(() => {
+      console.error(`${ts()} pass  ${script} still running after ${Math.round((Date.now() - t0) / 60000)}m`);
+    }, Number(process.env.BIO_PUMP_HEARTBEAT_MS) || 10 * 60 * 1000);
+    beat.unref();
+    const done = (r) => { clearInterval(beat); if (timer) clearTimeout(timer); resolve({ ...r, ms: Date.now() - t0, timedOut }); };
+    if (PASS_TIMEOUT_MS > 0) {
+      timer = setTimeout(() => {
+        timedOut = true;
+        console.error(`${ts()} pass  ${script} has run ${Math.round((Date.now() - t0) / 60000)}m with no exit — killing it. `
+          + 'Its cursor was not advanced, so the work is read again next pass.');
+        try { p.kill('SIGTERM'); } catch (e) { /* already gone */ }
+        // SIGTERM first so the child can close its handles; SIGKILL only if it ignores that too.
+        setTimeout(() => { try { p.kill('SIGKILL'); } catch (e) { /* already gone */ } }, 15000).unref();
+      }, PASS_TIMEOUT_MS);
+    }
     p.stdout.on('data', (d) => out.push(String(d)));
     p.stderr.on('data', (d) => out.push(String(d)));
-    p.on('error', (e) => resolve({ code: -1, text: 'spawn failed: ' + e.message }));
-    p.on('close', (code) => resolve({ code, text: out.join('') }));
+    p.on('error', (e) => done({ code: -1, text: 'spawn failed: ' + e.message }));
+    p.on('close', (code) => done({ code, text: out.join('') }));
   });
 }
 
@@ -99,7 +134,9 @@ for (const sig of ['SIGTERM', 'SIGINT']) {
 
     // ---- 1. feed: newly queued URLs -> resolved -> crawl_queue
     const feed = await runPass('bio-feed.js', []);
-    if (feed.code !== 0) {
+    if (feed.timedOut) {
+      console.error(`${ts()} feed  pass killed after ${Math.round(feed.ms / 60000)}m — its objects are read again next pass`);
+    } else if (feed.code !== 0) {
       console.error(`${ts()} feed pass FAILED (exit ${feed.code}) — retrying next pass`);
       console.error(feed.text.split('\n').filter(Boolean).slice(-3).map((l) => '    ' + l).join('\n'));
     } else if (feedDidWork(feed.text)) {
@@ -129,7 +166,9 @@ for (const sig of ['SIGTERM', 'SIGINT']) {
     // ---- 2. live crawl: whatever the archive lacked, as soon as the fleet is free
     if (!(await fleetBusy())) {
       const live = await runPass('bio-live.js', ['--min', String(MIN_LIVE)]);
-      if (live.code !== 0) {
+      if (live.timedOut) {
+        console.error(`${ts()} live  pass killed after ${Math.round(live.ms / 60000)}m`);
+      } else if (live.code !== 0) {
         console.error(`${ts()} live pass FAILED (exit ${live.code})`);
       } else if (liveDidWork(live.text)) {
         didSomething = true; liveTotal++;
