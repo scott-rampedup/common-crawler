@@ -142,6 +142,22 @@ async function roll({ token = process.env.FLY_API_TOKEN, app = APP, id, image })
   return { ok: true };
 }
 
+/**
+ * Wait for the fleet to stop moving. A machine spends a few seconds in `replacing`/`created`/`starting`
+ * after an update, and a re-measure taken inside that window reads the transition as drift -- which
+ * turned a roll that had worked into "DID NOT CLEAR", complete with the same machine listed twice, once
+ * as stale and once as replacing. A fix that reports itself as failed is worse than no report at all,
+ * because the next person spends their time on the checker rather than the pipeline.
+ */
+async function settle({ token, app, tries = 12, waitMs = 5000 }) {
+  for (let i = 0; i < tries; i++) {
+    const machines = await flyApi(`/apps/${app}/machines`, 'GET', null, token);
+    if (!(machines || []).some((m) => /replacing|created|starting/i.test(m.state || ''))) return true;
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+  return false;
+}
+
 async function run({ token = process.env.FLY_API_TOKEN, app = APP, fix = FIX, rollAll = ROLL_ALL, log = console.log } = {}) {
   const m = await measure({ token, app });
   // --roll-all ignores the drift test entirely: it is for the secrets case, where there is nothing to
@@ -182,6 +198,7 @@ async function run({ token = process.env.FLY_API_TOKEN, app = APP, fix = FIX, ro
     }
   }
 
+  if (fix && fixed.length) await settle({ token, app });
   const after = (fix && fixed.length) ? await measure({ token, app }) : m;
   if (JSON_OUT) console.log(JSON.stringify({ ...after, fixed }, null, 2));
   else if (after.ok) log('every persistent machine is running the deployed image');

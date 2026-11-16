@@ -73,7 +73,12 @@ const CHECKS = [
     async measure(ctx) {
       if (!process.env.FLY_API_TOKEN) return { ok: true, skipped: true, detail: 'no FLY_API_TOKEN' };
       const m = await require('./deploy-parity').measure({ token: process.env.FLY_API_TOKEN });
-      const bad = [...m.drifted.map((r) => r.name + ' (stale)'), ...m.down.map((r) => r.name + ' (' + r.state + ')')];
+      // One machine, one entry. drifted and down overlap -- a machine that is both stale and not
+      // running appeared twice, which reads as more broken than it is.
+      const seen = new Map();
+      for (const r of m.drifted) seen.set(r.name, r.name + ' (stale)');
+      for (const r of m.down) seen.set(r.name, r.name + (seen.has(r.name) ? ', ' + r.state : ' (' + r.state + ')'));
+      const bad = [...seen.values()];
       return { ok: m.ok, detail: m.ok ? `all ${m.rows.length} on ${m.want.tag}` : bad.join(', '), metrics: { drifted: m.drifted.length, down: m.down.length } };
     },
     async fix() {
