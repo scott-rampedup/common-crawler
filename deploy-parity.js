@@ -141,14 +141,18 @@ async function run({ token = process.env.FLY_API_TOKEN, app = APP, fix = FIX, ro
   // --roll-all ignores the drift test entirely: it is for the secrets case, where there is nothing to
   // compare and the only safe assumption is that every worker is behind.
   //
-  // Never roll the machine this is running on. The first --roll-all did, and killed the ssh session it
-  // was being run through half way down the list, leaving two workers unrolled and the operator with no
-  // output saying which. Self is excluded rather than ordered last: finishing the list matters more than
-  // updating the one machine that `fly deploy` already handles, and which is the reference image here
-  // anyway -- rolling it onto its own image is a no-op bought with an outage.
+  // Roll the machine this is running on LAST, never not at all. The first --roll-all rolled it first and
+  // killed the ssh session it was being run through half way down the list, leaving two workers unrolled
+  // and the operator with no output saying which -- so for a while self was excluded outright. That was
+  // wrong for the case this check actually runs in: the scheduled job runs IN-PROCESS on scheduler-0,
+  // which is not in the `app` group, so excluding self meant the scheduler could never update itself. A
+  // deploy would leave it on the old image indefinitely while its own report called everything fine.
+  // Ordering it last preserves the original point -- the rest of the list is already done by the time
+  // this process dies -- and restart policy `always` brings it straight back on the new image.
   const self = process.env.FLY_MACHINE_ID || '';
   const targets = (rollAll ? m.rows.filter((r) => r.state === 'started') : m.drifted)
-    .filter((r) => r.id !== self && r.group !== 'app');
+    .filter((r) => r.group !== 'app');
+  targets.sort((a, b) => (a.id === self ? 1 : 0) - (b.id === self ? 1 : 0));
   const imageStr = `${m.want.registry}/${m.want.repository}:${m.want.tag}`;
 
   if (!JSON_OUT) {
@@ -164,6 +168,8 @@ async function run({ token = process.env.FLY_API_TOKEN, app = APP, fix = FIX, ro
   if (fix && targets.length) {
     log(`rolling ${targets.length} machine(s) onto ${m.want.tag}${rollAll ? ' (--roll-all)' : ''}`);
     for (const r of targets) {
+      // Say so before rolling self, because this process does not survive to report it afterwards.
+      if (r.id === self) log(`  ${r.name} is this machine — rolling it last; this process ends here`);
       const res = await roll({ token, app, id: r.id, image: imageStr });
       log(`  ${r.name} ${res.ok ? 'updated' : 'FAILED: ' + res.error}`);
       fixed.push({ ...r, updated: res.ok, error: res.error });
