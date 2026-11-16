@@ -224,11 +224,21 @@ async function getCursor(osc) {
   fs.writeFileSync(fUrls, todo.join('\n') + '\n');
   let CRAWLS = arg('crawls', '') || process.env.CRAWLS || '';
   if (!CRAWLS) {
-    // One crawl, not four. Every extra crawl is another partition the resolve scans, and four of them
-    // turned a comfortable ~0.7GB chunk into ~7.8GB, which is where s3://commoncrawl starts throttling.
-    // Narrowing to the newest crawl costs coverage, but a URL the resolve misses is not lost: it goes to
-    // bio-live and the live fleet fetches it directly. Raise CRAWLS_N once the resolve is proven steady.
-    const n = Number(process.env.CRAWLS_N) || 1;
+    // Two crawls. Four turned a comfortable ~0.7GB chunk into ~7.8GB, which is where s3://commoncrawl
+    // starts throttling -- on 2026-11-16 a stale CRAWLS_N=4 on the bio-pump machine did exactly that and
+    // cost the night 6.3 hours, 27 resolves succeeding against 104 failures.
+    //
+    // But one crawl is not free either, and the cost is bigger than it looks. A URL the resolve misses
+    // is not lost -- it goes to bio-live and the fleet fetches it directly -- yet that path converts far
+    // worse: measured the same night, 25 pages fetched and extracted yielded 1 real contact, the rest
+    // dropped as non-person or no-usable-email. At CRAWLS_N=1, 20,048 of the 26,357 actionable URLs went
+    // down that path and the night delivered 5,139 contacts against the previous night's 13,691.
+    //
+    // So: archive coverage is where the contacts come from, and the scan size is what breaks it. Two is
+    // the point that buys back most of the coverage at half the footprint that failed. The protections
+    // added the same day -- a gap between resolve chunks, an escalating cooldown after a failed pass,
+    // and a bounded pass -- are what make stepping back up safe to try.
+    const n = Number(process.env.CRAWLS_N) || 2;
     CRAWLS = (await require('./cc-athena-miner').latestCrawls(n, ['CC-MAIN-2026-39'])).join(',');
   }
   console.error(`  resolving ${todo.length.toLocaleString()} URL(s) against ${CRAWLS}`);

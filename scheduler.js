@@ -342,7 +342,14 @@ JOBS.push(
         namePrefix: 'sitemap-sweep',
         memoryMb: Number(process.env.SITEMAP_SWEEP_MEMORY_MB) || 16384,
         cpus: Number(process.env.SITEMAP_SWEEP_CPUS) || 8,
-        env: { SWEEP_CONC: String(Number(process.env.SITEMAP_LIB_MONITOR_CONC) || 64),
+        // 384, not 64. ui-server.js defaults the same variable to 384 and records why beside it:
+        // measured on a dedicated machine against real sitemaps, conc 64 -> 5.4/s (12.3h), conc 256 with
+        // the default socket cap -> 12.2/s (5.4h), conc 384 with CC_MAX_SOCKETS=1024 -> 16.9/s (3.9h).
+        // The sockets are already raised on the line below, so 64 was leaving that entirely unused: the
+        // 2026-11-16 sweep ran 7h15m at conc 64 with peak heap 0.27GB against a 13.1GB limit. It is
+        // network-bound, not memory-bound, and finishing sooner is what gives the night's URLs time to
+        // be resolved, crawled and merged before the day is gone.
+        env: { SWEEP_CONC: String(Number(process.env.SITEMAP_LIB_MONITOR_CONC) || 384),
                CC_MAX_SOCKETS: String(Number(process.env.CC_MAX_SOCKETS) || 1024) },
         cmd: ['node', '/app/sitemap-sweep.js'],
         log: ctx.log,
