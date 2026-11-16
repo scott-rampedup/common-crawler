@@ -403,6 +403,12 @@ const ATHENA_TRIES = Math.max(1, Number(process.env.ATHENA_TRIES) || 8);
 // pass succeeds and the ones behind it fail. A 60s ceiling retried straight back into the same
 // throttle, so all attempts burned inside two minutes. Let the budget actually recover.
 const ATHENA_MAX_BACKOFF_MS = Math.max(1000, Number(process.env.ATHENA_MAX_BACKOFF_MS) || 300000);
+// Space the resolve chunks of one pass apart. The backoff above only applies AFTER a chunk has already
+// failed; nothing separated a successful chunk from the next one starting, and that gap is where the
+// throttle budget has to recover. Measured 2026-11-16 06:15-07:05 UTC: chunk 1 of a pass succeeded and
+// chunk 2 failed with HIVE_S3_THROTTLING, repeatedly -- 2 successes against 24 failures, on a day after
+// one that ran 29 for 29 with the work arriving in smaller, naturally-spaced bursts.
+const RESOLVE_CHUNK_GAP_MS = Math.max(0, Number(process.env.RESOLVE_CHUNK_GAP_MS) || 45000);
 
 // Run a query; resolve { id, scanned, output } when SUCCEEDED, throw on a non-retryable FAILED/CANCELLED.
 async function runAthena(A, sql, output, label, attempt) {
@@ -578,6 +584,12 @@ async function main() {
     const parts = [];
     for (let ci = 0; ci < chunks.length; ci++) {
       const label = chunks.length > 1 ? `resolve ${ci + 1}/${chunks.length}` : "resolve";
+      // Not before the first chunk -- there is nothing to recover from yet, and a single-chunk pass
+      // should not pay a penalty for a problem it cannot cause.
+      if (ci > 0 && RESOLVE_CHUNK_GAP_MS > 0) {
+        console.error(`  [${label}] waiting ${Math.round(RESOLVE_CHUNK_GAP_MS / 1000)}s before this chunk so the S3 request budget can recover`);
+        await sleep(RESOLVE_CHUNK_GAP_MS);
+      }
       const { id } = await runAthena(A, buildResolveSql({ crawls, keysTable, hosts: chunks[ci] }), output, label);
       const loc = (await A.athena.send(new A.GetQueryExecutionCommand({ QueryExecutionId: id }))).QueryExecution.ResultConfiguration.OutputLocation;
       // A large S3 result read can drop mid-body (transient socket reset). The Athena result is immutable,
