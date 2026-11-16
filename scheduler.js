@@ -82,8 +82,13 @@ async function launchOwnMachine({ namePrefix, cmd, env, memoryMb, cpus, log }) {
   if (!process.env.FLY_API_TOKEN) { log('FLY_API_TOKEN not set — cannot launch a machine'); return false; }
   const { launchFleet, reapFleet } = require('./fleet-launch');
   await reapFleet({ namePrefix, log: () => {} });              // free the names from the previous run
+  // Forward the launcher's failures. Discarding its log entirely meant a refused launch surfaced as the
+  // bare line "no machine started" with no reason anywhere -- on 2026-11-16 the cause was Fly rejecting
+  // 2 CPUs with 2048MB ("minimum required 4096 MiB"), which the launcher had said plainly and this threw
+  // away. The routine chatter stays suppressed; only the part that explains a failure comes through.
   const started = await launchFleet({
-    shards: 1, namePrefix, memoryMb, cpus, env, cmd: () => cmd, log: () => {},
+    shards: 1, namePrefix, memoryMb, cpus, env, cmd: () => cmd,
+    log: (m) => { if (/FAILED|error|invalid|refus/i.test(String(m))) log(String(m).trim()); },
   });
   if (!started.length) { log('no machine started'); return false; }
   log(`launched on ${started.map((m) => `${m.id} (${m.name})`).join(', ')}`);
@@ -311,7 +316,9 @@ JOBS.push(
       const args = [];
       if (process.env.QA_FIX === '0') args.push('--dry');
       return launchOwnMachine({
-        namePrefix: 'qa-manager', memoryMb: 2048, cpus: 2,
+        // 4096, not 2048: Fly requires at least 2048 MiB per CPU, and 2x2048 is refused outright with
+        // "minimum required 4096 MiB" -- which is how this job silently never ran on its first tick.
+        namePrefix: 'qa-manager', memoryMb: 4096, cpus: 2,
         cmd: ['node', '/app/qa-manager.js', ...args],
         log: ctx.log,
       });
