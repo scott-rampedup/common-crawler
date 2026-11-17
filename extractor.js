@@ -359,8 +359,23 @@ function cleanEmail(raw){
   if(ASSET_DIM_RE.test(domain)) return "";            // e.g. logo@2x.ai / @2x-150x150.png -- a sprite
   if(domain === "example.com") return "";              // placeholder domain
 
-  // leading digits = a phone number misread into the address: drop everything before the 1st letter
-  if(/^[0-9]/.test(local)) local = local.replace(/^[^A-Za-z]+/, "");
+  // A phone number misread into the address -- "5551234567john@acme.com" is really john@acme.com. That
+  // artifact is real, but the test for it was "starts with a digit", which is not the same thing and
+  // silently rewrote ordinary addresses: 1stchoice@ -> stchoice@, 3m@3m.com -> m@3m.com, 24hour@ ->
+  // hour@, 0923cst@gmail.com -> cst@gmail.com. Worse, "drop everything before the first letter" emptied
+  // any all-numeric local part, so the function RETURNED "" for 123456789@qq.com and 8675309@verizon.net
+  // -- qq.com hands out numeric mailboxes as a matter of course, and we hold 1,503 qq.com addresses with
+  // not one numeric local part among them. Across 17,317,077 stored contacts exactly 26 have a local
+  // part beginning with a digit; a real corpus runs percent, not millionths. That is the fingerprint of
+  // this line, not of the data.
+  //
+  // So require the prefix to actually look like a phone number -- seven digits is the shortest a
+  // subscriber number gets -- and require a letter after it, which is what makes it glue rather than the
+  // address itself. Separators are counted out rather than matched, so "555-123-4567john" still goes.
+  const glue = /^[^A-Za-z]+/.exec(local);
+  if(glue && (glue[0].match(/[0-9]/g) || []).length >= 7 && local.length > glue[0].length){
+    local = local.slice(glue[0].length);
+  }
 
   // domain echoed at the start of the local part: hilton.commainstreet@hilton.com -> mainstreet@hilton.com
   while(local.toLowerCase().startsWith(domain)){

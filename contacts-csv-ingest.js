@@ -57,6 +57,15 @@ const URL_COLUMN = argOf('--url-column', '');
 // salveo.international. Storing the group's domain would point every firmographic lookup at the parent.
 // Web Source URL still records the page they were found on; this only changes whose company they are.
 const DOMAIN_FROM_EMAIL = has('--domain-from-email');
+// A DIRECTORY is the case neither of the above covers. agentreview.net lists 37,908 insurance agents
+// and employs none of them, so the page domain is wrong for every row; but --domain-from-email is
+// wrong too, because about half of them are reachable only at gmail.com, and storing gmail.com as an
+// employer is worse than storing nothing. The caller has to decide per row -- the agent's own site
+// where the page states one, the email domain where it is a real company address, the directory
+// itself otherwise -- and that waterfall cannot be expressed by a flag. So let the file carry the
+// answer: with this set, a non-empty Domain column wins outright. Opt-in, because for an ordinary
+// export the page domain is right and a stray Domain column should not silently override it.
+const DOMAIN_COLUMN = has('--domain-column');
 // Accept the date spellings exports actually use. An unparsed Time Stamp silently became today,
 // which overwrites when a person was last seen with when they were re-imported.
 const isoDate = (v) => {
@@ -163,7 +172,8 @@ function buildRecords(text, genderMap) {
     // (sub-domains stripped, multi-part TLDs respected) rather than taken raw off the address.
     const emailHost = email.includes('@') ? email.split('@').pop().toLowerCase() : '';
     const emailDomain = emailHost ? (ex.getBaseDomain('https://' + emailHost) || emailHost) : '';
-    const domain = (DOMAIN_FROM_EMAIL ? emailDomain : '')
+    const domain = (DOMAIN_COLUMN ? get(row, 'domain').toLowerCase() : '')
+      || (DOMAIN_FROM_EMAIL ? emailDomain : '')
       || ex.getBaseDomain(url) || get(row, 'domain').toLowerCase();
     const cc = ex.countryCodeFromDomain(domain);
     const pathHit = url ? ex.pathIdFromUrl(url) : null;
