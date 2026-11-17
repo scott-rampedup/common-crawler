@@ -213,7 +213,14 @@ async function getCursor(osc) {
 
   if (DRY) { console.error('\n--dry: stopping before Athena. Cursor NOT advanced.'); await pool.end(); process.exit(0); }
   if (!todo.length) {
-    await osc.index({ index: CFG, id: CURSOR_ID, refresh: true, body: { cursor: safeCursor, at: new Date().toISOString(), note: 'nothing new to resolve' } });
+    // Record the funnel here too. A pass that filters everything away is the one most worth being
+    // able to explain afterwards, and writing only a note meant the doc could not even be told apart
+    // from a pass that resolved nothing -- both read as "0 out" with no account of what went in.
+    await osc.index({ index: CFG, id: CURSOR_ID, refresh: true, body: { cursor: safeCursor, at: new Date().toISOString(),
+      note: 'nothing new to resolve',
+      result: { objects: consumed.length, listed: fresh.length, urls: urls.size,
+                alreadyQueued: already.size, known: knownN, todo: 0,
+                pointers: 0, resolved: 0, miss: 0 } } });
     console.error(`  nothing to resolve; cursor -> ${safeCursor}`);
     await pool.end(); process.exit(0);
   }
@@ -292,9 +299,16 @@ async function getCursor(osc) {
   // 7) Advance the cursor only after the work is durably recorded.
   await osc.index({ index: CFG, id: CURSOR_ID, refresh: true,
     body: { cursor: safeCursor, at: new Date().toISOString(),
+            // The WHOLE funnel, not just its two ends. `urls` and `resolved`/`miss` alone cannot say
+            // where a batch went: on 2026-11-17 a pass recorded urls 9,963 / resolved 0 / miss 0 and
+            // advanced the cursor, and nothing in this record could distinguish "the queue table
+            // already had them" from "knownSet dropped them" from "the resolve returned nothing" --
+            // the three have completely different fixes. The pass's stderr says all of it, but logs
+            // age out in hours and this doc is the only durable account of what a pass did.
             result: { objects: consumed.length, listed: fresh.length, urls: urls.size,
                       priorityUrls: prioOf.size, topPriority: topPrio,
-                      resolved: loaded.inserted, miss: miss.length } } });
+                      alreadyQueued: already.size, known: knownN, todo: todo.length,
+                      pointers: loaded.parsed, resolved: loaded.inserted, miss: miss.length } } });
   console.error(`\nbio-feed done in ${Math.round((Date.now() - t0) / 1000)}s — cursor -> ${safeCursor}`);
   console.error(`  ${loaded.inserted.toLocaleString()} queued for the worker fleet | ${miss.length.toLocaleString()} for live crawl`);
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* tmp */ }

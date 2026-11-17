@@ -286,15 +286,43 @@ const CHECKS = [
       const est = await ctx.actionableQueued(total);
       const lastFix = (prevState || {}).lastFixAt;
       const handedOff = lastFix && agoMs(lastFix) < 20 * 3600000;
+      // Judge the hand-off by what happened to it. See ctx.rescueDrain for why: "I re-queued them"
+      // was enough to turn this green while the batch was being consumed and discarded, which is the
+      // precise shape of failure this whole file exists to catch -- a true statement about what was
+      // done, carrying a false impression of what happened.
+      const drain = await ctx.rescueDrain({ graceMs: Number(process.env.QA_RESCUE_GRACE_MS) || 6 * 3600000 });
+      ctx._rescueDrain = drain;
+      const maxStuck = Number(process.env.QA_RESCUE_MAX_STUCK_PCT || 25);
+      if (drain && drain.pct > maxStuck) {
+        return {
+          ok: false,
+          detail: `${N(total)} ledger entr(y/ies) queued, ~${N(est)} genuinely uncrawled — the rescue `
+            + `${hrs(drain.ageMs)} ago DID NOT DRAIN: ${drain.pct.toFixed(1)}% of its URLs `
+            + `(${N(drain.stillQueued)} of ${N(drain.sampled)} sampled, from ${N(drain.urls)}) are still 'queued'. `
+            + `Re-queueing is not the fix; the feed is consuming them without producing work.`,
+          metrics: { queued: total, actionable: est, rescueStuckPct: Number(drain.pct.toFixed(1)) },
+          severity: 'fail',
+        };
+      }
       return {
         ok: handedOff || est < Number(process.env.QA_ABANDONED_MAX || 5000),
         detail: `${N(total)} ledger entr(y/ies) queued, ~${N(est)} genuinely uncrawled`
-          + (handedOff ? ` — re-queued ${hrs(agoMs(lastFix))} ago, the feed owns them now` : ''),
-        metrics: { queued: total, actionable: est },
+          + (drain ? ` — last rescue ${hrs(drain.ageMs)} ago drained ${(100 - drain.pct).toFixed(1)}% of its URLs`
+                   : (handedOff ? ` — re-queued ${hrs(agoMs(lastFix))} ago, too recent to judge` : '')),
+        metrics: { queued: total, actionable: est, ...(drain ? { rescueStuckPct: Number(drain.pct.toFixed(1)) } : {}) },
         severity: 'warn',
       };
     },
     async fix(ctx) {
+      // Do not re-run a rescue that demonstrably does not drain. Writing another object would add a
+      // day's worth of URLs to a queue that is already swallowing them, and would make the next run
+      // report its own no-op as a repair -- which is how this check came to be trusted when it should
+      // not have been. Say so instead; the leak is upstream of anything this fix can do.
+      const d = ctx._rescueDrain;
+      if (d && d.pct > Number(process.env.QA_RESCUE_MAX_STUCK_PCT || 25)) {
+        return { detail: `NOT re-queueing — the last rescue left ${d.pct.toFixed(1)}% of its URLs uncrawled; `
+                       + `re-queueing repeats the loop. Needs the feed's resolve/load path looked at.` };
+      }
       const { spawnSync } = require('child_process');
       const r = spawnSync(process.execPath, [require('path').join(__dirname, 'queued-rescue.js'), '--write'],
         { cwd: __dirname, env: process.env, encoding: 'utf8' });
@@ -377,6 +405,56 @@ async function buildCtx() {
       tok = r.IsTruncated ? r.NextContinuationToken : null;
     } while (tok);
     return { objects, urls, oldest };
+  };
+
+  // Did the LAST rescue actually land? Re-queueing a URL is a promise, not an outcome, and the two
+  // came apart badly: on 2026-11-17 a pass read a 9,963-URL rescue object and recorded resolved 0 /
+  // miss 0, then advanced the cursor past it -- bio-feed never looks below the cursor, so that batch
+  // is gone, and because only a fetch clears a ledger entry those same URLs are re-queued again the
+  // next day. The day before, 61% of a 14,912-URL rescue was still 'queued' 23h later with none of it
+  // blocked, queued or crawled. So sample the URLs of the most recent rescue that has had time to
+  // drain and ask the ledger what became of them; still 'queued' means nothing ever fetched it.
+  ctx.rescueDrain = async ({ graceMs = 6 * 3600000, sample = 400 } = {}) => {
+    const { S3Client, ListObjectsV2Command, GetObjectCommand } = require('@aws-sdk/client-s3');
+    const s3 = new S3Client({ region: REGION });
+    let tok = null, best = null;
+    do {
+      const r = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: PREFIX, ContinuationToken: tok }));
+      for (const o of (r.Contents || [])) {
+        if (!/rescue/.test(o.Key)) continue;
+        if (Date.now() - new Date(o.LastModified).getTime() < graceMs) continue;   // too new to judge
+        if (!best || new Date(o.LastModified) > new Date(best.LastModified)) best = o;
+      }
+      tok = r.IsTruncated ? r.NextContinuationToken : null;
+    } while (tok);
+    if (!best) return null;
+    let urls = [];
+    try {
+      const g = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: best.Key }));
+      const chunks = [];
+      for await (const d of g.Body) chunks.push(d);
+      urls = Buffer.concat(chunks).toString('utf8').split('\n').map((s) => s.trim()).filter(Boolean);
+    } catch (e) { return null; }
+    if (!urls.length) return null;
+    // Spread the sample across the whole file rather than taking the head: a rescue object is written
+    // in ledger-scroll order, so the first 400 lines are not representative of the rest.
+    const step = Math.max(1, Math.floor(urls.length / sample));
+    const picked = urls.filter((_, i) => i % step === 0).slice(0, sample);
+    const ledger = require('./crawl-ledger');
+    let seen = 0, stillQueued = 0;
+    for (let i = 0; i < picked.length; i += 200) {
+      const chunk = picked.slice(i, i + 200);
+      try {
+        const r = await ctx.osc.mget({ index: LEDGER, body: { ids: chunk.map((u) => ledger.idOf(u)) }, _source: ['outcome'] });
+        for (const d of (((r.body || r).docs) || [])) {
+          seen++;
+          if (d.found && d._source && d._source.outcome === 'queued') stillQueued++;
+        }
+      } catch (e) { /* a failed lookup must not invent a verdict */ }
+    }
+    if (!seen) return null;
+    return { key: best.Key, urls: urls.length, ageMs: Date.now() - new Date(best.LastModified).getTime(),
+             sampled: seen, stillQueued, pct: (stillQueued * 100) / seen };
   };
 
   // The newest `limit` CC resolve queries, newest first. ListQueryExecutions returns newest first but
