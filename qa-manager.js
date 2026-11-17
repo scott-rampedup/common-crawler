@@ -298,8 +298,8 @@ const CHECKS = [
           ok: false,
           detail: `${N(total)} ledger entr(y/ies) queued, ~${N(est)} genuinely uncrawled — the rescue `
             + `${hrs(drain.ageMs)} ago DID NOT DRAIN: ${drain.pct.toFixed(1)}% of its URLs `
-            + `(${N(drain.stillQueued)} of ${N(drain.sampled)} sampled, from ${N(drain.urls)}) are still 'queued'. `
-            + `Re-queueing is not the fix; the feed is consuming them without producing work.`,
+            + `(${N(drain.stuck)} of ${N(drain.sampled)} sampled, from ${N(drain.urls)}) are still 'queued' `
+            + `and not crawled under any URL shape. Re-queueing is not the fix.`,
           metrics: { queued: total, actionable: est, rescueStuckPct: Number(drain.pct.toFixed(1)) },
           severity: 'fail',
         };
@@ -307,9 +307,11 @@ const CHECKS = [
       return {
         ok: handedOff || est < Number(process.env.QA_ABANDONED_MAX || 5000),
         detail: `${N(total)} ledger entr(y/ies) queued, ~${N(est)} genuinely uncrawled`
-          + (drain ? ` — last rescue ${hrs(drain.ageMs)} ago drained ${(100 - drain.pct).toFixed(1)}% of its URLs`
+          + (drain ? ` — last rescue ${hrs(drain.ageMs)} ago: ${(100 - drain.pct).toFixed(1)}% accounted for`
+                     + (drain.phantom ? ` (${N(drain.phantom)} of ${N(drain.sampled)} were already crawled under another URL shape — stale ledger, not lost work)` : '')
                    : (handedOff ? ` — re-queued ${hrs(agoMs(lastFix))} ago, too recent to judge` : '')),
-        metrics: { queued: total, actionable: est, ...(drain ? { rescueStuckPct: Number(drain.pct.toFixed(1)) } : {}) },
+        metrics: { queued: total, actionable: est,
+                   ...(drain ? { rescueStuckPct: Number(drain.pct.toFixed(1)), rescuePhantom: drain.phantom } : {}) },
         severity: 'warn',
       };
     },
@@ -441,20 +443,54 @@ async function buildCtx() {
     const step = Math.max(1, Math.floor(urls.length / sample));
     const picked = urls.filter((_, i) => i % step === 0).slice(0, sample);
     const ledger = require('./crawl-ledger');
-    let seen = 0, stillQueued = 0;
+    let seen = 0;
+    const stuck = [];
     for (let i = 0; i < picked.length; i += 200) {
       const chunk = picked.slice(i, i + 200);
       try {
         const r = await ctx.osc.mget({ index: LEDGER, body: { ids: chunk.map((u) => ledger.idOf(u)) }, _source: ['outcome'] });
-        for (const d of (((r.body || r).docs) || [])) {
+        ((r.body || r).docs || []).forEach((d, k) => {
           seen++;
-          if (d.found && d._source && d._source.outcome === 'queued') stillQueued++;
-        }
+          if (d.found && d._source && d._source.outcome === 'queued') stuck.push(chunk[k]);
+        });
       } catch (e) { /* a failed lookup must not invent a verdict */ }
     }
     if (!seen) return null;
+
+    // A URL can read 'queued' in the ledger and ALREADY BE CRAWLED. The ledger keys on a hash of the
+    // exact URL string, so https://www.x.com/a and https://x.com/a are two separate entries and only
+    // the shape the fetch actually used ever gets an outcome written; the other stays 'queued' for
+    // good. Measured 2026-11-17: 46.3% of the whole queued pool, and 100% of a 200-URL rescue sample,
+    // were already `done` in crawl_queue under a different shape -- crawled as long ago as July.
+    // Counting those as stuck work would make this check cry wolf every day about pages we already
+    // have. They are a stale ledger, which is a real problem but a different one, with a different fix.
+    //
+    // Matching by exact variants, not by a normalising expression over the column: crawl_queue has
+    // ~24.6M rows and `WHERE regexp_replace(...) = ANY(...)` seq-scans all of them (minutes). The
+    // variants hit the url PRIMARY KEY instead.
+    const variantsOf = (u) => {
+      const m = /^(https?):\/\/(www\.)?(.+?)\/?$/i.exec(String(u || '').trim());
+      if (!m) return [u];
+      const rest = m[3];
+      const out = [];
+      for (const scheme of ['https', 'http']) for (const w of ['', 'www.']) for (const slash of ['', '/'])
+        out.push(`${scheme}://${w}${rest}${slash}`);
+      return out;
+    };
+    let phantom = 0;
+    if (stuck.length && ctx.pg) {
+      try {
+        const probe = [...new Set([].concat(...stuck.map(variantsOf)))];
+        const r = await ctx.pg.query(
+          `SELECT url FROM crawl_queue WHERE status = 'done' AND url = ANY($1::text[])`, [probe]);
+        const done = new Set(r.rows.map((x) => x.url));
+        phantom = stuck.filter((u) => variantsOf(u).some((v) => done.has(v))).length;
+      } catch (e) { /* leave phantom at 0: over-reporting beats inventing a clean bill of health */ }
+    }
+    const reallyStuck = stuck.length - phantom;
     return { key: best.Key, urls: urls.length, ageMs: Date.now() - new Date(best.LastModified).getTime(),
-             sampled: seen, stillQueued, pct: (stillQueued * 100) / seen };
+             sampled: seen, stillQueued: stuck.length, phantom, stuck: reallyStuck,
+             pct: (reallyStuck * 100) / seen };
   };
 
   // The newest `limit` CC resolve queries, newest first. ListQueryExecutions returns newest first but
