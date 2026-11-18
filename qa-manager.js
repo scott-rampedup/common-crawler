@@ -143,6 +143,90 @@ const CHECKS = [
   },
 
   {
+    id: 'sweep_delivered',
+    what: "the sitemap scan's BIO URLs ended up searchable in the Contact Crawler",
+    // sweep_ran says the sweep ran and feed_cursor says the queue was consumed. Neither says a person
+    // can be found. Those are different questions and they have come apart before: on 2026-11-14 a sync
+    // watermark bug left 0.87% of merged contacts in Postgres and invisible to the UI while every stage
+    // reported success. This walks the night's own URLs forward -- discovered -> crawl_queue -> crawled
+    // -> contact row -> document the UI can return -- and judges the end of that chain, not the start.
+    //
+    // It calls sweep-verify rather than re-implementing the walk, because a second copy of this logic
+    // is a second thing to keep honest, and the subtle part (ask the index BY EMAIL, never by URL, or a
+    // record that merged into a known person reads as a loss) is exactly the part a reimplementation
+    // would get wrong.
+    fixEveryMs: 2 * 3600000,
+    async measure(ctx) {
+      const { verify } = require('./sweep-verify');
+      const since = new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z';
+      // Mid-sweep, "not fed yet" is legitimately most of the list, and the feed needs time after the
+      // last object lands. Judging inside that window would fail every morning for a pipeline that is
+      // simply still working, which is the fastest way to teach someone to ignore this.
+      const SETTLE_MS = Number(process.env.QA_SWEEP_SETTLE_MS) || 90 * 60 * 1000;
+      const sample = Number(process.env.QA_SWEEP_SAMPLE) || 1500;
+
+      // This re-walks every run rather than caching today's answer. The contacts lookup is a sequential
+      // scan (web_source_url has no index), so caching was tempting -- but a cached pass would suppress
+      // detection for as long as it lasted, and the fix-then-re-measure loop would read its own stale
+      // entry and call a repair "verified" without looking. A check that can report success without
+      // measuring is the exact failure this file exists to catch, and it is not worth one scan an hour.
+      let r;
+      try { r = await verify({ since, sample, log: () => {} }); }
+      catch (e) { return { ok: false, detail: 'sweep-verify failed: ' + e.message, severity: 'fail' }; }
+
+      if (!r.objects) {
+        return { ok: true, skipped: true, detail: 'the sweep has not written anything yet today' };
+      }
+      const settling = Date.now() - Date.parse(r.last) < SETTLE_MS;
+      if (settling) {
+        return { ok: true, skipped: true,
+          detail: `sweep still landing — ${N(r.discovered)} URL(s) so far, newest object ${hrs(Date.now() - Date.parse(r.last))} old` };
+      }
+
+      const base = `${N(r.discovered)} URL(s) discovered, ${N(r.fed)}/${N(r.checked)} sampled reached the queue, `
+        + `${N(r.withRecs)} yielded a record, ${N(r.searchable)}/${N(r.keyed)} searchable`
+        + (r.mergedElsewhere ? `, ${N(r.mergedElsewhere)} merged onto an existing contact` : '');
+
+      // STRANDED is the only outcome that is always a fault: the contact exists and the UI cannot see
+      // it. The rest of the funnel narrows for honest reasons and is reported, not judged.
+      if (r.stranded) {
+        return { ok: false, severity: 'fail',
+          detail: `${base} — ${N(r.stranded)} STRANDED in Postgres and missing from the index`
+            + (r.strandedExamples.length ? ` (e.g. ${r.strandedExamples[0]})` : ''),
+          metrics: { discovered: r.discovered, stranded: r.stranded, searchable: r.searchable } };
+      }
+      // Fed but never crawled, hours after the sweep finished, means the fleet is not draining what the
+      // sweep handed it -- the URLs are in the queue and nobody is working them.
+      const stuckPct = r.fed ? (r.pending * 100) / r.fed : 0;
+      if (stuckPct > Number(process.env.QA_SWEEP_MAX_PENDING_PCT || 10)) {
+        return { ok: false, severity: 'fail',
+          detail: `${base} — but ${N(r.pending)} of ${N(r.fed)} (${stuckPct.toFixed(1)}%) are still sitting in crawl_queue uncrawled`,
+          metrics: { discovered: r.discovered, pending: r.pending } };
+      }
+      if (r.discovered && !r.fed) {
+        return { ok: false, severity: 'fail',
+          detail: `${N(r.discovered)} URL(s) discovered and NONE of the ${N(r.checked)} sampled reached crawl_queue`,
+          metrics: { discovered: r.discovered, fed: 0 } };
+      }
+      const detail = `${base}, 0 stranded`;
+      return { ok: true, detail,
+        metrics: { discovered: r.discovered, searchable: r.searchable, stranded: 0,
+                   estWithRecord: Math.round(r.withRecs * (r.factor || 1)) },
+      };
+    },
+    async fix(ctx) {
+      // The same walk with --fix: index the rows Postgres has and the index does not. Idempotent, and
+      // exactly what os-reconcile does for the whole table -- this just scopes it to the night's work.
+      const { verify } = require('./sweep-verify');
+      const since = new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z';
+      try {
+        const r = await verify({ since, sample: Number(process.env.QA_SWEEP_SAMPLE) || 1500, fix: true, log: () => {} });
+        return { detail: r.fixed ? `indexed ${N(r.fixed)} stranded contact(s)` : 'nothing stranded to index' };
+      } catch (e) { return { detail: 'sweep-verify --fix failed: ' + e.message }; }
+    },
+  },
+
+  {
     id: 'archive_resolve',
     what: 'Common Crawl lookups are succeeding',
     // The cause behind most stuck cursors. Reported separately so the report says WHY the feed stalled

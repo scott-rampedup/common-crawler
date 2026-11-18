@@ -19,6 +19,11 @@
 //   node sweep-verify.js --all                # every URL the sweep wrote (slow, exact)
 //   node sweep-verify.js --fix                # index anything found in Postgres but not in OpenSearch
 //
+// Also a module: `require('./sweep-verify').verify({ sample, fix, log })` runs the same walk and
+// returns the funnel instead of printing it, which is how the QA manager's sweep_delivered check asks
+// the question hourly. The CLI below is a thin wrapper over it, so both paths measure the same way --
+// a separate reimplementation inside the QA manager would have been one more thing to keep honest.
+//
 // WHAT EACH OUTCOME MEANS. The funnel narrows for legitimate reasons at every step, so a number being
 // smaller than the one above it is not a fault:
 //
@@ -43,13 +48,6 @@ const has = (f) => argv.includes('--' + f);
 const REGION = process.env.AWS_REGION || 'us-east-1';
 const BUCKET = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${REGION}`;
 const PREFIX = process.env.MONITOR_QUEUE_PREFIX || 'monitor-queue/pending/';
-const SINCE = arg('since', new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
-// Bounded above so a run can be aimed at ONE night. Without this, checking last night's sweep also
-// scoops up tonight's objects, whose URLs are legitimately uncrawled and would read as a delivery gap.
-const UNTIL = arg('until', '9999');
-const ALL = has('all');
-const SAMPLE = ALL ? Infinity : (Number(arg('sample', 2000)) || 2000);
-const FIX = has('fix');
 const BATCH = 500;
 // web_source_url has no index, so every lookup against it is a sequential scan of the whole contacts
 // table. Chunking that at BATCH would pay for the scan once per 500 URLs; one wide chunk pays once.
@@ -60,140 +58,191 @@ const pct = (a, b) => (b ? ((a / b) * 100).toFixed(1) + '%' : '—');
 const s3 = new S3Client({ region: REGION });
 const readBody = async (b) => { const c = []; for await (const x of b) c.push(x); return Buffer.concat(c).toString('utf8'); };
 
-(async () => {
+/**
+ * Walk one sweep's URLs through to the index. Returns the funnel; printing is the caller's business,
+ * so the QA manager can have the numbers without the report.
+ *
+ * @param opts.since/.until  ISO bounds on queue-object LastModified (one night)
+ * @param opts.sample        how many discovered URLs to check (Infinity for all)
+ * @param opts.fix           index any row Postgres has and the index does not
+ * @param opts.log           where the human-readable report goes; pass () => {} for silence
+ */
+async function verify(opts = {}) {
+  const SINCE = opts.since || new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z';
+  // Bounded above so a run can be aimed at ONE night. Without this, checking last night's sweep also
+  // scoops up tonight's objects, whose URLs are legitimately uncrawled and would read as a delivery gap.
+  const UNTIL = opts.until || '9999';
+  const ALL = !!opts.all;
+  const SAMPLE = ALL ? Infinity : (Number(opts.sample) || 2000);
+  const FIX = !!opts.fix;
+  const log = opts.log || console.log;
+
   if (!process.env.OPENSEARCH_ENDPOINT || !process.env.DATABASE_URL) {
-    console.error('need OPENSEARCH_ENDPOINT and DATABASE_URL'); process.exit(1);
+    throw new Error('need OPENSEARCH_ENDPOINT and DATABASE_URL');
   }
   const osc = makeClient(process.env.OPENSEARCH_ENDPOINT);
   const pg = new Client({ connectionString: process.env.DATABASE_URL.replace(/:(5432|5433)\//, ':5433/'),
     ssl: process.env.PGSSL ? { rejectUnauthorized: false } : false });
   await pg.connect();
-  await pg.query("SET statement_timeout='280s'");
+  try {
+    await pg.query("SET statement_timeout='280s'");
 
-  // 1) The objects this sweep wrote. S3 objects here are write-once, so LastModified identifies the run.
-  console.log(`sweep-verify — queue objects written since ${SINCE}`
-    + (UNTIL === '9999' ? '' : ` and before ${UNTIL}`) + '\n');
-  let tok = null; const keys = [];
-  do {
-    const r = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: PREFIX, ContinuationToken: tok }));
-    for (const o of (r.Contents || [])) {
-      const iso = new Date(o.LastModified).toISOString();
-      if (iso >= SINCE && iso < UNTIL) keys.push({ key: o.Key, iso });
+    // 1) The objects this sweep wrote. S3 objects here are write-once, so LastModified identifies the run.
+    log(`sweep-verify — queue objects written since ${SINCE}`
+      + (UNTIL === '9999' ? '' : ` and before ${UNTIL}`) + '\n');
+    let tok = null; const keys = [];
+    do {
+      const r = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: PREFIX, ContinuationToken: tok }));
+      for (const o of (r.Contents || [])) {
+        const iso = new Date(o.LastModified).toISOString();
+        if (iso >= SINCE && iso < UNTIL) keys.push({ key: o.Key, iso });
+      }
+      tok = r.IsTruncated ? r.NextContinuationToken : null;
+    } while (tok);
+    keys.sort((a, b) => a.iso.localeCompare(b.iso));
+    if (!keys.length) {
+      log('no queue objects in that window — the sweep has not written anything yet');
+      return { objects: 0, discovered: 0, checked: 0, fed: 0, pending: 0, done: 0, withRecs: 0,
+               noEmail: 0, keyed: 0, searchable: 0, stranded: 0, mergedElsewhere: 0,
+               first: null, last: null, fixed: 0, strandedExamples: [] };
     }
-    tok = r.IsTruncated ? r.NextContinuationToken : null;
-  } while (tok);
-  keys.sort((a, b) => a.iso.localeCompare(b.iso));
-  if (!keys.length) { console.log('no queue objects in that window — the sweep has not written anything yet'); await pg.end(); return; }
-  console.log(`  ${N(keys.length)} object(s), ${keys[0].iso} .. ${keys[keys.length - 1].iso}`);
+    log(`  ${N(keys.length)} object(s), ${keys[0].iso} .. ${keys[keys.length - 1].iso}`);
 
-  const urls = new Set();
-  for (const k of keys) {
-    try {
-      const txt = await readBody((await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: k.key }))).Body);
-      for (const line of txt.split('\n')) { const u = line.trim(); if (/^https?:\/\/[^\s/]+\.[^\s]/i.test(u)) urls.add(u); }
-    } catch (e) { console.error(`  read failed ${k.key}: ${e.message}`); }
-  }
-  const all = [...urls];
-  console.log(`  ${N(all.length)} distinct URL(s) discovered`);
-
-  // Sample across the whole run, not the first N -- objects are written in sitemap order, so the head
-  // of the list is one slice of the web and tells you nothing about the rest.
-  let pick = all;
-  if (all.length > SAMPLE) {
-    pick = all.slice();
-    for (let i = pick.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pick[i], pick[j]] = [pick[j], pick[i]]; }
-    pick = pick.slice(0, SAMPLE);
-  }
-  console.log(`  checking ${N(pick.length)}${pick.length < all.length ? ' (random sample)' : ' (all)'}\n`);
-
-  // 2) crawl_queue, keyed by url -- this is a primary-key lookup, so it stays cheap at any sample size.
-  const qrow = new Map();
-  for (let i = 0; i < pick.length; i += BATCH) {
-    const chunk = pick.slice(i, i + BATCH);
-    const r = await pg.query(`SELECT url, status, records, no_email FROM crawl_queue WHERE url = ANY($1)`, [chunk]);
-    for (const row of r.rows) qrow.set(row.url, row);
-  }
-
-  // 3) For every URL that yielded a record, pull the contact row(s) Postgres keys to that URL.
-  //    web_source_url is not indexed, so this is a sequential scan -- batched deliberately wide to pay
-  //    for the scan as few times as possible.
-  const expected = pick.filter((u) => { const q = qrow.get(u); return q && q.status === 'done' && Number(q.records) > 0; });
-  const rowsByUrl = new Map();
-  for (let i = 0; i < expected.length; i += SCAN_BATCH) {
-    const chunk = expected.slice(i, i + SCAN_BATCH);
-    const r = await pg.query(`SELECT * FROM contacts WHERE web_source_url = ANY($1)`, [chunk]);
-    for (const row of r.rows) {
-      if (!rowsByUrl.has(row.web_source_url)) rowsByUrl.set(row.web_source_url, []);
-      rowsByUrl.get(row.web_source_url).push(row);
+    const urls = new Set();
+    for (const k of keys) {
+      try {
+        const txt = await readBody((await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: k.key }))).Body);
+        for (const line of txt.split('\n')) { const u = line.trim(); if (/^https?:\/\/[^\s/]+\.[^\s]/i.test(u)) urls.add(u); }
+      } catch (e) { log(`  read failed ${k.key}: ${e.message}`); }
     }
-  }
+    const all = [...urls];
+    log(`  ${N(all.length)} distinct URL(s) discovered`);
 
-  // 4) Ask OpenSearch BY EMAIL, because the index is email-keyed. Checking by URL instead understates
-  //    delivery badly: when an extracted record merges into a contact that already exists under an
-  //    older source URL, nothing in the index is keyed to the new URL and the person is nonetheless
-  //    perfectly searchable. The only honest question is "is this person in the index", and the only
-  //    real fault is a row Postgres has that the index does not.
-  const pgRows = [].concat(...rowsByUrl.values());
-  const emails = [...new Set(pgRows.map((r) => String(r.email || '').toLowerCase()).filter(Boolean))];
-  const inIndex = new Set();
-  for (let i = 0; i < emails.length; i += BATCH) {
-    const chunk = emails.slice(i, i + BATCH);
-    const r = await osc.mget({ index: INDEX, body: { ids: chunk }, _source: false });
-    ((r.body || r).docs || []).forEach((d, k) => { if (d.found) inIndex.add(chunk[k]); });
-  }
-  const strandedRows = pgRows.filter((r) => !inIndex.has(String(r.email || '').toLowerCase()));
-  // A URL that yielded a record but has no contact keyed to it: the record merged into a person who
-  // already existed under a different source URL. Expected, and not a loss -- the upsert only rewrites
-  // a contact when the new record scores at least as high AND differs, so a re-find of a known person
-  // deliberately leaves the stored row (and its original URL) alone.
-  const mergedElsewhere = expected.filter((u) => !rowsByUrl.has(u));
-  const deliveredUrls = expected.filter((u) => (rowsByUrl.get(u) || []).some((r) => inIndex.has(String(r.email || '').toLowerCase())));
-
-  const st = { fed: 0, pending: 0, done: 0, noEmail: 0, withRecs: 0 };
-  for (const u of pick) {
-    const q = qrow.get(u); if (!q) continue;
-    st.fed++;
-    if (q.status !== 'done') { st.pending++; continue; }
-    st.done++;
-    if (Number(q.records) > 0) st.withRecs++;
-    if (Number(q.no_email) === 1) st.noEmail++;
-  }
-
-  console.log('FUNNEL  (of the sampled URLs)');
-  console.log(`  discovered by the sweep      ${N(pick.length)}`);
-  console.log(`  not fed / filtered out       ${N(pick.length - st.fed)}   ${pct(pick.length - st.fed, pick.length)}`);
-  console.log(`  reached crawl_queue          ${N(st.fed)}   ${pct(st.fed, pick.length)}`);
-  console.log(`    still queued               ${N(st.pending)}`);
-  console.log(`    crawled                    ${N(st.done)}`);
-  console.log(`      yielded a record         ${N(st.withRecs)}`);
-  console.log(`      no email on the page     ${N(st.noEmail)}`);
-  console.log('');
-  console.log(`  of those ${N(expected.length)} record-yielding URL(s):`);
-  console.log(`    contact keyed to this URL  ${N(rowsByUrl.size)}`);
-  console.log(`      SEARCHABLE in the UI     ${N(deliveredUrls.length)}   ${pct(deliveredUrls.length, rowsByUrl.size || 1)}`);
-  console.log(`      STRANDED (pg, not index) ${N(strandedRows.length)} row(s)`);
-  console.log(`    merged into an existing contact under another URL  ${N(mergedElsewhere.length)}`);
-
-  if (strandedRows.length) {
-    console.log('\n  examples:');
-    for (const r of strandedRows.slice(0, 8)) console.log(`    ${r.email}   ${r.web_source_url}`);
-    if (FIX) {
-      const res = await bulkUpsert(osc, strandedRows.map(rowToDoc));
-      const errs = (res && res.errors) || 0;
-      try { await osc.indices.refresh({ index: INDEX }); } catch (e) { /* best-effort */ }
-      console.log(`\n  --fix: indexed ${N(strandedRows.length - errs)}${errs ? `, ${N(errs)} failed` : ''}`);
-    } else {
-      console.log('\n  --fix indexes these into the Contact Crawler');
+    // Sample across the whole run, not the first N -- objects are written in sitemap order, so the head
+    // of the list is one slice of the web and tells you nothing about the rest.
+    let pick = all;
+    if (all.length > SAMPLE) {
+      pick = all.slice();
+      for (let i = pick.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pick[i], pick[j]] = [pick[j], pick[i]]; }
+      pick = pick.slice(0, SAMPLE);
     }
-  }
+    log(`  checking ${N(pick.length)}${pick.length < all.length ? ' (random sample)' : ' (all)'}\n`);
 
-  // Scale the sample back up, so the headline is about the night's work and not about the sample.
-  if (pick.length < all.length && st.withRecs) {
-    const f = all.length / pick.length;
-    console.log(`\nESTIMATE for all ${N(all.length)} discovered URL(s): ~${N(Math.round(st.withRecs * f))} with a record, `
-      + `~${N(Math.round(deliveredUrls.length * f))} searchable under their own URL, `
-      + `~${N(Math.round(strandedRows.length * f))} stranded`);
+    // 2) crawl_queue, keyed by url -- this is a primary-key lookup, so it stays cheap at any sample size.
+    const qrow = new Map();
+    for (let i = 0; i < pick.length; i += BATCH) {
+      const chunk = pick.slice(i, i + BATCH);
+      const r = await pg.query(`SELECT url, status, records, no_email FROM crawl_queue WHERE url = ANY($1)`, [chunk]);
+      for (const row of r.rows) qrow.set(row.url, row);
+    }
+
+    // 3) For every URL that yielded a record, pull the contact row(s) Postgres keys to that URL.
+    //    web_source_url is not indexed, so this is a sequential scan -- batched deliberately wide to pay
+    //    for the scan as few times as possible.
+    const expected = pick.filter((u) => { const q = qrow.get(u); return q && q.status === 'done' && Number(q.records) > 0; });
+    const rowsByUrl = new Map();
+    for (let i = 0; i < expected.length; i += SCAN_BATCH) {
+      const chunk = expected.slice(i, i + SCAN_BATCH);
+      const r = await pg.query(`SELECT * FROM contacts WHERE web_source_url = ANY($1)`, [chunk]);
+      for (const row of r.rows) {
+        if (!rowsByUrl.has(row.web_source_url)) rowsByUrl.set(row.web_source_url, []);
+        rowsByUrl.get(row.web_source_url).push(row);
+      }
+    }
+
+    // 4) Ask OpenSearch BY EMAIL, because the index is email-keyed. Checking by URL instead understates
+    //    delivery badly: when an extracted record merges into a contact that already exists under an
+    //    older source URL, nothing in the index is keyed to the new URL and the person is nonetheless
+    //    perfectly searchable. The only honest question is "is this person in the index", and the only
+    //    real fault is a row Postgres has that the index does not.
+    const pgRows = [].concat(...rowsByUrl.values());
+    const emails = [...new Set(pgRows.map((r) => String(r.email || '').toLowerCase()).filter(Boolean))];
+    const inIndex = new Set();
+    for (let i = 0; i < emails.length; i += BATCH) {
+      const chunk = emails.slice(i, i + BATCH);
+      const r = await osc.mget({ index: INDEX, body: { ids: chunk }, _source: false });
+      ((r.body || r).docs || []).forEach((d, k) => { if (d.found) inIndex.add(chunk[k]); });
+    }
+    const strandedRows = pgRows.filter((r) => !inIndex.has(String(r.email || '').toLowerCase()));
+    // A URL that yielded a record but has no contact keyed to it: the record merged into a person who
+    // already existed under a different source URL. Expected, and not a loss -- the upsert only rewrites
+    // a contact when the new record scores at least as high AND differs, so a re-find of a known person
+    // deliberately leaves the stored row (and its original URL) alone.
+    const mergedElsewhere = expected.filter((u) => !rowsByUrl.has(u));
+    const deliveredUrls = expected.filter((u) => (rowsByUrl.get(u) || []).some((r) => inIndex.has(String(r.email || '').toLowerCase())));
+
+    const st = { fed: 0, pending: 0, done: 0, noEmail: 0, withRecs: 0 };
+    for (const u of pick) {
+      const q = qrow.get(u); if (!q) continue;
+      st.fed++;
+      if (q.status !== 'done') { st.pending++; continue; }
+      st.done++;
+      if (Number(q.records) > 0) st.withRecs++;
+      if (Number(q.no_email) === 1) st.noEmail++;
+    }
+
+    log('FUNNEL  (of the sampled URLs)');
+    log(`  discovered by the sweep      ${N(pick.length)}`);
+    log(`  not fed / filtered out       ${N(pick.length - st.fed)}   ${pct(pick.length - st.fed, pick.length)}`);
+    log(`  reached crawl_queue          ${N(st.fed)}   ${pct(st.fed, pick.length)}`);
+    log(`    still queued               ${N(st.pending)}`);
+    log(`    crawled                    ${N(st.done)}`);
+    log(`      yielded a record         ${N(st.withRecs)}`);
+    log(`      no email on the page     ${N(st.noEmail)}`);
+    log('');
+    log(`  of those ${N(expected.length)} record-yielding URL(s):`);
+    log(`    contact keyed to this URL  ${N(rowsByUrl.size)}`);
+    log(`      SEARCHABLE in the UI     ${N(deliveredUrls.length)}   ${pct(deliveredUrls.length, rowsByUrl.size || 1)}`);
+    log(`      STRANDED (pg, not index) ${N(strandedRows.length)} row(s)`);
+    log(`    merged into an existing contact under another URL  ${N(mergedElsewhere.length)}`);
+
+    let fixed = 0;
+    if (strandedRows.length) {
+      log('\n  examples:');
+      for (const r of strandedRows.slice(0, 8)) log(`    ${r.email}   ${r.web_source_url}`);
+      if (FIX) {
+        const res = await bulkUpsert(osc, strandedRows.map(rowToDoc));
+        const errs = (res && res.errors) || 0;
+        try { await osc.indices.refresh({ index: INDEX }); } catch (e) { /* best-effort */ }
+        fixed = strandedRows.length - errs;
+        log(`\n  --fix: indexed ${N(fixed)}${errs ? `, ${N(errs)} failed` : ''}`);
+      } else {
+        log('\n  --fix indexes these into the Contact Crawler');
+      }
+    }
+
+    // Scale the sample back up, so the headline is about the night's work and not about the sample.
+    const factor = pick.length < all.length && pick.length ? all.length / pick.length : 1;
+    if (pick.length < all.length && st.withRecs) {
+      log(`\nESTIMATE for all ${N(all.length)} discovered URL(s): ~${N(Math.round(st.withRecs * factor))} with a record, `
+        + `~${N(Math.round(deliveredUrls.length * factor))} searchable under their own URL, `
+        + `~${N(Math.round(strandedRows.length * factor))} stranded`);
+    }
+
+    return {
+      objects: keys.length, first: keys[0].iso, last: keys[keys.length - 1].iso,
+      discovered: all.length, checked: pick.length,
+      fed: st.fed, pending: st.pending, done: st.done, withRecs: st.withRecs, noEmail: st.noEmail,
+      keyed: rowsByUrl.size, searchable: deliveredUrls.length, stranded: strandedRows.length,
+      mergedElsewhere: mergedElsewhere.length, fixed, factor,
+      strandedExamples: strandedRows.slice(0, 5).map((r) => `${r.email} (${r.web_source_url})`),
+    };
+  } finally {
+    await pg.end();
   }
-  await pg.end();
-  process.exit(strandedRows.length && !FIX ? 1 : 0);
-})().catch((e) => { console.error('sweep-verify FAILED:', e.message, e.stack); process.exit(2); });
+}
+
+module.exports = { verify };
+
+if (require.main === module) {
+  const ALL = has('all');
+  verify({
+    since: arg('since', undefined),
+    until: arg('until', undefined),
+    all: ALL,
+    sample: ALL ? Infinity : (Number(arg('sample', 2000)) || 2000),
+    fix: has('fix'),
+  }).then((r) => {
+    process.exit(r.stranded && !has('fix') ? 1 : 0);
+  }).catch((e) => { console.error('sweep-verify FAILED:', e.message, e.stack); process.exit(2); });
+}
