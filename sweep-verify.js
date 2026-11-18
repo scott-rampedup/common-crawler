@@ -18,6 +18,7 @@
 //   node sweep-verify.js --since 2026-11-15T06:00:00Z --until 2026-11-16T00:00:00Z
 //   node sweep-verify.js --all                # every URL the sweep wrote (slow, exact)
 //   node sweep-verify.js --fix                # index anything found in Postgres but not in OpenSearch
+//   node sweep-verify.js --include-all        # count every producer's queue objects, not just the sweep's
 //
 // Also a module: `require('./sweep-verify').verify({ sample, fix, log })` runs the same walk and
 // returns the funnel instead of printing it, which is how the QA manager's sweep_delivered check asks
@@ -55,6 +56,15 @@ const SCAN_BATCH = 20000;
 const N = (n) => Number(n || 0).toLocaleString();
 const pct = (a, b) => (b ? ((a / b) * 100).toFixed(1) + '%' : '—');
 
+// The sweep is not the only writer in this prefix. queued-rescue puts objects here too, and they are
+// written whenever the QA manager repairs the abandoned pool -- which is to say, at an arbitrary hour,
+// into the same day's window. Counting those as "the sweep" wrecks the measurement twice: their URLs
+// are mixed into the funnel, and because the newest object is then minutes old rather than hours, the
+// settle test that waits for the sweep to finish resets and the check skips forever. (That is not
+// hypothetical -- it is what the first live run of sweep_delivered did, 20 minutes after the rescue
+// fix ran.) A sweep object is <stamp>-<count>.txt; every other producer tags itself in between.
+const SWEEP_KEY = /Z-\d+\.txt$/i;
+
 const s3 = new S3Client({ region: REGION });
 const readBody = async (b) => { const c = []; for await (const x of b) c.push(x); return Buffer.concat(c).toString('utf8'); };
 
@@ -76,6 +86,9 @@ async function verify(opts = {}) {
   const SAMPLE = ALL ? Infinity : (Number(opts.sample) || 2000);
   const FIX = !!opts.fix;
   const log = opts.log || console.log;
+  // Default to the sweep's own objects, because that is the question this file asks. --include-all
+  // widens it back to every producer in the prefix.
+  const INCLUDE_ALL = !!opts.includeAll;
 
   if (!process.env.OPENSEARCH_ENDPOINT || !process.env.DATABASE_URL) {
     throw new Error('need OPENSEARCH_ENDPOINT and DATABASE_URL');
@@ -90,12 +103,14 @@ async function verify(opts = {}) {
     // 1) The objects this sweep wrote. S3 objects here are write-once, so LastModified identifies the run.
     log(`sweep-verify — queue objects written since ${SINCE}`
       + (UNTIL === '9999' ? '' : ` and before ${UNTIL}`) + '\n');
-    let tok = null; const keys = [];
+    let tok = null; const keys = []; let skippedKeys = 0;
     do {
       const r = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: PREFIX, ContinuationToken: tok }));
       for (const o of (r.Contents || [])) {
         const iso = new Date(o.LastModified).toISOString();
-        if (iso >= SINCE && iso < UNTIL) keys.push({ key: o.Key, iso });
+        if (iso < SINCE || iso >= UNTIL) continue;
+        if (!INCLUDE_ALL && !SWEEP_KEY.test(o.Key)) { skippedKeys++; continue; }
+        keys.push({ key: o.Key, iso });
       }
       tok = r.IsTruncated ? r.NextContinuationToken : null;
     } while (tok);
@@ -106,7 +121,8 @@ async function verify(opts = {}) {
                noEmail: 0, keyed: 0, searchable: 0, stranded: 0, mergedElsewhere: 0,
                first: null, last: null, fixed: 0, strandedExamples: [] };
     }
-    log(`  ${N(keys.length)} object(s), ${keys[0].iso} .. ${keys[keys.length - 1].iso}`);
+    log(`  ${N(keys.length)} sweep object(s), ${keys[0].iso} .. ${keys[keys.length - 1].iso}`
+      + (skippedKeys ? `  (ignored ${N(skippedKeys)} object(s) from other producers)` : ''));
 
     const urls = new Set();
     for (const k of keys) {
@@ -242,6 +258,7 @@ if (require.main === module) {
     all: ALL,
     sample: ALL ? Infinity : (Number(arg('sample', 2000)) || 2000),
     fix: has('fix'),
+    includeAll: has('include-all'),
   }).then((r) => {
     process.exit(r.stranded && !has('fix') ? 1 : 0);
   }).catch((e) => { console.error('sweep-verify FAILED:', e.message, e.stack); process.exit(2); });
