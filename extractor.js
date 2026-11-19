@@ -497,10 +497,19 @@ const { nameFromPath, pathNameTokens } = require("./name-from-path");
 function nameFromSlug(slug){ return nameFromPath(slug); }
 
 function inferNameFromSlug(slug, genderMap){
-  // The slug is already gated as a person elsewhere (looksLikePersonSlug /
-  // classifyDirectory). genderMap is used ONLY to fill the Gender field later — we do
-  // NOT drop a real name just because it isn't in the census list (e.g. "Sibel").
-  return nameFromSlug(slug);
+  // STRICT: this is the URL-slug path, and a slug is only ever a guess. It is what produced 7.2M
+  // stored contacts carrying no gender, whose commonest "first names" are admin, board, the, our
+  // and meet -- section pages minted as people. nameFromPath now refuses those; its header records
+  // the measured rates (36.0% of such rows refused, 0.0% of real people, on 12,000 live records).
+  //
+  // The original rule still holds where it was right: an unusual name is not a wrong one, so a
+  // two-token slug like "sibel-ozkan" is accepted whether or not the census list has heard of it.
+  // genderMap is consulted ONLY to adjudicate a LONE token, which has no surname beside it.
+  //
+  // Callers that pass a real NAME rather than a slug -- schema.org name, vCard fn, site-api
+  // fullName -- go through nameFromSlug instead and stay loose, because those sources are
+  // authoritative and do not need second-guessing.
+  return nameFromPath(slug, { strict: true, knownFirst: genderMap });
 }
 
 function colLettersToIndex(col){

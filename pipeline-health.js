@@ -22,7 +22,9 @@
  *   OPENSEARCH_ENDPOINT=… node pipeline-health.js --days 3   # a 3-day window
  *   OPENSEARCH_ENDPOINT=… node pipeline-health.js --no-email
  *
- * Env: PIPELINE_HEALTH_MIN_PCT (default 50) — below this the report is sent as a FAILURE.
+ * Env: PIPELINE_HEALTH_MIN_PCT        (default 50) — crawl conversion below this is a FAILURE.
+ *      PIPELINE_HEALTH_MIN_PERSON_PCT (default 25) — share of landed contacts that are actually
+ *                                     PEOPLE; below this is also a FAILURE. See below for why.
  */
 const os = require('./opensearch');
 const ledger = require('./crawl-ledger');
@@ -33,6 +35,17 @@ const has = (f) => process.argv.includes('--' + f);
 const DAYS = Math.max(1, Number(arg('days', '1')) || 1);
 const NO_EMAIL = has('no-email');
 const MIN_PCT = Number(process.env.PIPELINE_HEALTH_MIN_PCT) || 50;
+// Crawling is plumbing; people are the product, and until now nothing measured the difference.
+// On 2026-11-19 this file reported conversion 92.3% and ok:true against a database where 7.2M of
+// 17.4M rows carry no gender -- because they are not people. Sampling them found the commonest
+// "first names" were admin, board, the, our and meet: /team/ and /our-board/ pages minted as
+// contacts. A health check that cannot fail on that is measuring the wrong joint.
+//
+// Gender is the honest proxy for "is a person": it is only ever filled when the first name matched
+// a real given name, so it cannot be satisfied by a section page. The threshold is deliberately
+// low -- this is a collapse detector, not a quality target -- and is meant to be raised once the
+// steady-state figure is known.
+const MIN_PERSON_PCT = Number(process.env.PIPELINE_HEALTH_MIN_PERSON_PCT) || 25;
 const CFG = process.env.CC_CONFIG_INDEX || 'cc_config';
 const STATE_ID = 'pipeline_health';
 const KEEP = 60;
@@ -81,15 +94,37 @@ async function measure(client, { from, to }) {
     aggs: { o: { terms: { field: 'outcome', size: 6 } } } } });
   const mix = ((mixAgg.body || mixAgg).aggregations.o.buckets || []).map((b) => ({ outcome: b.key, count: b.doc_count }));
 
-  // Contacts the monitor actually landed in the window. The end of the chain: everything above is plumbing.
-  let contacts = 0;
+  // Contacts landed in the window, and how many of them are PEOPLE. The end of the chain:
+  // everything above is plumbing.
+  //
+  // This used to filter on source='Sitemap Monitor'. Measured 2026-11-19, that source landed FIVE
+  // rows in ten days while the index took 2,244,203 -- so the one line reporting the end of the
+  // chain was reporting a channel that had stopped running, and read 0 every night without anyone
+  // treating 0 as a problem. Count every source, and break the yield out BY source, because that
+  // is what names the channel doing the diluting (on that date: Public Prospects, 1.55M rows at
+  // 37.8% people, against 89-96% for everything the crawler produces).
+  const hasGender = { bool: { must: [{ exists: { field: 'gender' } }], must_not: [{ term: { gender: '' } }] } };
+  let contacts = 0, people = 0, bySource = [];
   try {
-    contacts = ((await client.count({ index: os.INDEX, body: { query: and(
-      { range: { updated_at: { gte: from, lt: to } } }, { term: { source: 'Sitemap Monitor' } }) } })).body).count;
-  } catch (e) { contacts = -1; }
+    const inWin = { range: { updated_at: { gte: from, lt: to } } };
+    const landed = async (extra) => ((await client.count({ index: os.INDEX,
+      body: { query: and(inWin, ...extra) } })).body).count;
+    contacts = await landed([]);
+    // A gender is only ever written when the first name matched a real given name, so this counts
+    // rows that are a person rather than a page.
+    people = await landed([hasGender]);
+    const a = await client.search({ index: os.INDEX, body: { size: 0, query: inWin,
+      aggs: { s: { terms: { field: 'source', size: 12 }, aggs: { g: { filter: hasGender } } } } } });
+    bySource = ((((a.body || a).aggregations || {}).s || {}).buckets || []).map((b) => ({
+      source: b.key || '(none)', landed: b.doc_count, people: (b.g || {}).doc_count || 0,
+      pct: pct((b.g || {}).doc_count || 0, b.doc_count) }));
+  } catch (e) { contacts = -1; people = -1; }
 
-  return { from, to, discovered, crawled, extracted, stillQueued, staleVerdict, topStuck, mix, contacts,
-    conversion: pct(crawled, discovered), yield: pct(extracted, discovered) };
+  return { from, to, discovered, crawled, extracted, stillQueued, staleVerdict, topStuck, mix,
+    contacts, people, bySource,
+    conversion: pct(crawled, discovered), yield: pct(extracted, discovered),
+    // of what we landed, how much is sellable; and end-to-end, people per URL discovered
+    personPct: pct(people, contacts), personYield: pct(people, discovered) };
 }
 
 function build(m) {
@@ -99,11 +134,20 @@ function build(m) {
   // used. The first version of this check emailed "Pipeline OK — 0% of 0", which is the precise failure
   // this file exists to prevent: a monitor reporting health when it has no evidence of any.
   const noData = m.discovered === 0;
-  const ok = !noData && m.conversion >= MIN_PCT;
+  // Two ways to fail, because there are two ways for this pipeline to be broken: it can stop
+  // crawling, or it can keep crawling and stop producing people. Only the first was ever detected.
+  const crawlOk = m.conversion >= MIN_PCT;
+  // Judged only when something actually landed -- with nothing to measure, this is not a failure.
+  const peopleOk = m.contacts <= 0 || m.personPct >= MIN_PERSON_PCT;
+  const ok = !noData && crawlOk && peopleOk;
   const day = String(m.from).slice(0, 10);
   const subject = noData
     ? `NO DISCOVERIES RECORDED — the sweep logged no BIO URLs for ${day}`
-    : `${ok ? 'Pipeline OK' : 'PIPELINE STALLED'} — ${m.conversion}% of ${N(m.discovered)} discovered BIO URLs were crawled (${day})`;
+    : !crawlOk
+      ? `PIPELINE STALLED — ${m.conversion}% of ${N(m.discovered)} discovered BIO URLs were crawled (${day})`
+      : !peopleOk
+        ? `POOR YIELD — only ${m.personPct}% of ${N(m.contacts)} landed contacts are people (${day})`
+        : `Pipeline OK — ${m.conversion}% crawled, ${N(m.people)} people landed (${day})`;
 
   const rows = [
     ['Discovered (ledger queued_at)', N(m.discovered)],
@@ -111,17 +155,28 @@ function build(m) {
     ['Still only "queued"', N(m.stillQueued)],
     ['Carrying an older verdict (retry churn)', N(m.staleVerdict)],
     ['Yielded a page we extracted', `${N(m.extracted)} (${m.yield}% of discovered)`],
-    ['Contacts landed (Sitemap Monitor)', m.contacts < 0 ? 'n/a' : N(m.contacts)],
+    ['Contacts landed (all sources)', m.contacts < 0 ? 'n/a' : N(m.contacts)],
+    ['...of which are PEOPLE (have a gender)', m.people < 0 ? 'n/a'
+      : `<strong>${N(m.people)}</strong> (${m.personPct}% of landed)`],
   ];
   const banner = noData
     ? `<p style="margin:0 0 16px;padding:10px 14px;background:#fffbeb;border-left:3px solid #d97706;color:#92400e">No BIO URLs were recorded as discovered in this window at all. Either the sweep did not run, or it ran and did not write to the crawl ledger. This is not a pass — there is nothing to measure.</p>`
     : ok
-      ? `<p style="margin:0 0 16px;padding:10px 14px;background:#ecfdf5;border-left:3px solid #059669;color:#065f46">${m.conversion}% of what was discovered got crawled.</p>`
-      : `<p style="margin:0 0 16px;padding:10px 14px;background:#fef2f2;border-left:3px solid #dc2626;color:#991b1b">Only ${m.conversion}% of discovered BIO URLs were crawled (threshold ${MIN_PCT}%). ${N(m.stillQueued)} are still sitting at "queued" — something between discovery and the crawl is not running.</p>`;
+      ? `<p style="margin:0 0 16px;padding:10px 14px;background:#ecfdf5;border-left:3px solid #059669;color:#065f46">${m.conversion}% of what was discovered got crawled, and ${m.personPct}% of what landed is a person.</p>`
+      : !crawlOk
+        ? `<p style="margin:0 0 16px;padding:10px 14px;background:#fef2f2;border-left:3px solid #dc2626;color:#991b1b">Only ${m.conversion}% of discovered BIO URLs were crawled (threshold ${MIN_PCT}%). ${N(m.stillQueued)} are still sitting at "queued" — something between discovery and the crawl is not running.</p>`
+        : `<p style="margin:0 0 16px;padding:10px 14px;background:#fef2f2;border-left:3px solid #dc2626;color:#991b1b">The crawl is working — ${m.conversion}% converted — but only ${m.personPct}% of the ${N(m.contacts)} contacts it landed are people (threshold ${MIN_PERSON_PCT}%). The rest carry no gender, which in practice means a section page was stored as a contact. Crawling harder will not fix this.</p>`;
 
   const stuck = m.topStuck.length ? `<h3 style="font-size:14px;margin:24px 0 8px;color:#111827">Where the uncrawled URLs are</h3>
     <table style="border-collapse:collapse;font-size:13px">${m.topStuck.map((t) => `<tr><td style="padding:4px 16px 4px 0;color:#374151">${t.domain || '(none)'}</td><td style="padding:4px 0;text-align:right;font-variant-numeric:tabular-nums">${N(t.count)}</td></tr>`).join('')}</table>` : '';
   const mixHtml = m.mix.length ? `<p style="font-size:13px;color:#6b7280;margin-top:16px">Outcomes: ${m.mix.map((x) => `${x.outcome} ${N(x.count)}`).join(' · ')}</p>` : '';
+
+  // Which channel is producing people and which is producing rows. Sorted worst-yield first among
+  // the ones big enough to matter, because that is the one to go and look at.
+  const srcRows = (m.bySource || []).filter((x) => x.landed >= 100)
+    .sort((a, b) => a.pct - b.pct);
+  const srcHtml = srcRows.length ? `<h3 style="font-size:14px;margin:24px 0 8px;color:#111827">People per source (worst yield first)</h3>
+    <table style="border-collapse:collapse;font-size:13px">${srcRows.map((x) => `<tr><td style="padding:4px 16px 4px 0;color:#374151">${x.source}</td><td style="padding:4px 16px 4px 0;text-align:right;font-variant-numeric:tabular-nums">${N(x.landed)}</td><td style="padding:4px 0;text-align:right;font-variant-numeric:tabular-nums;color:${x.pct < MIN_PERSON_PCT ? '#b91c1c' : '#065f46'}">${x.pct}%</td></tr>`).join('')}</table>` : '';
 
   const html = `<div style="font-family:Inter,system-ui,Segoe UI,Arial,sans-serif;max-width:620px;margin:0 auto;color:#111827">
     <h2 style="font-size:1.2rem;margin:0 0 4px">BIO-URL pipeline — discovery to crawl</h2>
@@ -130,7 +185,7 @@ function build(m) {
     <table style="border-collapse:collapse;font-size:14px">
       ${rows.map(([k, v]) => `<tr><td style="padding:6px 20px 6px 0;color:#6b7280;white-space:nowrap">${k}</td><td style="padding:6px 0;font-variant-numeric:tabular-nums">${v}</td></tr>`).join('')}
     </table>
-    ${stuck}${mixHtml}
+    ${stuck}${srcHtml}${mixHtml}
     <p style="color:#9ca3af;font-size:12px;margin-top:24px;border-top:1px solid #eee;padding-top:12px">Common Crawler · every stage reports its own success; this reports the joint between them.</p>
   </div>`;
 
