@@ -58,6 +58,19 @@ const { makeDb, FIELDS } = require('./db-pg');
 const os = require('./opensearch');
 const { classifyEmail, cleanEmail } = require('./extractor');
 const { templateFor } = require('./email-pattern');
+// Replays what ensureNameGender will do at index time, so the survey predicts the countable
+// outcome rather than one of its two inputs.
+const { nameFromEmail } = require('./cc-home-enrich');
+const { loadGenderMap } = require('./extractor');
+let _survGmap = null;
+const survGmap = () => (_survGmap || (_survGmap = loadGenderMap(path.join(__dirname, 'names-genders.csv'))));
+// A row is countable only if it ends up with a gender: that is the metric the database is judged
+// on, and an address with no resolvable first name can never reach it.
+function wouldGender(url, email) {
+  const fromUrl = nameFromUrl(url, email);
+  const first = (fromUrl && fromUrl.first) || (nameFromEmail(email) || {}).first || '';
+  return !!(first && survGmap()[String(first).toLowerCase()]);
+}
 
 const argv = process.argv.slice(2);
 const flag = (name, dflt) => {
@@ -85,10 +98,10 @@ const SOURCE_TAG = 'Public Prospects';
 // `fresh` those not already in the Contact Crawler, and `named` the subset carrying a name the
 // email corroborates -- the only ones that can ever gain a gender.
 const COMBOS = [
-  { label: 'current (aligned + professional)', pass: (a, p) => a && p, cands: 0, fresh: 0, named: 0 },
-  { label: '--allow-unaligned',                pass: (a, p) => p,      cands: 0, fresh: 0, named: 0 },
-  { label: '--allow-role',                     pass: (a) => a,         cands: 0, fresh: 0, named: 0 },
-  { label: 'both (all gates lifted)',          pass: () => true,       cands: 0, fresh: 0, named: 0 },
+  { label: 'current (aligned + professional)', pass: (a, p) => a && p, cands: 0, fresh: 0, named: 0, gendered: 0 },
+  { label: '--allow-unaligned',                pass: (a, p) => p,      cands: 0, fresh: 0, named: 0, gendered: 0 },
+  { label: '--allow-role',                     pass: (a) => a,         cands: 0, fresh: 0, named: 0, gendered: 0 },
+  { label: 'both (all gates lifted)',          pass: () => true,       cands: 0, fresh: 0, named: 0, gendered: 0 },
 ];
 
 // Host of a URL, www-stripped, for the alignment test.
@@ -238,10 +251,11 @@ function emptyRecord() {
           // The name is what decides whether a row can ever carry a gender, so it is measured
           // per row rather than assumed.
           const named = !!nameFromUrl(r.url, r.email);
+          const gendered = wouldGender(r.url, r.email);
           for (const combo of COMBOS) {
             if (!combo.pass(r.aligned, r.professional)) continue;
             combo.cands++;
-            if (fresh) { combo.fresh++; if (named) combo.named++; }
+            if (fresh) { combo.fresh++; if (named) combo.named++; if (gendered) combo.gendered++; }
           }
         }
       }
@@ -297,20 +311,21 @@ function emptyRecord() {
   console.log('---------------------------------------------------------------');
   if (SURVEY) {
     console.log(`SURVEY over ${stat.scanned.toLocaleString()} is_bio_url row(s) -- nothing imported\n`);
-    console.log('gate configuration                     passes     net-new       named   named%');
+    console.log('gate configuration                     passes     net-new   url-named    GENDERED  gender%');
     const base = COMBOS[0];
     for (const c of COMBOS) {
-      const pctNamed = c.fresh ? (c.named / c.fresh * 100).toFixed(1) + '%' : '-';
+      const pctG = c.fresh ? (c.gendered / c.fresh * 100).toFixed(1) + '%' : '-';
       console.log('  ' + c.label.padEnd(36)
         + String(c.cands).padStart(8) + String(c.fresh).padStart(12)
-        + String(c.named).padStart(12) + pctNamed.padStart(9));
+        + String(c.named).padStart(12) + String(c.gendered).padStart(12) + pctG.padStart(9));
     }
     console.log('');
+    console.log('  what each lift ADDS over the current configuration:');
     for (const c of COMBOS.slice(1)) {
-      const addFresh = c.fresh - base.fresh, addNamed = c.named - base.named;
-      console.log(`  ${c.label.padEnd(26)} adds ${String(addFresh).padStart(8)} row(s), `
-        + `${String(addNamed).padStart(7)} of them named`
-        + ` (${addFresh ? (addNamed / addFresh * 100).toFixed(1) + '%' : '-'})`);
+      const addFresh = c.fresh - base.fresh, addG = c.gendered - base.gendered;
+      console.log(`  ${c.label.padEnd(26)} +${String(addFresh).padStart(8)} row(s), `
+        + `+${String(addG).padStart(6)} with a gender`
+        + ` (${addFresh ? (addG / addFresh * 100).toFixed(1) + '%' : '-'} of what it adds)`);
     }
     console.log(`\nresume with --after ${after}`);
     await pp.end();
