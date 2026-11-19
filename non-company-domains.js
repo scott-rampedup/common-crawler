@@ -45,6 +45,9 @@
 const FREEMAIL_FAMILIES = new Set([
   'gmail', 'googlemail', 'yahoo', 'myyahoo', 'ymail', 'hotmail', 'outlook', 'live', 'windowslive',
   'msn', 'aol', 'icloud', 'proton', 'protonmail',
+  // gmx was enumerated host-by-host until the post-fix audit found gmx.fr still being filed as an
+  // employer. It is a family like the rest.
+  'gmx',
   // Typo-squats of the above, which are mailboxes in practice and never employers.
   'gamil', 'gmai', 'gmil', 'gnail', 'gmial', 'gmaill', 'gamail', 'hotmai', 'hotmal', 'yahooo', 'yaho',
   'outlok', 'getimel',
@@ -105,6 +108,10 @@ const FREEMAIL_HOSTS = new Set([
   'cogeco.ca',
   // Africa
   'mweb.co.za', 'telkomsa.net', 'vodamail.co.za', 'webmail.co.za',
+  // Ireland / Israel, found by the audit that ran after the first fix.
+  'eircom.net', 'iol.ie', 'indigo.ie',
+  '012.net.il', 'netvision.net.il', 'bezeqint.net', 'zahav.net.il',
+  'com.com',                                               // a parked junk host, never an employer
 ]);
 
 // Social profiles, video, link-in-bio, directories, lead-gen scrapers, shared site builders and
