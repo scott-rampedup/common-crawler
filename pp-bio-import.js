@@ -40,6 +40,16 @@
 //   node pp-bio-import.js --limit 0 --write            # the whole qualifying set
 //   node pp-bio-import.js --limit 20000 --urls out.txt # also write the crawlable URL list
 //
+// LIFTING THE GATES. The two quality gates above can each be switched off:
+//   --allow-unaligned   keep addresses whose bio URL is NOT on the address's own domain
+//   --allow-role        keep role and freemail addresses, not just Professional ones
+//   --survey            measure what each combination would yield, import nothing
+//
+// Run --survey first. The gates drop 16.5M candidates to 1.7M, but the rows they drop are also
+// the rows least likely to carry a NAME, and an address with no name can never carry a gender --
+// so lifting a gate can add volume while adding nothing countable. --survey prints both numbers
+// per combination so the trade is visible before several million rows are written.
+//
 // Resumable: --after <email> continues from where a previous run stopped (keyset on email_norm).
 const fs = require('fs');
 const path = require('path');
@@ -62,9 +72,24 @@ const URLS_OUT = flag('urls', '');
 // differ still updates, while one that lost a field is refused -- which is the right asymmetry.
 const REFRESH = !!flag('refresh', false);
 const BATCH = Math.max(100, Number(flag('batch', 2000)));
+// Gate lifts. Each drops a filter that exists for a stated reason (see the header traps), so both
+// default to OFF and the survey below is the way to decide whether the extra rows are worth it.
+const ALLOW_UNALIGNED = !!flag('allow-unaligned', false);
+const ALLOW_ROLE = !!flag('allow-role', false);
+const SURVEY = !!flag('survey', false);
 let after = String(flag('after', '') || '');
 
 const SOURCE_TAG = 'Public Prospects';
+
+// The four gate configurations --survey measures. `cands` counts rows that pass the gates,
+// `fresh` those not already in the Contact Crawler, and `named` the subset carrying a name the
+// email corroborates -- the only ones that can ever gain a gender.
+const COMBOS = [
+  { label: 'current (aligned + professional)', pass: (a, p) => a && p, cands: 0, fresh: 0, named: 0 },
+  { label: '--allow-unaligned',                pass: (a, p) => p,      cands: 0, fresh: 0, named: 0 },
+  { label: '--allow-role',                     pass: (a) => a,         cands: 0, fresh: 0, named: 0 },
+  { label: 'both (all gates lifted)',          pass: () => true,       cands: 0, fresh: 0, named: 0 },
+];
 
 // Host of a URL, www-stripped, for the alignment test.
 function hostOf(u) {
@@ -187,15 +212,40 @@ function emptyRecord() {
 
     // Alignment and our own classifier, both before touching the Contact Crawler.
     const cands = [];
+    const surveyRows = [];
     for (const row of q.rows) {
       const email = cleanEmail(row.email_norm).toLowerCase();
       // Counted, not silently skipped: PP carries addresses with ORCIDs and UUIDs welded to the
       // local part, and a funnel whose numbers do not add up hides how many.
       if (!email || !row.page_url) { stat.malformed++; continue; }
-      if (!alignedToEmail(row.page_url, email)) { stat.notAligned++; continue; }
-      if (/\/(bio|profil)[a-z0-9]/i.test(row.page_url)) { stat.notAligned++; continue; }
-      if (classifyEmail(email) !== 'Professional') { stat.roleOrPersonal++; continue; }
-      cands.push({ email, url: row.page_url, pid: row.path_id });
+      // A /bioXXX word-form is not a bio path; it is counted with the alignment failures because
+      // it is the same kind of evidence failure.
+      const aligned = alignedToEmail(row.page_url, email)
+        && !/\/(bio|profil)[a-z0-9]/i.test(row.page_url);
+      const professional = classifyEmail(email) === 'Professional';
+      if (SURVEY) { surveyRows.push({ email, url: row.page_url, aligned, professional }); continue; }
+      if (!aligned && !ALLOW_UNALIGNED) { stat.notAligned++; continue; }
+      if (!professional && !ALLOW_ROLE) { stat.roleOrPersonal++; continue; }
+      cands.push({ email, url: row.page_url, pid: row.path_id, professional });
+    }
+
+    // Survey: tally every gate combination over the same rows, then move on without importing.
+    if (SURVEY) {
+      if (surveyRows.length) {
+        const held = await heldEmails(surveyRows.map((r) => r.email));
+        for (const r of surveyRows) {
+          const fresh = !held.has(r.email);
+          // The name is what decides whether a row can ever carry a gender, so it is measured
+          // per row rather than assumed.
+          const named = !!nameFromUrl(r.url, r.email);
+          for (const combo of COMBOS) {
+            if (!combo.pass(r.aligned, r.professional)) continue;
+            combo.cands++;
+            if (fresh) { combo.fresh++; if (named) combo.named++; }
+          }
+        }
+      }
+      continue;
     }
     if (!cands.length) continue;
 
@@ -219,7 +269,9 @@ function emptyRecord() {
       rec['Directory'] = c.pid || '';
       rec['Last Path'] = lastPath(c.url);
       rec['Email Address'] = c.email;
-      rec['Email Type'] = 'Professional';     // OBSERVED on the company's own site -- never modelled
+      // OBSERVED on the company's own site -- never modelled. With --allow-role the set is no
+      // longer all Professional, and hardcoding it would mislabel every role address it let in.
+      rec['Email Type'] = c.professional ? 'Professional' : classifyEmail(c.email);
       const nm = nameFromUrl(c.url, c.email);
       if (nm) { rec['First'] = nm.first; rec['Last'] = nm.last; stat.named++; }
       // Gender deliberately left blank: the lexicon fills it downstream, and only when blank.
@@ -243,6 +295,28 @@ function emptyRecord() {
   if (urlStream) await new Promise((r) => urlStream.end(r));
   console.log('');
   console.log('---------------------------------------------------------------');
+  if (SURVEY) {
+    console.log(`SURVEY over ${stat.scanned.toLocaleString()} is_bio_url row(s) -- nothing imported\n`);
+    console.log('gate configuration                     passes     net-new       named   named%');
+    const base = COMBOS[0];
+    for (const c of COMBOS) {
+      const pctNamed = c.fresh ? (c.named / c.fresh * 100).toFixed(1) + '%' : '-';
+      console.log('  ' + c.label.padEnd(36)
+        + String(c.cands).padStart(8) + String(c.fresh).padStart(12)
+        + String(c.named).padStart(12) + pctNamed.padStart(9));
+    }
+    console.log('');
+    for (const c of COMBOS.slice(1)) {
+      const addFresh = c.fresh - base.fresh, addNamed = c.named - base.named;
+      console.log(`  ${c.label.padEnd(26)} adds ${String(addFresh).padStart(8)} row(s), `
+        + `${String(addNamed).padStart(7)} of them named`
+        + ` (${addFresh ? (addNamed / addFresh * 100).toFixed(1) + '%' : '-'})`);
+    }
+    console.log(`\nresume with --after ${after}`);
+    await pp.end();
+    if (db.close) await db.close();
+    return;
+  }
   console.log(`scanned is_bio_url rows      ${stat.scanned}`);
   console.log(`  dropped: malformed address  ${stat.malformed}`);
   console.log(`  dropped: not domain-aligned ${stat.notAligned}`);
