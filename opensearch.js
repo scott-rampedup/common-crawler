@@ -15,6 +15,8 @@
 const { Client } = require('@opensearch-project/opensearch');
 const { AwsSigv4Signer } = require('@opensearch-project/opensearch/aws');
 const { defaultProvider } = require('@aws-sdk/credential-provider-node');
+// A leaf module on purpose: companies.js requires THIS file, so the shared host list cannot live there.
+const { employerDomainFor, normHost } = require('./non-company-domains');
 
 const INDEX = process.env.OPENSEARCH_INDEX || 'contacts';
 const REGION = process.env.AWS_REGION || 'us-east-1';
@@ -179,11 +181,20 @@ function ensureNameGender(doc) {
 // Map a Postgres contacts row (snake_case columns) to an OpenSearch document.
 function rowToDoc(r) {
   const first = r.first || '', last = r.last || '';
+  const email = r.email || r.email_address || '';
+  // A platform that merely hosted the bio page is not an employer, so the host is rejected unless the
+  // person's own mailbox is there. `company` doubles as a placeholder for the domain until the
+  // company-name waterfall fills in a real registered name: clear the placeholder along with the
+  // domain, but never a genuine name that happens to sit on a rejected host.
+  const rawDomain = r.domain || '';
+  const domain = employerDomainFor(rawDomain, email);
+  let company = r.company || rawDomain || '';
+  if (!domain && normHost(company) === normHost(rawDomain)) company = '';
   return ensureNameGender({
-    email: r.email || r.email_address || '',
+    email,
     first, last, name: `${first} ${last}`.trim(),
     title: r.title || '', position: r.position || '',
-    company: r.company || r.domain || '', domain: r.domain || '',
+    company, domain,
     description: r.description || '',
     path_id: r.path_id || '', last_path: r.last_path || '',
     email_type: r.email_type || '', gender: r.gender || '',
@@ -489,8 +500,10 @@ function recordToDoc(rec, updatedAt) {
   for (const f in FIELD_TO_DOC) doc[FIELD_TO_DOC[f]] = rec[f] || '';
   doc.linkedin_url = cleanContactLinkedin(doc.linkedin_url);   // /in only — no company pages / concatenated junk
   doc.name = `${first} ${last}`.trim();
-  doc.domain = rec['Domain'] || '';
-  doc.company = rec['Domain'] || doc.company || '';
+  // Same employer-domain rule as rowToDoc, so a UI edit cannot put a hosting platform back.
+  const rawDomain = rec['Domain'] || '';
+  doc.domain = employerDomainFor(rawDomain, doc.email);
+  doc.company = doc.domain || (normHost(doc.company) === normHost(rawDomain) ? '' : doc.company || '');
   doc.score = recordScore(rec);
   doc.new_hire = rec['Source'] === 'Sitemap Monitor';   // drives the default "new hires first" sort
   doc.updated_at = updatedAt || null;
