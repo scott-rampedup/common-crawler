@@ -3011,6 +3011,33 @@ const server = http.createServer(async (req, res) => {
         }
       } catch (e) { /* pre-priority image -> omit rather than invent a split */ }
 
+      // Work PARKED in jobs the crawl never finished.
+      //
+      // Every figure above measures the queue -- S3 objects, crawl_queue rows, the live-crawl miss
+      // list. None of them can see a Data Importer job that died mid-run, because an interrupted job
+      // keeps its remaining URLs in its own file and never hands them to the queue at all. So this
+      // panel showed four zeros and "Queue is empty - everything discovered has been extracted" while
+      // 373 interrupted jobs held 172,031 uncrawled URLs: the exact false reassurance it was built to
+      // prevent, in the one stage it could not see. Parked work is work left to do, so it is counted
+      // here, and it is counted SEPARATELY from `urls` because those URLs are not queued -- saying
+      // they were would trade one wrong number for another.
+      //
+      // Jobs live in memory on this process, so this costs a map walk and no I/O.
+      let parkedJobs = 0, parkedUrls = 0, parkedLists = 0, parkedListUrls = 0, parkedOldest = '';
+      let parkedSpent = 0;
+      const RESUME_MAX = Math.max(1, Number(process.env.JOBS_RESUME_MAX_ATTEMPTS) || 3);
+      for (const j of jobs.values()) {
+        if (j.deleted || j.status !== 'interrupted') continue;
+        const left = (j.domains || []).length - (j.doneDomains || []).length;
+        if (left <= 0) continue;            // finished work still labelled amber is not backlog
+        if (j.bioList) { parkedLists++; parkedListUrls += left; } else { parkedJobs++; parkedUrls += left; }
+        if ((j.resumeAttempts || 0) >= RESUME_MAX) parkedSpent++;
+        const at = String(j.createdAt || '');
+        if (at && (!parkedOldest || at < parkedOldest)) parkedOldest = at;
+      }
+      const parked = parkedUrls + parkedListUrls;
+      const parkedMs = parkedOldest ? Date.parse(parkedOldest) : 0;
+
       // WHY nothing is moving -- not just how much is waiting.
       //
       // Every figure above was already measured per request and already honest, and it STILL left the
@@ -3041,6 +3068,20 @@ const server = http.createServer(async (req, res) => {
           reason: 'crawl_queue is unreachable, so the extract figure is MISSING, not zero' });
       }
 
+      // A parked list states itself the same way a held queue stage does, because it IS a gate: these
+      // URLs are not waiting on capacity, they are waiting on someone deciding to resume them.
+      if (parked > 0) {
+        const auto = /^(1|true|yes|on)$/i.test(process.env.JOBS_AUTO_RESUME || '');
+        gates.push({
+          stage: 'awaitingResume',
+          urls: parked,
+          reason: `${(parkedJobs + parkedLists).toLocaleString()} interrupted job(s) hold URLs the crawl never reached`
+            + (auto ? ', and in-app auto-resume is working them' : ', and in-app auto-resume is OFF')
+            + (parkedSpent ? `; ${parkedSpent.toLocaleString()} have spent their retry budget and need a human` : ''),
+          override: auto ? '' : 'the QA Manager resumes these on its hourly pass; JOBS_AUTO_RESUME=1 adds the in-app supervisor',
+        });
+      }
+
       const waiting = feed.urls + pending + live.urls;
       const oldestIso = [feed.oldest, live.oldest].filter(Boolean).sort()[0] || '';
       const oldestMs = oldestIso ? Date.parse(oldestIso) : 0;
@@ -3050,6 +3091,15 @@ const server = http.createServer(async (req, res) => {
         awaitingResolve: feed.urls,          // queued, bio-feed has not reached it
         awaitingExtract: pending,            // resolved, waiting for a worker
         awaitingLive: live.urls,             // not in the archive, waiting for the live fleet
+        // Parked in interrupted jobs and never handed to the queue. Reported beside the queue stages,
+        // never folded into them: `urls` means queued and must keep meaning that.
+        awaitingResume: parked,
+        parkedJobs, parkedLists, parkedSpent,
+        parkedOldest: parkedOldest || null,
+        parkedAgeHours: parkedMs ? Math.round(((Date.now() - parkedMs) / 3600000) * 10) / 10 : null,
+        // Everything left to do, queue + parked. This is the figure that answers "is there work?", and
+        // the panel's empty state is judged on it rather than on `urls` alone.
+        outstanding: waiting + parked,
         inFlight: claimed,                   // claimed by a worker right now
         gates,                               // why a stage is held, in words, or [] when nothing is held
         pendingByPriority,                   // null on a pre-priority image, not an empty split

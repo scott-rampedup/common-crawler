@@ -49,6 +49,9 @@ const JSON_OUT = has('json');
 const ONLY = arg('only', '');
 const CFG = process.env.CC_CONFIG_INDEX || 'cc_config';
 const STATE_ID = 'qa_manager_state';
+// Our own resume-attempt budget, kept apart from the job's resumeAttempts (which only the in-app
+// supervisor writes). See gated_backlog for why reading that field instead would never expire.
+const RESUME_LEDGER = 'qa_resume_ledger';
 const LEDGER = process.env.CRAWL_LEDGER_INDEX || 'crawl_log';
 const REGION = process.env.AWS_REGION || 'us-east-1';
 const BUCKET = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${REGION}`;
@@ -223,6 +226,201 @@ const CHECKS = [
         const r = await verify({ since, sample: Number(process.env.QA_SWEEP_SAMPLE) || 1500, fix: true, log: () => {} });
         return { detail: r.fixed ? `indexed ${N(r.fixed)} stranded contact(s)` : 'nothing stranded to index' };
       } catch (e) { return { detail: 'sweep-verify --fix failed: ' + e.message }; }
+    },
+  },
+
+  {
+    id: 'gated_backlog',
+    what: 'work parked behind an off-by-default gate is being worked through',
+    // THE BLIND SPOT THIS CLOSES. Every check above watches the QUEUE -- S3 objects, crawl_queue rows,
+    // the feed cursor -- and a Data Importer job that dies mid-run never touches any of them: its
+    // remaining URLs stay in its own file on the app's volume. On 2026-11-19 that was 373 interrupted
+    // jobs holding 172,031 uncrawled URLs, with the Data Importer showing four zeros. Nothing was
+    // broken and nothing was going to move them: in-app auto-resume is opt-in, JOBS_AUTO_RESUME was
+    // unset, and all 373 had resumeAttempts 0 -- so nothing had ever tried, and no check could see it.
+    //
+    // WHAT THE PILE IS WORTH, measured rather than assumed. Sampling 2,000 reached and 2,000 unreached
+    // URLs from those same jobs: 35.6% of reached pages have a contact, against 27.4% of unreached ones
+    // (the rest arrive by other paths). So the 172,031 are worth roughly 9,000-19,000 contact-bearing
+    // pages -- real, and an order of magnitude below the raw figure. Both numbers are reported; neither
+    // is allowed to stand in for the other.
+    //
+    // WHAT IT WILL NOT DO. Resuming a job is ordinary, idempotent operation, so it does that. The other
+    // gated backlogs -- the queue stages held by SCHED_BIO_FEED / SCHED_BIO_LIVE being 0 -- are NAMED
+    // here so one report covers every gated pile, but they are not touched: /api/backlog/drain is
+    // admin-only and LOADER_TOKEN is analyst-level, and switching a scheduler job on is a human
+    // decision either way (see the header). Reporting them with the evidence is the part that was
+    // missing; acting on them is not this process's call.
+    fixEveryMs: Number(process.env.QA_RESUME_EVERY_MS) || 3600000,
+    async measure(ctx, prev) {
+      let all, parked, backlog;
+      try {
+        ({ all, parked } = await ctx.parkedJobs());
+        backlog = await ctx.app('/api/backlog');
+      } catch (e) {
+        return { ok: false, severity: 'fail', detail: 'cannot reach the app API: ' + e.message };
+      }
+      const MAX = Number(process.env.QA_RESUME_MAX_ATTEMPTS) || 3;
+      // The budget is counted HERE, not read off the job.
+      //
+      // resumeAttempts is incremented by the in-app supervisor before it calls resumeJob; the HTTP
+      // route this check uses calls resumeJob directly and never touches it. Trusting that field would
+      // have meant a budget that never advances -- the same job resumed every hour forever, which is
+      // precisely the stampede the budget exists to stop -- and a check that reports "not one has ever
+      // been resumed" while it is itself resuming them. Keeping our own ledger also keeps the two
+      // supervisors' budgets separate, which is what they should be.
+      const ledger = (await ctx.getCfg(RESUME_LEDGER)) || { tries: {} };
+      const triesOf = (j) => Math.max(j.attempts || 0, Number((ledger.tries || {})[j.id]) || 0);
+      const urls = parked.reduce((n, j) => n + j.left, 0);
+      const spent = parked.filter((j) => triesOf(j) >= MAX).length;
+      const tried = parked.filter((j) => triesOf(j) > 0).length;
+      const lists = parked.filter((j) => j.bioList).length;
+      // A job we resumed is 'running', so it has left the parked list entirely. Without this the
+      // re-measure after a successful fix reads as though nothing is working the pile.
+      const working = all.filter((j) => j.status === 'running').length;
+      // Queue stages a flag is holding: not a fault, and not ours to switch on.
+      const held = (backlog.gates || []).filter((g) => g.stage !== 'awaitingResume');
+      const before = ((prev || {}).metrics || {}).parkedUrls;
+      const moved = (before == null) ? null : before - urls;
+      const metrics = {
+        parkedJobs: parked.length, parkedUrls: urls, parkedLists: lists,
+        attempted: tried, exhausted: spent, running: working, movedSinceLast: moved,
+        // The same 8.1-point control applied to today's pile, so the report carries the figure that
+        // actually matters alongside the one that looks biggest.
+        estContactPages: Math.round(urls * 0.081),
+        heldStages: held.map((g) => g.stage),
+      };
+      if (!parked.length) {
+        return {
+          ok: !held.length, severity: 'warn', metrics,
+          detail: held.length
+            ? `nothing parked, but ${held.length} queue stage(s) held: ${held.map((g) => `${g.stage} (${g.reason})`).join('; ')}`
+            : 'nothing parked, nothing held',
+        };
+      }
+      const base = `${N(urls)} URL(s) parked in ${N(parked.length)} interrupted job(s)`
+        + (lists ? ` (${N(lists)} pushed list(s))` : '')
+        + `, ~${N(metrics.estContactPages)} of them likely to carry a contact`;
+      // Red ONLY when nothing is working the pile. A backlog being worked down, or one whose jobs have
+      // all spent their budget, is a state to report -- not a failure to raise every hour, which is
+      // how a check stops being read.
+      if (!tried && !spent && !working) {
+        return { ok: false, severity: 'fail', metrics,
+          detail: `${base}, and not one has ever been resumed — nothing is working them` };
+      }
+      if (spent === parked.length) {
+        return { ok: false, severity: 'warn', metrics,
+          detail: `${base}; all ${N(spent)} have spent their ${MAX}-attempt budget and need a human` };
+      }
+      const progress = moved == null ? 'first pass'
+        : moved > 0 ? `down ${N(moved)} since the last pass`
+        : moved < 0 ? `up ${N(-moved)} since the last pass (new interruptions)`
+        : 'unchanged since the last pass';
+      return { ok: true, metrics,
+        detail: `${base}; ${N(working)} crawling now, ${N(tried)} attempted, ${N(spent)} out of budget, ${progress}`
+          + (held.length ? `; also held: ${held.map((g) => g.stage).join(', ')}` : '') };
+    },
+    async fix(ctx) {
+      // Budgeted exactly like the in-app supervisor, and for the same reason: an earlier version
+      // resumed every interrupted job on every boot, 1,001 of them saturated the 48 global crawl slots,
+      // none finished, and the next restart resumed the same pile. Two at a time, three attempts that
+      // recover nothing and the job is left for a human.
+      const MAX = Number(process.env.QA_RESUME_MAX_ATTEMPTS) || 3;
+      const BATCH = Math.max(1, Number(process.env.QA_RESUME_BATCH) || 2);
+      const { all, parked } = await ctx.parkedJobs();
+      const running = all.filter((j) => j.status === 'running').length;
+      const slots = Math.max(0, BATCH - running);
+      if (!slots) return { detail: `${N(running)} job(s) already running — left the crawl slots alone` };
+      const ledger = (await ctx.getCfg(RESUME_LEDGER)) || { tries: {} };
+      const tries = { ...(ledger.tries || {}) };
+      const triesOf = (j) => Math.max(j.attempts || 0, Number(tries[j.id]) || 0);
+      const queue = parked.filter((j) => triesOf(j) < MAX).slice(0, slots);   // biggest backlog first
+      if (!queue.length) return { detail: 'every parked job has spent its retry budget — that needs a human, not another attempt' };
+      const resumed = [];
+      for (const j of queue) {
+        try {
+          await ctx.app(`/api/jobs/${encodeURIComponent(j.id)}/resume`, { method: 'POST' });
+          tries[j.id] = triesOf(j) + 1;                 // spend the budget whether or not it recovers
+          resumed.push(j);
+        } catch (e) { /* one job refusing to resume must not stop the rest */ }
+      }
+      // Keep the ledger to jobs that still exist, so it cannot grow without bound as jobs are pruned.
+      const live = new Set(all.map((j) => j.id));
+      for (const id of Object.keys(tries)) if (!live.has(id)) delete tries[id];
+      try { await ctx.osc.index({ index: CFG, id: RESUME_LEDGER, refresh: true, body: { tries, updatedAt: new Date().toISOString() } }); }
+      catch (e) { /* a lost ledger write costs a repeated attempt, not correctness */ }
+      return { detail: resumed.length
+        ? `resumed ${N(resumed.length)} job(s) holding ${N(resumed.reduce((n, j) => n + j.left, 0))} URL(s): ${resumed.map((j) => j.id).join(', ')}`
+        : 'no job accepted a resume' };
+    },
+  },
+
+  {
+    id: 'gated_delivered',
+    what: 'work recovered from a parked list reaches the Contact Crawler',
+    // gated_backlog says the pile is being worked. That is not the same as the work arriving, and the
+    // two come apart in two specific ways this check exists to catch.
+    //
+    // First, a resume that crawls NOTHING. The job's status stays 'interrupted' either way, so from the
+    // outside a resume that recovered 4,000 URLs and one that recovered zero look identical -- the
+    // second just quietly burns an attempt until the budget is gone and the job is parked for good.
+    //
+    // Second, records that never left the job file. A crawl can finish a URL, extract a person, and
+    // still leave them unsearchable if the merge into the Master DB never ran: that is how 7,671
+    // records once sat unreachable while the Data Importer showed the job as finished work.
+    //
+    // The Postgres-to-index half of delivery is NOT repeated here -- contacts_searchable and
+    // os_sync_lag already own it, and a second copy of that walk is a second thing to keep honest.
+    async measure(ctx, prev) {
+      let all, parked;
+      try { ({ all, parked } = await ctx.parkedJobs()); }
+      catch (e) { return { ok: false, severity: 'fail', detail: 'cannot reach the app API: ' + e.message }; }
+
+      const holding = all.filter((j) => (Number(j.unmerged) || 0) > 0)
+        .map((j) => ({ id: j.id, unmerged: Number(j.unmerged) || 0 }));
+      const unmerged = holding.reduce((n, j) => n + j.unmerged, 0);
+
+      // Did the jobs that were resumed actually move? Judged against this check's own last snapshot,
+      // so it needs nothing from gated_backlog and the two stay independent.
+      const was = ((prev || {}).metrics || {}).watched || {};
+      const stalled = [], advanced = [];
+      for (const j of parked) {
+        if (!j.attempts || was[j.id] == null) continue;
+        (j.done > was[j.id] ? advanced : stalled).push({ id: j.id, by: j.done - was[j.id] });
+      }
+      const watched = {};
+      for (const j of parked.filter((x) => x.attempts > 0).slice(0, 40)) watched[j.id] = j.done;
+
+      const metrics = { unmergedRecords: unmerged, jobsHoldingRecords: holding.length,
+                        advanced: advanced.length, stalled: stalled.length, watched };
+
+      if (unmerged > 0) {
+        return { ok: false, severity: 'fail', metrics,
+          detail: `${N(unmerged)} record(s) in ${N(holding.length)} job(s) never reached the Master DB, so nobody can search them` };
+      }
+      if (stalled.length && !advanced.length) {
+        return { ok: false, severity: 'fail', metrics,
+          detail: `${N(stalled.length)} resumed job(s) crawled nothing since the last pass (${stalled.slice(0, 3).map((s) => s.id).join(', ')}) — the resume is spending budget without recovering URLs` };
+      }
+      const bits = ['every job\'s records are in the Master DB'];
+      if (advanced.length) bits.push(`${N(advanced.length)} resumed job(s) advanced by ${N(advanced.reduce((n, a) => n + a.by, 0))} URL(s)`);
+      if (stalled.length) bits.push(`${N(stalled.length)} made no progress`);
+      if (!advanced.length && !stalled.length) bits.push('nothing resumed yet to verify');
+      return { ok: true, metrics, detail: bits.join('; ') };
+    },
+    async fix(ctx) {
+      // The same call the operator's Merge button makes. drainJob is email-keyed and score-gated, so
+      // re-merging a job that already merged changes nothing.
+      const { all } = await ctx.parkedJobs();
+      const holding = all.filter((j) => (Number(j.unmerged) || 0) > 0).slice(0, 10);
+      let merged = 0, done = 0;
+      for (const j of holding) {
+        try {
+          const r = await ctx.app(`/api/jobs/${encodeURIComponent(j.id)}/merge`, { method: 'POST', timeoutMs: 180000 });
+          merged += Number(r && r.merged) || 0; done++;
+        } catch (e) { /* the re-measure reports what did not clear; don't lose the rest */ }
+      }
+      return { detail: done ? `merged ${N(merged)} record(s) out of ${N(done)} job(s)` : 'nothing was holding unmerged records' };
     },
   },
 
@@ -472,6 +670,49 @@ async function buildCtx() {
     catch (e) { return null; }
   };
 
+  // Talk to the app's API.
+  //
+  // Every other check here reaches a SHARED service -- OpenSearch, Postgres, S3, the Fly API -- and
+  // that is not a style choice: this process runs on its own spawned machine, and the Data Importer's
+  // jobs live in /data/jobs on a volume fly.toml mounts on the `app` process group ONLY. They are
+  // unreadable from here by any means except the app itself. That is the whole reason 373 interrupted
+  // jobs went unnoticed: not a check that passed, but a backlog that no check could physically see.
+  //
+  // LOADER_TOKEN is an app-wide secret and grants ANALYST level (ui-server.js: "token = analyst-level
+  // (jobs); not admin"), which covers reading jobs, resuming them and merging them. It does NOT cover
+  // /api/backlog/drain, which is admin-only -- see gated_backlog for what that means in practice.
+  const APP = String(process.env.APP_URL || process.env.COMMON_CRAWLER_URL || 'https://common-crawler.fly.dev').replace(/\/+$/, '');
+  ctx.appBase = APP;
+  ctx.app = async (p, { method = 'GET', body = null, timeoutMs = 60000 } = {}) => {
+    const token = process.env.LOADER_TOKEN || '';
+    if (!token) throw new Error('LOADER_TOKEN is not set on this machine, so the app API is unreachable');
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const r = await fetch(APP + p, {
+        method, signal: ac.signal,
+        headers: { 'x-loader-token': token, ...(body ? { 'content-type': 'application/json' } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const text = await r.text();
+      if (!r.ok) throw new Error(`${method} ${p} -> HTTP ${r.status} ${text.slice(0, 160)}`);
+      return text ? JSON.parse(text) : null;
+    } finally { clearTimeout(timer); }
+  };
+  // Interrupted jobs that still hold uncrawled URLs, newest-biggest first. `total`/`done` come from
+  // jobSummary, so a job with a doneOverride (the Google Sheet path) is counted the way the UI counts it.
+  ctx.parkedJobs = async () => {
+    const raw = await ctx.app('/api/jobs');
+    const list = Array.isArray(raw) ? raw : (raw && raw.jobs) || [];
+    const parked = list
+      .filter((j) => j.status === 'interrupted' && (Number(j.total) - Number(j.done)) > 0)
+      .map((j) => ({ id: j.id, name: j.name || '', left: Number(j.total) - Number(j.done),
+                     done: Number(j.done), total: Number(j.total), attempts: Number(j.resumeAttempts) || 0,
+                     unmerged: Number(j.unmerged) || 0, bioList: !!j.bioList }))
+      .sort((a, b) => b.left - a.left);
+    return { all: list, parked };
+  };
+
   // Objects sitting in the queue that the cursor has not passed. Key names carry the URL count, so the
   // size of the backlog is readable without fetching a single object.
   ctx.queueAhead = async (cursor) => {
@@ -696,7 +937,10 @@ async function run() {
   const fixed = results.filter((r) => r.fix && r.fix.verified);
 
   const state = { at: started, finished: new Date().toISOString(), checks: {} };
-  for (const r of results) state.checks[r.id] = { ok: r.ok, detail: r.detail, recurring: r.recurring || 0, lastFixAt: r.lastFixAt || ((prev.checks || {})[r.id] || {}).lastFixAt };
+  // Metrics are kept too, not just the verdict. A check that has to say whether a backlog is SHRINKING
+  // cannot answer that from a boolean, and "is it moving?" is the only honest reading of a pile worked
+  // down over many passes rather than fixed in one.
+  for (const r of results) state.checks[r.id] = { ok: r.ok, detail: r.detail, recurring: r.recurring || 0, metrics: r.metrics || null, lastFixAt: r.lastFixAt || ((prev.checks || {})[r.id] || {}).lastFixAt };
   try { await ctx.osc.index({ index: CFG, id: STATE_ID, refresh: true, body: state }); } catch (e) { /* reporting only */ }
 
   const lines = [];

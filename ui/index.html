@@ -111,6 +111,9 @@
         <div class="backlog-stat"><span class="backlog-num" id="backlogResolve">—</span><span class="backlog-lbl">to resolve</span></div>
         <div class="backlog-stat"><span class="backlog-num" id="backlogExtract">—</span><span class="backlog-lbl">to extract</span></div>
         <div class="backlog-stat"><span class="backlog-num" id="backlogLive">—</span><span class="backlog-lbl">to live-crawl</span></div>
+        <!-- URLs sitting in interrupted jobs. Not a queue stage: these never reached the queue at all,
+             which is why the four stats above read zero while a sixth of a million URLs were parked. -->
+        <div class="backlog-stat"><span class="backlog-num" id="backlogParked">—</span><span class="backlog-lbl">in parked lists</span></div>
         <div class="backlog-stat"><span class="backlog-num" id="backlogAge">—</span><span class="backlog-lbl">oldest</span></div>
         <div class="backlog-stat"><span class="backlog-num" id="backlogState">—</span><span class="backlog-lbl">state</span></div>
       </div>

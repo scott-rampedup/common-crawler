@@ -806,14 +806,20 @@ async function fetchBacklog() {
     num('backlogResolve', Number(b.awaitingResolve || 0).toLocaleString());
     num('backlogExtract', Number(b.awaitingExtract || 0).toLocaleString());
     num('backlogLive', Number(b.awaitingLive || 0).toLocaleString());
+    // The fourth kind of waiting, and the only one that is not a queue stage: URLs in jobs the crawl
+    // never finished. Without it the panel read "nothing to do" with 172,031 URLs parked.
+    num('backlogParked', Number(b.awaitingResume || 0).toLocaleString());
     num('backlogAge', b.oldestAgeHours == null ? '—' : (b.oldestAgeHours < 1 ? '<1h' : `${b.oldestAgeHours}h`));
     num('backlogState', b.inFlight ? `${Number(b.inFlight).toLocaleString()} in flight`
                                    : (b.queueEnabled ? 'idle' : 'off'));
 
     // "Behind" is about AGE, not size: a queue drained every 6h should never hold work older than that.
     panel.classList.toggle('is-draining', !!b.draining);
-    panel.classList.toggle('is-empty', !b.urls);
-    panel.classList.toggle('is-behind', !b.draining && b.oldestAgeHours != null && b.oldestAgeHours > 12);
+    // Empty means NOTHING LEFT TO DO, which is not the same as an empty queue: a parked list is work
+    // too, and calling the panel empty while 373 of them waited is how they stayed invisible.
+    panel.classList.toggle('is-empty', !b.urls && !b.awaitingResume);
+    panel.classList.toggle('is-behind', !b.draining && ((b.oldestAgeHours != null && b.oldestAgeHours > 12)
+      || (b.parkedAgeHours != null && b.parkedAgeHours > 24)));
 
     const note = document.getElementById('backlogNote');
     if (note) {
@@ -825,7 +831,13 @@ async function fetchBacklog() {
         + (g.override ? `; ${g.override}` : '') + '.');
       const bits = [];
       if (b.urls) bits.push(`${Number(b.objects).toLocaleString()} batch${b.objects === 1 ? '' : 'es'}, ${((b.bytes || 0) / 1e6).toFixed(1)}MB, oldest ${escapeHtml(b.oldest || '')}`);
+      // Only claim everything is extracted when that is true of the parked lists as well.
+      else if (b.awaitingResume) bits.push('Queue is empty, but work is parked in interrupted lists — see HELD below.');
       else bits.push('Queue is empty — everything discovered has been extracted.');
+      if (b.awaitingResume) {
+        bits.push(`${Number(b.awaitingResume).toLocaleString()} URL(s) parked in ${Number((b.parkedJobs || 0) + (b.parkedLists || 0)).toLocaleString()} interrupted job(s)`
+          + (b.parkedAgeHours != null ? `, oldest ${b.parkedAgeHours < 24 ? `${b.parkedAgeHours}h` : `${Math.round(b.parkedAgeHours / 24)}d`} old` : ''));
+      }
       // The prefix keeps every object forever (no delete permission), so say plainly how much of the
       // listing is already done. Without this the raw object count reads as an enormous backlog.
       if (b.consumed) bits.push(`${Number(b.consumed).toLocaleString()} of ${Number(b.listed).toLocaleString()} batches already processed (kept in S3, skipped on every run).`);
