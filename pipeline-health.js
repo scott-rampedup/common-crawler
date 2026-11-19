@@ -225,7 +225,10 @@ async function run({ client = null, days = DAYS, email = !NO_EMAIL, from = null,
   const m = await measure(c, { from: new Date(fromD).toISOString(), to: new Date(toD).toISOString() });
   const msg = build(m);
 
-  console.log(`discovered ${N(m.discovered)} · crawled since discovery ${N(m.crawled)} (${m.conversion}%) · still queued ${N(m.stillQueued)} · stale verdict ${N(m.staleVerdict)} · extracted ${N(m.extracted)} · contacts ${m.contacts < 0 ? 'n/a' : N(m.contacts)}`);
+  console.log(`discovered ${N(m.discovered)} · crawled since discovery ${N(m.crawled)} (${m.conversion}%) · still queued ${N(m.stillQueued)} · stale verdict ${N(m.staleVerdict)} · extracted ${N(m.extracted)} · contacts ${m.contacts < 0 ? 'n/a' : N(m.contacts)} · PEOPLE ${m.people < 0 ? 'n/a' : N(m.people)} (${m.personPct}%)`);
+  for (const x of (m.bySource || []).filter((y) => y.landed >= 100).sort((a, b) => a.pct - b.pct)) {
+    console.log(`   source: ${String(x.source).padEnd(26)} ${N(x.landed).padStart(9)}  ${String(x.pct).padStart(5)}% people`);
+  }
   if (m.topStuck.length) for (const t of m.topStuck.slice(0, 5)) console.log(`   stuck: ${String(t.domain || '(none)').padEnd(36)} ${N(t.count)}`);
   await record(c, m, msg.ok);
   if (email) {
