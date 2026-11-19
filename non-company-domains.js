@@ -25,10 +25,86 @@
  */
 
 // Mailbox providers. Employment is never implied by any of these.
+//
+// This list was .com-only until 2026-11-19, when a 50,000-address sample of the contacts holding no
+// employer domain showed the blind spot was most of the problem. EVERY one of the top 25 mailbox hosts
+// was a consumer provider the list did not know: libero.it (1,169), orange.fr (1,057), wp.pl (878),
+// mail.ru, web.de, yahoo.com.tw, hotmail.fr, seznam.cz, abv.bg, naver.com, t-online.de. Inferring an
+// employer from those addresses would have filed a French retiree's Orange mailbox as "employed by
+// Orange" on roughly a fifth of the 1.1M rows.
+//
+// Two mechanisms, because one literal list cannot keep up with ccTLDs:
+//   FREEMAIL_FAMILIES  matches on the FIRST LABEL, so every national variant of a global provider is
+//                      covered by one entry -- yahoo.es, hotmail.fr, outlook.com.br, live.nl, and the
+//                      ones nobody has seen yet. It also catches the typo-squats (gmail.co, gmail.con).
+//   FREEMAIL_HOSTS     the national providers and ISPs, which share no naming pattern.
+//
+// Ambiguous telco/ISP domains (sky.com, telia.com, frontier.com, rogers.com) are deliberately treated
+// as consumer mail even though each is also a real employer. company-name-waterfall.js states the
+// trade: a blank Company is recoverable and a wrong employer is not.
+const FREEMAIL_FAMILIES = new Set([
+  'gmail', 'googlemail', 'yahoo', 'myyahoo', 'ymail', 'hotmail', 'outlook', 'live', 'windowslive',
+  'msn', 'aol', 'icloud', 'proton', 'protonmail',
+  // Typo-squats of the above, which are mailboxes in practice and never employers.
+  'gamil', 'gmai', 'gmil', 'gnail', 'gmial', 'gmaill', 'gamail', 'hotmai', 'hotmal', 'yahooo', 'yaho',
+  'outlok', 'getimel',
+]);
+
 const FREEMAIL_HOSTS = new Set([
-  'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.uk', 'ymail.com', 'hotmail.com', 'hotmail.co.uk',
-  'outlook.com', 'live.com', 'msn.com', 'aol.com', 'icloud.com', 'me.com', 'mac.com', 'mail.com',
-  'gmx.com', 'gmx.de', 'gmx.net', 'proton.me', 'protonmail.com', 'yandex.com', 'zoho.com',
+  // Global providers whose first label is not distinctive enough for a family rule.
+  'me.com', 'mac.com', 'mail.com', 'gmx.com', 'gmx.de', 'gmx.net', 'gmx.at', 'gmx.ch',
+  'yandex.com', 'yandex.ru', 'ya.ru', 'zoho.com', 'zoho.in', 'fastmail.com', 'hey.com', 'tutanota.com',
+  'onmicrosoft.com',                                       // a tenant default, never an employer identity
+  // Italy
+  'libero.it', 'virgilio.it', 'tiscali.it', 'alice.it', 'tin.it', 'email.it', 'fastwebnet.it',
+  // France
+  'orange.fr', 'wanadoo.fr', 'free.fr', 'sfr.fr', 'laposte.net', 'neuf.fr', 'bbox.fr', 'aliceadsl.fr',
+  // Poland
+  'wp.pl', 'o2.pl', 'onet.pl', 'onet.eu', 'op.pl', 'interia.pl', 'interia.eu', 'vp.pl', 'tlen.pl',
+  'poczta.fm', 'gazeta.pl',
+  // Russia / Ukraine / Baltics
+  'mail.ru', 'bk.ru', 'inbox.ru', 'list.ru', 'rambler.ru', 'ukr.net', 'i.ua', 'meta.ua',
+  'inbox.lv', 'inbox.eu',
+  // Germany / Austria / Switzerland
+  'web.de', 't-online.de', 'freenet.de', 'arcor.de', 'online.de', 'mail.de',
+  'bluewin.ch', 'sunrise.ch', 'hispeed.ch',
+  // Czechia / Slovakia / Hungary / Croatia
+  'seznam.cz', 'email.cz', 'centrum.cz', 'atlas.cz', 'post.cz', 'centrum.sk',
+  'freemail.hu', 't-online.hu', 'citromail.hu', 't-com.hr', 'net.hr', 'vip.hr',
+  // Bulgaria / Greece / Romania / Turkey / Israel
+  'abv.bg', 'mail.bg', 'dir.bg', 'otenet.gr', 'in.gr', 'freemail.gr',
+  'mynet.com', 'superonline.com', 'walla.com', 'walla.co.il', 'nana10.co.il',
+  // Iberia / Portugal
+  'sapo.pt', 'iol.pt', 'clix.pt', 'telefonica.net', 'telefonica.es', 'terra.es', 'wanadoo.es',
+  // Benelux / Nordics
+  'telenet.be', 'skynet.be', 'proximus.be', 'voo.be',
+  'ziggo.nl', 'kpnmail.nl', 'home.nl', 'planet.nl', 'hetnet.nl', 'casema.nl',
+  'online.no', 'broadpark.no', 'start.no', 'telia.com', 'telia.se', 'comhem.se', 'spray.se',
+  'mail.dk', 'stofanet.dk',
+  // Latin America
+  'bol.com.br', 'uol.com.br', 'terra.com.br', 'ig.com.br', 'globo.com', 'oi.com.br',
+  'prodigy.net.mx',
+  // Asia-Pacific
+  'naver.com', 'hanmail.net', 'daum.net', 'nate.com',
+  'qq.com', '163.com', '126.com', 'sina.com', 'sohu.com', 'foxmail.com', 'aliyun.com',
+  'rediffmail.com', 'sify.com',
+  'hinet.net', 'pchome.com.tw',
+  'ocn.ne.jp', 'plala.or.jp', 'nifty.com', 'docomo.ne.jp', 'ezweb.ne.jp', 'ybb.ne.jp', 'softbank.jp',
+  'so-net.ne.jp', 'biglobe.ne.jp',
+  'bigpond.com', 'bigpond.net.au', 'optusnet.com.au', 'iinet.net.au', 'tpg.com.au',
+  'xtra.co.nz', 'clear.net.nz',
+  // UK / Ireland
+  'btinternet.com', 'btconnect.com', 'sky.com', 'ntlworld.com', 'virginmedia.com', 'talktalk.net',
+  'blueyonder.co.uk', 'tiscali.co.uk',
+  // North America ISPs
+  'comcast.net', 'bellsouth.net', 'att.net', 'verizon.net', 'sbcglobal.net', 'cox.net', 'charter.net',
+  'earthlink.net', 'juno.com', 'netzero.net', 'roadrunner.com', 'rr.com', 'optonline.net',
+  'windstream.net', 'frontier.com', 'frontiernet.net', 'centurylink.net', 'embarqmail.com', 'aim.com',
+  'netscape.net', 'pacbell.net', 'ameritech.net', 'swbell.net', 'prodigy.net', 'suddenlink.net',
+  'mindspring.com', 'rogers.com', 'videotron.ca', 'telus.net', 'bellnet.ca', 'sympatico.ca', 'shaw.ca',
+  'cogeco.ca',
+  // Africa
+  'mweb.co.za', 'telkomsa.net', 'vodamail.co.za', 'webmail.co.za',
 ]);
 
 // Social profiles, video, link-in-bio, directories, lead-gen scrapers, shared site builders and
@@ -54,11 +130,24 @@ const NON_COMPANY_DOMAINS = new Set([...FREEMAIL_HOSTS, ...PLATFORM_HOSTS]);
 
 const normHost = (d) => String(d || '').trim().toLowerCase().replace(/^www\./, '');
 
-// True when the host can never be any company's primary domain. Unchanged in meaning from the original
-// companies.js helper, so the Google Maps / ATP / Bing loaders behave exactly as before.
+// yahoo.com.tw -> 'yahoo'. The registrable domain is what reaches here, so the first label is the
+// provider's brand rather than a subdomain.
+const firstLabel = (d) => normHost(d).split('.')[0];
+
+// A consumer mailbox, by either mechanism. FREEMAIL_PREFIXES is what makes this hold up against ccTLDs
+// the list has never seen.
+function isFreemail(dom) {
+  const d = normHost(dom);
+  if (!d) return false;
+  return FREEMAIL_HOSTS.has(d) || FREEMAIL_FAMILIES.has(firstLabel(d));
+}
+
+// True when the host can never be any company's primary domain. Same meaning as the original
+// companies.js helper for every host it already knew, so the Google Maps / ATP / Bing loaders behave as
+// before -- it just knows a great many more consumer hosts now.
 function isBadCompanyDomain(dom) {
   const d = normHost(dom);
-  return !d || NON_COMPANY_DOMAINS.has(d);
+  return !d || isFreemail(d) || PLATFORM_HOSTS.has(d);
 }
 
 const hostOfEmail = (email) => normHost(String(email || '').split('@')[1] || '');
@@ -73,14 +162,18 @@ const hostOfEmail = (email) => normHost(String(email || '').split('@')[1] || '')
 function employerDomainFor(dom, email) {
   const d = normHost(dom);
   if (!d) return '';
-  if (FREEMAIL_HOSTS.has(d)) return '';
+  if (isFreemail(d)) return '';
   if (PLATFORM_HOSTS.has(d) && hostOfEmail(email) !== d) return '';
   return d;
 }
 
+// Prefix forms of the family rule, for building an OpenSearch query: a terms query can only list the
+// hosts that are spelled out, so a scan looking for consumer mailboxes needs these as well.
+const FREEMAIL_PREFIXES = [...FREEMAIL_FAMILIES].map((f) => f + '.');
+
 module.exports = {
-  FREEMAIL_HOSTS, PLATFORM_HOSTS, NON_COMPANY_DOMAINS,
-  normHost, hostOfEmail, isBadCompanyDomain, employerDomainFor,
+  FREEMAIL_HOSTS, FREEMAIL_FAMILIES, FREEMAIL_PREFIXES, PLATFORM_HOSTS, NON_COMPANY_DOMAINS,
+  normHost, firstLabel, hostOfEmail, isFreemail, isBadCompanyDomain, employerDomainFor,
 };
 
 if (require.main === module && process.argv.includes('--selftest')) {
@@ -117,6 +210,30 @@ if (require.main === module && process.argv.includes('--selftest')) {
   eq('isBad: linklaters', isBadCompanyDomain('linklaters.com'), false);
   eq('isBad: empty', isBadCompanyDomain(''), true);
   eq('isBad: real company', isBadCompanyDomain('valencianm.gov'), false);
+  // The 2026-11-19 blind spot: every one of these was the head of the domainless population and every
+  // one would have been filed as an employer.
+  for (const d of ['libero.it', 'orange.fr', 'wp.pl', 'mail.ru', 'web.de', 'seznam.cz', 'abv.bg',
+    'naver.com', 't-online.de', 'virgilio.it', 'comcast.net', 'btinternet.com', 'bigpond.com',
+    'prodigy.net.mx', 'telkomsa.net', 'rediffmail.com', 'ocn.ne.jp', 'ziggo.nl', 'onmicrosoft.com']) {
+    eq('consumer host ' + d, employerDomainFor(d, 'someone@' + d), '');
+  }
+  // The family rule has to cover ccTLD variants the list never enumerates.
+  for (const d of ['yahoo.es', 'yahoo.com.tw', 'hotmail.fr', 'outlook.com.br', 'live.nl', 'live.com.mx',
+    'hotmail.co.th', 'outlook.dk', 'myyahoo.com', 'windowslive.com']) {
+    eq('family rule ' + d, employerDomainFor(d, 'someone@' + d), '');
+  }
+  // Typo-squats are mailboxes, never employers.
+  for (const d of ['gamil.com', 'gmai.com', 'gmil.com', 'gmail.co', 'gmail.con', 'getimel.com']) {
+    eq('typo squat ' + d, employerDomainFor(d, 'someone@' + d), '');
+  }
+  // ...and the long tail of genuine employers must still pass. These all appeared in the same sample.
+  for (const d of ['kw.com', 'deped.gov.ph', 'alshaya.com', 'amplifon.com', 'chipotle.com',
+    'statefarm.com', 'allianz.de', 'axa.fr', 'tecnocasa.es', 'estes-express.com', 'exprealty.com']) {
+    eq('real employer ' + d, employerDomainFor(d, 'x@' + d), d);
+  }
+  // A company whose name merely starts with a provider's label must not be swept up by the family rule.
+  eq('livenation is not live.*', employerDomainFor('livenation.com', 'x@livenation.com'), 'livenation.com');
+  eq('aolcorp is not aol.*', employerDomainFor('aolcorp.co.uk', 'x@aolcorp.co.uk'), 'aolcorp.co.uk');
   console.log('non-company-domains selftest: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 }

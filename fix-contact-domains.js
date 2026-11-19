@@ -20,7 +20,7 @@
  *   OPENSEARCH_ENDPOINT=… node fix-contact-domains.js --apply
  */
 const os = require('./opensearch');
-const { NON_COMPANY_DOMAINS, employerDomainFor, normHost } = require('./non-company-domains');
+const { NON_COMPANY_DOMAINS, FREEMAIL_PREFIXES, employerDomainFor, normHost } = require('./non-company-domains');
 
 const APPLY = process.argv.includes('--apply');
 const HOSTS = [...NON_COMPANY_DOMAINS];
@@ -85,8 +85,15 @@ if (require.main === module) (async () => {
 
   // Either field may carry the host. A terms query stays cheap at this width; the per-domain wildcard
   // form blew the search heap when it was tried as one 37-clause bool.
-  const query = { bool: { should: [{ terms: { domain: HOSTS } }, { terms: { 'company.kw': HOSTS } }],
-    minimum_should_match: 1 } };
+  // Either field may carry the host, and the freemail FAMILY rule matches hosts that are nowhere
+  // spelled out (yahoo.es, hotmail.fr, outlook.com.br), so a terms list alone would never find them.
+  // Prefix queries on a keyword field are cheap; it was the LEADING-wildcard form that blew the search
+  // heap when this was first attempted.
+  const should = [{ terms: { domain: HOSTS } }, { terms: { 'company.kw': HOSTS } }];
+  for (const p of FREEMAIL_PREFIXES) {
+    should.push({ prefix: { domain: p } }, { prefix: { 'company.kw': p } });
+  }
+  const query = { bool: { should, minimum_should_match: 1 } };
 
   const total = (await client.count({ index: INDEX, body: { query } })).body.count;
   console.error(`contacts holding a non-company host: ${N(total)} | mode: ${APPLY ? 'APPLY' : 'DRY RUN'}`);
