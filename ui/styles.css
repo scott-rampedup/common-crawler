@@ -670,11 +670,12 @@ td.social-cell { text-align: center; }
 .edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
 .edit-field { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; color: #4b5563; }
 .edit-field.wide { grid-column: 1 / -1; }
-.edit-field input, .edit-field textarea {
+.edit-field input, .edit-field select, .edit-field textarea {
   font-size: 0.9rem; padding: 7px 9px; border: 1px solid #d1d5db; border-radius: 7px;
-  color: #111827; font-family: inherit; resize: vertical;
+  color: #111827; font-family: inherit; resize: vertical; background: #fff;
 }
-.edit-field input:focus, .edit-field textarea:focus { outline: none; border-color: #2563eb; }
+.edit-field select { resize: none; }
+.edit-field input:focus, .edit-field select:focus, .edit-field textarea:focus { outline: none; border-color: #2563eb; }
 
 .ai-status { font-size: 0.95rem; color: #374151; margin: 4px 0 12px; }
 .ai-fail { color: #b91c1c; }
@@ -785,6 +786,42 @@ code {
 .actions .nav-link:hover { background: #1d4ed8; }
 .actions .nav-link.green { background: #16a34a; }
 .actions .nav-link.green:hover { background: #15803d; }
+
+/* FIND CONTACTS: green, and directly under the Paste domains box. Green because it is the one
+   button on this panel that starts work -- the rest clear, refresh or download. */
+.find-contacts {
+  appearance: none;
+  border: none;
+  background: #16a34a;
+  color: #fff;
+  padding: 13px 16px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+}
+.find-contacts:hover { background: #15803d; }
+.find-contacts:focus-visible { outline: 3px solid #86efac; outline-offset: 2px; }
+
+/* Job Type / Job Status filters in the Search jobs header. The global `label` rule stacks its
+   children, which would make these two tall in a row of controls -- put them back on one line. */
+.jobs-filter {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: #6b7280;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.jobs-filter select {
+  width: auto;
+  padding: 7px 10px;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  background: #fff;
+}
 
 /* Action buttons relocated next to Clear domains / FIND CONTACTS */
 .action-buttons {

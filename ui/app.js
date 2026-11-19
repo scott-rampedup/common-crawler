@@ -69,6 +69,7 @@ const state = {
   lastViewedCount: -1,
   sort: { column: null, dir: 1 },   // dir: 1 asc, -1 desc
   jobsCollapsed: true,              // default collapsed; the latest job still shows
+  jobFilter: { type: '', status: '' },   // Search jobs panel: narrow by Job Type / Job Status
   page: 1,
   viewingDb: false,                // true when the table shows the central database
   lastDbCount: -1,
@@ -109,6 +110,8 @@ function initElements() {
   elements.jobsList = document.getElementById('jobsList');
   elements.refreshJobsButton = document.getElementById('refreshJobsButton');
   elements.jobsToggle = document.getElementById('jobsToggle');
+  elements.jobTypeFilter = document.getElementById('jobTypeFilter');
+  elements.jobStatusFilter = document.getElementById('jobStatusFilter');
   elements.viewingIndicator = document.getElementById('viewingIndicator');
   elements.tableScroll = document.getElementById('tableScroll');
   elements.tableScrollTop = document.getElementById('tableScrollTop');
@@ -881,17 +884,72 @@ function shortJobLabel(job) {
   return `${job.total} domain${job.total === 1 ? '' : 's'} · ${when}`;
 }
 
+// The jobs list is the Data Importer's work queue. With several hundred rows in it the only way to
+// answer "what is interrupted?" was to expand everything and scroll, which is why a backlog of 373
+// interrupted jobs went unnoticed for days.
+function visibleJobs() {
+  const { type, status } = state.jobFilter;
+  return state.jobs.filter((j) => (!type || String(j.type || '') === type)
+                               && (!status || String(j.status || '') === status));
+}
+
+// Rebuild both dropdowns from the jobs on hand. Guarded by a signature because renderJobs() runs on
+// every poll, and replacing the options would shut a dropdown the user had just opened.
+function syncJobFilters() {
+  const fill = (sel, key, allLabel) => {
+    if (!sel) return;
+    const counts = new Map();
+    for (const j of state.jobs) {
+      const v = String(j[key] || '').trim();
+      if (v) counts.set(v, (counts.get(v) || 0) + 1);
+    }
+    const chosen = state.jobFilter[key] || '';
+    const sig = JSON.stringify([...counts.entries()].sort()) + '|' + chosen;
+    if (sel.dataset.sig === sig) return;
+    sel.dataset.sig = sig;
+    sel.innerHTML = '';
+    const all = document.createElement('option');
+    all.value = ''; all.textContent = allLabel + ' (' + state.jobs.length.toLocaleString() + ')';
+    sel.appendChild(all);
+    for (const v of [...counts.keys()].sort()) {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = v + ' (' + counts.get(v).toLocaleString() + ')';
+      sel.appendChild(o);
+    }
+    // Keep a chosen value that this refresh found none of, rather than letting the selection fall
+    // back to "all" and silently show every job again.
+    if (chosen && !counts.has(chosen)) {
+      const o = document.createElement('option');
+      o.value = chosen; o.textContent = chosen + ' (0)';
+      sel.appendChild(o);
+    }
+    sel.value = chosen;
+  };
+  fill(elements.jobTypeFilter, 'type', 'All types');
+  fill(elements.jobStatusFilter, 'status', 'All statuses');
+}
+
 function renderJobs() {
   const list = elements.jobsList;
   if (!list) return;
+  syncJobFilters();
   if (!state.jobs.length) {
     list.innerHTML = '<p class="jobs-empty">No jobs yet. Paste domains above and click <strong>FIND CONTACTS</strong>.</p>';
     return;
   }
 
+  const matching = visibleJobs();
+  const filtered = !!(state.jobFilter.type || state.jobFilter.status);
+  if (!matching.length) {
+    list.innerHTML = '<p class="jobs-empty">No jobs match this Type / Status filter.</p>';
+    return;
+  }
+
   list.innerHTML = '';
-  // collapsed view keeps just the latest job (jobs are newest-first); expanded shows all
-  const jobsToShow = state.jobsCollapsed ? state.jobs.slice(0, 1) : state.jobs;
+  // collapsed view keeps just the latest job (jobs are newest-first); expanded shows all.
+  // A filter IS the narrowing, so collapsing its result to one card would hide the answer it was
+  // asked for -- collapsed therefore only applies to the unfiltered list.
+  const jobsToShow = (state.jobsCollapsed && !filtered) ? matching.slice(0, 1) : matching;
   for (const job of jobsToShow) {
     const pct = job.total ? Math.round((job.done / job.total) * 100) : 0;
     const cov = job.coverage || { found: 0, live: 0, empty: 0 };
@@ -1136,10 +1194,10 @@ function renderJobs() {
     list.appendChild(card);
   }
 
-  if (state.jobsCollapsed && state.jobs.length > 1) {
+  if (state.jobsCollapsed && !filtered && matching.length > 1) {
     const note = document.createElement('p');
     note.className = 'jobs-empty jobs-more';
-    note.textContent = `+ ${state.jobs.length - 1} older job${state.jobs.length - 1 === 1 ? '' : 's'} hidden — show all`;
+    note.textContent = `+ ${matching.length - 1} older job${matching.length - 1 === 1 ? '' : 's'} hidden — show all`;
     note.addEventListener('click', () => toggleJobs());
     list.appendChild(note);
   }
@@ -1457,6 +1515,12 @@ function attachEvents() {
   elements.downloadButton.addEventListener('click', () => downloadCSV());
   if (elements.refreshJobsButton) elements.refreshJobsButton.addEventListener('click', () => fetchJobs());
   if (elements.jobsToggle) elements.jobsToggle.addEventListener('click', () => toggleJobs());
+  if (elements.jobTypeFilter) elements.jobTypeFilter.addEventListener('change', () => {
+    state.jobFilter.type = elements.jobTypeFilter.value; renderJobs();
+  });
+  if (elements.jobStatusFilter) elements.jobStatusFilter.addEventListener('change', () => {
+    state.jobFilter.status = elements.jobStatusFilter.value; renderJobs();
+  });
   elements.applyDomainsButton.addEventListener('click', () => searchContacts());
   elements.clearDomainsButton.addEventListener('click', () => clearDomains());
   elements.domainFileInput.addEventListener('change', (event) => handleDomainFileUpload(event));

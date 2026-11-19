@@ -38,16 +38,25 @@ const COLUMNS = [
   { key: '_edit',          label: 'Edit',          type: 'edit',     sortable: false },
 ];
 
+// Email Type and Phone Type are a fixed vocabulary the pipeline writes, not free text:
+// classifyEmail() in extractor.js and email-model.js produce the email types; the NANP block table
+// in wireless-block-classifier.js and intlLineType() produce the phone types. They were open text
+// boxes in the Edit modals, which is how a city name ("Austin") and a lower-case "mobile" ended up
+// stored as phone types on live records.
+const EMAIL_TYPE_OPTIONS = ['Professional', 'Personal', 'Role-Based', 'Modelled'];
+const PHONE_TYPE_OPTIONS = ['Direct', 'Office', 'Mobile', 'Toll Free', 'Unknown'];
+
 // Fields the manual Edit modal lets you change for each selected record.
+// `options` turns a field into a dropdown over that fixed vocabulary.
 const EDIT_FIELDS = [
   { key: 'First',          label: 'First Name' },
   { key: 'Last',           label: 'Last Name' },
   { key: 'Position',       label: 'Position (title)' },
   { key: 'Title',          label: 'Title' },
   { key: 'Email Address',  label: 'Email Address' },
-  { key: 'Email Type',     label: 'Email Type' },
+  { key: 'Email Type',     label: 'Email Type',     options: EMAIL_TYPE_OPTIONS },
   { key: 'Phone',          label: 'Phone' },
-  { key: 'Phone Type',     label: 'Phone Type' },
+  { key: 'Phone Type',     label: 'Phone Type',     options: PHONE_TYPE_OPTIONS },
   { key: 'Phone Location', label: 'Phone Location' },
   { key: 'LinkedIn URL',   label: 'LinkedIn URL' },
   { key: 'Domain',         label: 'Domain' },
@@ -759,6 +768,29 @@ function openModal(title, buildBody, footerButtons) {
   return { overlay, dialog, bodyWrap, foot };
 }
 
+// A fixed-vocabulary <select>. `current` is the value already on the record: when it is not one of
+// the allowed options it is appended as its own option and pre-selected, so opening the modal on a
+// record that holds an odd value never silently rewrites it on save — the editor sees it, flagged,
+// and can choose a real one. Blank is always offered because clearing the field is a valid edit.
+function typeSelect(options, current, blankLabel) {
+  const sel = document.createElement('select');
+  const cur = String(current == null ? '' : current);
+  const blank = document.createElement('option');
+  blank.value = ''; blank.textContent = blankLabel || '— none —';
+  sel.appendChild(blank);
+  for (const v of options) {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = v; sel.appendChild(o);
+  }
+  if (cur && !options.includes(cur)) {
+    const o = document.createElement('option');
+    o.value = cur; o.textContent = cur + '  (current — not a standard type)';
+    sel.appendChild(o);
+  }
+  sel.value = cur;
+  return sel;
+}
+
 // ---- manual edit of the selected records ----
 function openEditModal(recordsArg) {
   const records = (recordsArg && recordsArg.length) ? recordsArg : [...state.selected.values()];
@@ -791,8 +823,9 @@ function openEditModal(recordsArg) {
         span.textContent = f.label;
         let input;
         if (f.key === 'Description') { input = document.createElement('textarea'); input.rows = 2; }
+        else if (f.options) { input = typeSelect(f.options, rec[f.key]); }   // dropdown sets its own value
         else { input = document.createElement('input'); input.type = 'text'; }
-        input.value = rec[f.key] || '';
+        if (!f.options) input.value = rec[f.key] || '';
         wrap.appendChild(span); wrap.appendChild(input);
         grid.appendChild(wrap);
         inputs[f.key] = input;
@@ -852,6 +885,10 @@ function openBulkEditModal() {
     } else if (f === 'Email Pattern') {
       valueInput = document.createElement('select');
       EMAIL_PATTERN_OPTIONS.forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; valueInput.appendChild(o); });
+    } else if (f === 'Email Type') {
+      valueInput = typeSelect(EMAIL_TYPE_OPTIONS, '', '— clear the field —');
+    } else if (f === 'Phone Type') {
+      valueInput = typeSelect(PHONE_TYPE_OPTIONS, '', '— clear the field —');
     } else if (f === 'Description') {
       valueInput = document.createElement('textarea'); valueInput.rows = 3;
       valueInput.placeholder = 'New value (leave blank to clear the field)';
