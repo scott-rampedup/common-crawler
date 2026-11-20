@@ -2,10 +2,18 @@
  * ndjson-partition.js — split a Location ndjson into N parts by a hash of the grouping key, so a phase
  * that groups in memory can be run once per part instead of once over everything.
  *
- * WHY THIS EXISTS. gm-build.js groups Locations by root domain IN MEMORY: it holds every location of
- * every domain at once to resolve the HQ and roll up. That is fine for the 4,510,566 Google Maps rows it
- * carries today. The Overture ingest produces ~26.3M Locations across up to ~13.5M distinct domains
- * (measured on release 2026-11-18.0), which will not fit.
+ * WHY THIS EXISTS -- corrected 2026-11-20 after measuring, because the first version of this comment had
+ * the reason wrong. gm-build.js does NOT group in memory. It writes "domain\tline" to a temp file, shells
+ * out to GNU sort, and streams the sorted file grouping as it goes; only the unique domain list and the
+ * resolved-HQ map are held.
+ *
+ * The real limit is the sort's WORKING DISK. Measured over one real Overture shard (1.48GB in,
+ * 1,429,215 Locations, 788,632 domains): peak disk 4.36GB, about 2.9x the input, because the keyed file
+ * and the sorted file each approach the input's size and coexist. Memory was never the problem -- peak
+ * RSS was 2.20GB for node and 1.61GB for sort.
+ *
+ * So the full release's ~23.7GB of Locations would want ~69GB of working space against 21GB free on the
+ * volume. Partitioning is still required; it is a disk constraint, not a memory one.
  *
  * Partitioning by a HASH OF THE KEY, not by line number, is what makes this safe: every location of a
  * given root domain lands in the same part, so each part can be grouped independently and the result is

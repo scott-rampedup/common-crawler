@@ -436,7 +436,7 @@ async function listShards() {
 // Where a Location's line goes. One plain file by default; with --parts N, N gzipped partition files
 // chosen by the SAME domain hash ndjson-partition uses, so gm-build can be run once per part.
 //
-// MEASURED, not assumed: one shard's output is 1,484MB, so the full 16-shard release is ~23.7GB against
+// MEASURED, not assumed: one shard output is 1,484MB, so the full 16-shard release is ~23.7GB against
 // 21GB free on the volume -- and partitioning afterwards would need that much again. Gzip takes the set
 // to roughly 3GB, and writing the partitions directly means the whole file never exists at all. Disk
 // pressure here is not a cosmetic worry: at 90% the Postgres on this volume goes read-only and the
