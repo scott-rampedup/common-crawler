@@ -32,9 +32,12 @@ const KEY = arg('key', 'root_domain');
 // md5 of the key, low 4 bytes, mod PARTS. Any stable hash does; md5 is here because it is in core and
 // spreads far better than a string-length or first-character split, which would pile every .com domain
 // into one part.
-function partOf(value) {
+// `parts` is explicit so overture-load can share this function without inheriting this script's own
+// --parts flag. It defaults to that flag for the CLI path below.
+function partOf(value, parts = PARTS) {
+  const n = Math.max(1, Number(parts) || 1);
   const h = crypto.createHash('md5').update(String(value || '')).digest();
-  return h.readUInt32BE(0) % PARTS;
+  return h.readUInt32BE(0) % n;
 }
 
 module.exports = { partOf };

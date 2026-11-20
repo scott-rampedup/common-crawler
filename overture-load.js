@@ -35,11 +35,14 @@
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
+const zlib = require('zlib');
 const { spawn } = require('child_process');
 const ex = require('./extractor');
 const naics = require('./naics');
 const psl = require('./psl-suffix');
 const { employerDomainFor, normHost, isFreemail, isBadCompanyDomain } = require('./non-company-domains');
+// Shared with ndjson-partition so the two can never choose different partitions for the same domain.
+const { partOf } = require('./ndjson-partition');
 
 const arg = (f, d) => { const i = process.argv.indexOf('--' + f); return i > -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : d; };
 const has = (f) => process.argv.includes('--' + f);
@@ -50,6 +53,9 @@ const IN = arg('in', '');
 const SHARDS = Number(arg('shards', '0')) || 0;          // 0 = every shard in the release
 const LIMIT = Number(arg('limit', '0')) || 0;
 const MIN_CONF = Number(arg('min-confidence', '0.5'));
+// 0 = one plain ndjson. N = N gzipped partitions, split by the domain hash, for gm-build to take one
+// at a time. See openSinks() for why the full release does not fit on the volume uncompressed.
+const PARTS = Math.max(0, Number(arg('parts', '0')) || 0);
 const DUCKDB = process.env.DUCKDB_BIN || 'duckdb';
 // Scratch for the per-shard extracts. Defaults under DATA_DIR because / is only 7.4GB on the Fly
 // machine while the mounted volume has 23GB, and one shard's JSON runs to roughly a gigabyte.
@@ -427,9 +433,39 @@ async function listShards() {
   return SHARDS ? keys.slice(0, SHARDS) : keys;
 }
 
-async function main() {
+// Where a Location's line goes. One plain file by default; with --parts N, N gzipped partition files
+// chosen by the SAME domain hash ndjson-partition uses, so gm-build can be run once per part.
+//
+// MEASURED, not assumed: one shard's output is 1,484MB, so the full 16-shard release is ~23.7GB against
+// 21GB free on the volume -- and partitioning afterwards would need that much again. Gzip takes the set
+// to roughly 3GB, and writing the partitions directly means the whole file never exists at all. Disk
+// pressure here is not a cosmetic worry: at 90% the Postgres on this volume goes read-only and the
+// ui-server silently falls back to SQLite, which looks like success and loses the work.
+function openSinks() {
   fs.mkdirSync(OUT, { recursive: true });
-  const locOut = fs.createWriteStream(path.join(OUT, 'overture-locations.ndjson'));
+  if (!PARTS) {
+    const s = fs.createWriteStream(path.join(OUT, 'overture-locations.ndjson'));
+    return { write: (line) => s.write(line), close: () => new Promise((r) => s.end(r)), label: 'overture-locations.ndjson' };
+  }
+  const gz = [], raw = [];
+  for (let i = 0; i < PARTS; i++) {
+    const f = fs.createWriteStream(path.join(OUT, `part-${i}.ndjson.gz`));
+    const z = zlib.createGzip();
+    z.pipe(f);
+    gz.push(z); raw.push(f);
+  }
+  return {
+    write: (line) => gz[partOf(JSON.parse(line).root_domain, PARTS)].write(line),
+    close: async () => {
+      await Promise.all(gz.map((z) => new Promise((r) => z.end(r))));
+      await Promise.all(raw.map((f) => new Promise((r) => (f.writableFinished ? r() : f.on('finish', r)))));
+    },
+    label: `${PARTS} gzipped parts`,
+  };
+}
+
+async function main() {
+  const sink = openSinks();
   const bio = new Set();
   let seen = 0, kept = 0, noDomain = 0, bioFound = 0, errored = 0;
   const t0 = Date.now();
@@ -450,7 +486,7 @@ async function main() {
     }
     if (!doc) { noDomain++; return; }
     if (doc.bio_url) { bio.add(doc.bio_url); bioFound++; }
-    locOut.write(JSON.stringify(doc) + '\n');
+    sink.write(JSON.stringify(doc) + '\n');
     kept++;
     if (kept % 100000 === 0) {
       console.error(`  seen ${seen.toLocaleString()} | kept ${kept.toLocaleString()} | bio ${bioFound.toLocaleString()} | ${Math.round(kept / ((Date.now() - t0) / 1000))}/s`);
@@ -483,7 +519,7 @@ async function main() {
     }
   }
 
-  locOut.end();
+  await sink.close();
   fs.writeFileSync(path.join(OUT, 'overture-bio-urls.txt'), [...bio].join('\n') + '\n');
   console.error(`\nDONE in ${Math.round((Date.now() - t0) / 1000)}s`);
   console.error(`  places read        ${seen.toLocaleString()}`);
