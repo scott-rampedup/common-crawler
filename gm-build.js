@@ -192,10 +192,49 @@ function processGroup(domain, locs, hq0) {
   }
 
   // ---- pass 1: collect the unique (already-sorted) domain list ----
-  console.error('collecting domains…');
-  const domainList = [];
-  { let last = null; const rl0 = readline.createInterface({ input: fs.createReadStream(sorted), crlfDelay: Infinity });
-    for await (const line of rl0) { const tab = line.indexOf('\t'); if (tab < 0) continue; const d = line.slice(0, tab); if (d !== last) { domainList.push(d); last = d; } } }
+  // Read the first field of each line as BYTES, not with line.slice(0, tab).
+  //
+  // V8 represents s.slice(a, b) on a string of 13+ chars as a SlicedString: a pointer into the PARENT
+  // string, not a copy. Every domain kept in domainList therefore pinned the entire JSON Location line
+  // it was cut from, so the list was not ~50MB of hostnames but the whole sorted file, one retained line
+  // at a time. Partition 1 of the Overture run died right here -- a Mark-Compact freed 18MB out of
+  // 2400MB on a 2.46GB sorted file, then FATAL heap OOM. buf.toString(enc, start, end) builds a fresh
+  // flat string from the bytes and pins nothing.
+  //
+  // This was never Overture-specific; every gm-build run has paid it in proportion to its input.
+  function uniqueDomainsFromSorted(file) {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const CAP = 1 << 20;
+      const buf = Buffer.allocUnsafe(CAP);
+      const out = [];
+      let last = null, pend = [], inKey = true, read;
+      while ((read = fs.readSync(fd, buf, 0, CAP, null)) > 0) {
+        let i = 0;
+        while (i < read) {
+          if (inKey) {
+            let j = i;
+            while (j < read && buf[j] !== 9 && buf[j] !== 10) j++;
+            if (j < read && buf[j] === 9) {                 // tab: the key is complete
+              let d;
+              if (pend.length) { pend.push(Buffer.from(buf.subarray(i, j))); d = Buffer.concat(pend).toString('utf8'); pend = []; }
+              else d = buf.toString('utf8', i, j);
+              if (d !== last) { out.push(d); last = d; }
+              inKey = false; i = j + 1;
+            } else if (j < read && buf[j] === 10) {          // a line with no tab -- skip it
+              pend = []; i = j + 1;
+            } else { pend.push(Buffer.from(buf.subarray(i, read))); i = read; }   // key spans the read
+          } else {
+            const nl = buf.indexOf(10, i);
+            if (nl === -1) i = read; else { i = nl + 1; inKey = true; }
+          }
+        }
+      }
+      return out;
+    } finally { fs.closeSync(fd); }
+  }
+  console.error('collecting domains...');
+  const domainList = uniqueDomainsFromSorted(sorted);
   const capped = LIMIT_DOMAINS ? domainList.slice(0, LIMIT_DOMAINS) : domainList;
   console.error(`${capped.length.toLocaleString()} unique domains — batch-resolving existing HQs (msearch)…`);
   const hqMap = await batchResolve(capped);
