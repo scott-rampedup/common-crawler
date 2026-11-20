@@ -64,7 +64,17 @@ function dueQuery(cutoffIso) {
       must: [{ exists: { field: 'domain' } }],
       must_not: [{ term: { domain: '' } }],
       should: [
-        { bool: { must_not: [{ exists: { field: 'cc_refreshed_at' } }] } },
+        // "NEVER CC-REFRESHED" IS DECIDED BY cc_crawl, NOT cc_refreshed_at.
+        //
+        // gm-upsert stamps cc_refreshed_at on every Google Maps record it touches, so 1,070,596
+        // companies claim a refresh they never had. Gated on cc_refreshed_at they look permanently
+        // up to date and the monthly pass skips them forever -- the map data would never be enriched.
+        // cc_crawl is written only by enrichFromHtml, so its absence is the honest test.
+        //
+        // Tested by CONTENT, not exists(). cc_crawl is dynamically mapped text+keyword, and exists()
+        // counts an empty string as present; '?*' matches one-or-more characters on the keyword
+        // subfield, so a record holding '' is correctly treated as never refreshed.
+        { bool: { must_not: [{ wildcard: { 'cc_crawl.keyword': '?*' } }] } },
         { range: { cc_refreshed_at: { lt: cutoffIso } } },
       ],
       minimum_should_match: 1,

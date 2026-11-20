@@ -13,6 +13,7 @@
  */
 const cc = require('./cc-engine');
 const ex = require('./extractor');
+const co = require('./companies');     // asList + the MULTI_VALUE contract
 
 // Websites that belong in "Alternate Websites", not the primary Website (seed list; the Admin UI can edit it).
 const ALT_DEFAULT = ['linktr.ee', 'youtube.com', 'crunchbase.com', 'twitter.com', 'x.com', 'yelp.com', 'etsy.com', 'about.me', 'sites.google.com', 'amazon.com/shop', 'wix.com', 'wixsite.com'];
@@ -205,16 +206,46 @@ async function resolveHome(domain, { crawls, demoMode = false } = {}) {
   return null;
 }
 
+// A team LISTING page (/our-team, /staff, /about/leadership) against a person's bio page
+// (/team/john-smith). Both are bio-or-contact URLs; only the first is a team_page. Built from the
+// workbook's 928 People path IDs, normalised on both sides -- pathIdHints returns them raw-lowercased
+// while isKnownDir matches normalised segments, so comparing the two shapes directly finds nothing.
+let PEOPLE_DIRS = null;
+function isTeamListing(url) {
+  if (!PEOPLE_DIRS) PEOPLE_DIRS = new Set([...ex.pathIdHints('People')].map(ex.normalizeForMatching).filter(Boolean));
+  const seg = ex.lastPathSeg(url);
+  return !!seg && ex.isKnownDir(ex.normalizeForMatching(seg), PEOPLE_DIRS);
+}
+
+// founded: schema.org foundingDate on an Organization node. The value arrives as "1998" or
+// "1998-05-01" or occasionally a sentence, so take the first plausible year. The index maps founded as
+// an integer; a bounded range keeps a phone number or a product code out of it.
+function parseFounded(html) {
+  for (const block of jsonLdBlocks(html)) {
+    for (const n of ldNodes(block)) {
+      if (!isOrgNode(n)) continue;
+      const raw = strOf(n.foundingDate) || strOf(n.foundingdate) || '';
+      const m = String(raw).match(/\b(1[5-9]\d{2}|20[0-4]\d)\b/);
+      if (m) return Number(m[1]);
+    }
+  }
+  return 0;
+}
+
 // Parse the home-page HTML into the raw field buckets. altList = the (admin-editable) alternate-website patterns.
 function parseHome(html, domain, altList) {
   const out = { description: '', facebook: '', instagram: '', map: '', logo: '', address: null,
-                linkedin: [], bio: [], alternateWebsites: [], emails: [], phones: [] };
+                linkedin: [], bio: [], alternateWebsites: [], emails: [], phones: [],
+                // added for the monthly refresh: company LinkedIn page (distinct from the personal
+                // /in/ profiles in `linkedin`), team listing page, WhatsApp, founding year.
+                linkedinCompany: [], teamPage: '', whatsapp: '', founded: 0 };
   if (!html) return out;
   out.description = metaDescription(html);
   out.logo = parseLogo(html, domain);
   out.address = parseAddress(html);
+  out.founded = parseFounded(html);
   const selfHost = String(domain || '').toLowerCase().replace(/^www\./, '');
-  const seenLi = new Set(), seenBio = new Set(), seenAlt = new Set();
+  const seenLi = new Set(), seenBio = new Set(), seenAlt = new Set(), seenLiCo = new Set();
   for (const raw of hrefsFromHtml(html)) {
     let href = clean(raw); if (!href) continue;
     if (href.startsWith('//')) href = 'https:' + href;                       // protocol-relative -> https:
@@ -224,13 +255,28 @@ function parseHome(html, domain, altList) {
     if (/(sharer|share\.php|\/sharearticle|\/share\?|\/intent\/|\/dialog\/|\/plugins\/|\/sharing\/|\/tweet\b|addtoany|sharelink|utm_source=share)/i.test(low)) continue;
     if (/^mailto:/i.test(href)) { const e = stripQ(href.replace(/^mailto:/i, '')).trim(); if (e) out.emails.push(e); continue; }
     if (/^tel:/i.test(href)) { out.phones.push(href.replace(/^tel:/i, '').trim()); continue; }
-    const wam = low.match(/wa\.me\/(\+?\d[\d]*)/); if (wam) { out.phones.push(wam[1]); continue; }
+    // The number still goes to phones exactly as before -- for the one- and two-person businesses that
+    // dominate this data the WhatsApp line IS the business line. The URL is now kept as well.
+    const wam = low.match(/wa\.me\/(\+?\d[\d]*)/);
+    if (wam) { out.phones.push(wam[1]); if (!out.whatsapp) out.whatsapp = href; continue; }
     if (!out.facebook && (/(^|\/\/|\.)facebook\.com\//i.test(low) || /(^|\/\/)fb\.com\//i.test(low)) && hasPath(href)) out.facebook = href;
     else if (!out.instagram && /(^|\/\/|\.)instagram\.com\//i.test(low) && hasPath(href)) out.instagram = href;
     else if (!out.map && (/google\.[^/]+\/maps/i.test(low) || /goo\.gl\/maps/i.test(low) || /maps\.app\.goo\.gl/i.test(low) || /bing\.com\/maps/i.test(low))) out.map = href;
     else if (/linkedin\.com\/in\//i.test(low)) { const u = stripQ(href); if (!seenLi.has(u)) { seenLi.add(u); out.linkedin.push(u); } }
+    // the company PAGE, not a person. Previously fell through to the alternate/bio tests and was lost.
+    else if (/linkedin\.com\/company\//i.test(low)) { const u = stripQ(href); if (!seenLiCo.has(u)) { seenLiCo.add(u); out.linkedinCompany.push(u); } }
     else if (isAlternate(href, altList) && !seenAlt.has(low)) { seenAlt.add(low); out.alternateWebsites.push(href); }
-    else if (/^https?:\/\//i.test(href) && ex.getBaseDomain(href) === selfHost && cc.isBioOrContactUrl(href)) { const u = stripQ(href); if (!seenBio.has(u)) { seenBio.add(u); out.bio.push(u); } }
+    else if (/^https?:\/\//i.test(href) && ex.getBaseDomain(href) === selfHost) {
+      const u = stripQ(href);
+      // The team-listing test runs on its OWN, not inside the bio test. isBioOrContactUrl asks whether
+      // a URL is a PERSON's page, and it returns false for /our-team and /staff -- so a team page
+      // gated behind it would never be seen at all. Verified: isBioOrContactUrl('https://a.com/our-team')
+      // is false while isBioOrContactUrl('https://a.com/team/john-smith') is true.
+      if (!out.teamPage && isTeamListing(u)) out.teamPage = u;
+      // bio membership is UNCHANGED -- still exactly what isBioOrContactUrl accepts, so Hop-2 gets the
+      // same targets it did before. Widening the branch only lets the team-page test see these URLs.
+      if (cc.isBioOrContactUrl(href) && !seenBio.has(u)) { seenBio.add(u); out.bio.push(u); }
+    }
   }
   // description-embedded phone/email
   for (const e of (out.description.match(EMAIL_RE) || [])) out.emails.push(e.toLowerCase());
@@ -341,6 +387,17 @@ function reclassifyWebsite(website, altList) {
 
 // Assemble the field updates from an already-fetched home-page HTML (the reusable core — drivable from an
 // Athena-resolved pointer, not just per-company CDX). Returns { updates, people }.
+// Multi-value fields are stored as ARRAYS. asList reads either shape, so a record written before the
+// conversion -- a '; '-joined string -- still comes back as a list. Taken from companies.js rather than
+// defined again here: that module owns the index contract, and a second copy of a normaliser is how the
+// two writers of this field ended up disagreeing in the first place.
+const asList = co.asList;
+
+// Union of what is already on the record and what this crawl found, first-seen order kept.
+function mergeList(existing, found) {
+  return [...new Set([...asList(existing), ...asList(found)])];
+}
+
 function enrichFromHtml(company, html, { genderMap = {}, altList, now, crawl } = {}) {
   const domain = company.domain || '';
   const p = parseHome(html, domain, altList);
@@ -350,17 +407,44 @@ function enrichFromHtml(company, html, { genderMap = {}, altList, now, crawl } =
   const alt = [...new Set([...(p.alternateWebsites || []), ...(rc.altMove ? [rc.altMove] : [])])];
   const phone = (p.phones[0] || '').trim();
   const email = (p.emails[0] || '').toLowerCase();
-  const up = {
-    description: p.description,
-    facebook: p.facebook || rc.facebook || '',
-    instagram: p.instagram || rc.instagram || '',
-    map: p.map || rc.map || '',
-    linkedin_contact: p.linkedin.join('; '),
-    bio_url: p.bio.join('; '),
-    alternate_websites: alt.join('; '),
-    contacts: contacts.join(' '),
-    contacts_count: count,
-  };
+  // THESE NINE USED TO BE WRITTEN UNCONDITIONALLY, so a page that parsed to nothing wrote '' over
+  // whatever was already there. co.update() writes String(v ?? '') with no empty check, so a single
+  // refresh pass would have blanked bio_url on up to 10,963,171 records. A key that has nothing to say
+  // is now left out of the update entirely, which is the only way to say "unchanged".
+  //
+  // The multi-value fields MERGE rather than replace. The home page is one source among several
+  // (Google Maps, Overture, sitemap discovery, Hop-2); a crawl that finds two bio URLs must not
+  // discard the other nine that came from elsewhere.
+  //
+  // ARRAYS, not '; '-joined strings. bio_url averages 3.68 values and reaches 114, and the keyword
+  // subfield carries ignore_above:256 -- so a long joined string is silently dropped from the keyword
+  // index and cannot be matched or aggregated at all. As an array each element is indexed on its own
+  // and stays under the limit. Readers go through asList(), which still accepts the old joined form,
+  // so the migration can run record by record without a flag day.
+  const up = {};
+  const put = (k, v) => { if (v !== '' && v != null) up[k] = v; };
+  put('description', p.description);
+  put('facebook', p.facebook || rc.facebook || '');
+  put('instagram', p.instagram || rc.instagram || '');
+  put('map', p.map || rc.map || '');
+  const bioM = mergeList(company.bio_url, p.bio);
+  const liM = mergeList(company.linkedin_contact, p.linkedin);
+  const altM = mergeList(company.alternate_websites, alt);
+  if (bioM.length) up.bio_url = bioM;
+  if (liM.length) up.linkedin_contact = liM;
+  if (altM.length) up.alternate_websites = altM;
+  // contacts and contacts_count move together or not at all -- a count without its list, or a list
+  // without its count, is worse than leaving both alone.
+  if (contacts.length) { up.contacts = contacts.join(' '); up.contacts_count = count; }
+  // The four fields added for the monthly refresh.
+  const liCo = mergeList(company.linkedin_url, p.linkedinCompany);
+  if (liCo.length) up.linkedin_url = liCo;
+  if (p.founded) up.founded = p.founded;
+  // team_page and whatsapp FILL BLANKS ONLY. Both arrive from Google Maps on records that have them,
+  // and a verified value from that source beats a link scraped off a shared home page. Flip to an
+  // unconditional write if the refresh should be allowed to correct a stale one.
+  if (p.teamPage && !String(company.team_page || '').trim()) up.team_page = p.teamPage;
+  if (p.whatsapp && !String(company.whatsapp || '').trim()) up.whatsapp = p.whatsapp;
   if (p.logo) up.logo = p.logo;
   // Address fields FILL BLANKS ONLY. A Google/Bing Location record already carries a verified address
   // for that specific place; a logo-and-footer address scraped off the shared home page must never
@@ -397,9 +481,10 @@ function reclassifyOnly(company, altList) {
   if (rc.facebook && !String(company.facebook || '').trim()) updates.facebook = rc.facebook;
   if (rc.instagram && !String(company.instagram || '').trim()) updates.instagram = rc.instagram;
   if (rc.map && !String(company.map || '').trim()) updates.map = rc.map;
+  // array, same as enrichFromHtml writes -- these two paths must not disagree about the shape
   if (rc.altMove) {
-    const cur = String(company.alternate_websites || '').split(/[\s;]+/).filter(Boolean);
-    updates.alternate_websites = [...new Set([...cur, rc.altMove])].join('; ');
+    const merged = mergeList(company.alternate_websites, [rc.altMove]);
+    if (merged.length) updates.alternate_websites = merged;
   }
   return updates;
 }
@@ -416,4 +501,4 @@ async function enrichCompany(company, { genderMap = {}, crawls, fetchWarc, altLi
   return { found: true, updates: r.updates, people: r.people, ptr: { url: ptr.url } };
 }
 
-module.exports = { ALT_DEFAULT, hostPath, reclassifyOnly, resolveHome, parseHome, buildContacts, buildEmployees, reclassifyWebsite, enrichFromHtml, enrichCompany, hasPath, isAlternate, nameFromLinkedin, nameFromEmail, nameFromBio };
+module.exports = { ALT_DEFAULT, asList, mergeList, hostPath, reclassifyOnly, resolveHome, parseHome, buildContacts, buildEmployees, reclassifyWebsite, enrichFromHtml, enrichCompany, hasPath, isAlternate, nameFromLinkedin, nameFromEmail, nameFromBio };

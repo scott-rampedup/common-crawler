@@ -242,12 +242,35 @@ const EDITABLE = new Set(['name', 'website', 'industry', 'size', 'country', 'reg
   'cc_refreshed_at', 'cc_crawl', 'email_pattern', 'email_domain',
   // home-page enrichment outputs; without these co.update() drops them without a word
   'logo', 'postal_code', 'whatsapp', 'team_page']);
+// ---- field shape ---------------------------------------------------------------------------------
+// Fields that legitimately hold MORE THAN ONE value, stored as arrays. bio_url carries >1 on 30.2% of
+// records and reaches 114; linkedin_contact 26.5% and reaches 64. Joined into one '; ' string they
+// blew past the keyword subfield's ignore_above:256 and were silently dropped from the keyword index
+// altogether -- unmatchable and unaggregatable. As arrays each element is indexed on its own.
+const MULTI_VALUE = new Set(['bio_url', 'linkedin_contact', 'linkedin_url', 'alternate_websites']);
+
+// Reads either shape, so records written before the conversion still come back as lists.
+function asList(v) {
+  if (v == null) return [];
+  const arr = Array.isArray(v) ? v : String(v).split(/[;\s]+/);
+  return [...new Set(arr.map((x) => String(x == null ? '' : x).trim()).filter(Boolean))];
+}
+
+// THE one place that decides how a value is written to the index. update() and bulkUpdate() carried
+// identical copies of this line; a second writer drifting from the first is exactly how a field ends
+// up in two shapes at once.
+function coerceField(k, v) {
+  if (k === 'founded') return (v === '' || v == null) ? null : (Number(v) || null);
+  if (MULTI_VALUE.has(k)) return asList(v);          // [] is a deliberate clear, not an accident
+  return String(v == null ? '' : v);
+}
+
 async function update(client, id, updates) {
   if (!id) throw new Error('id required');
   const doc = {};
   for (const k in (updates || {})) {
     if (!EDITABLE.has(k)) continue;
-    doc[k] = k === 'founded' ? (updates[k] === '' || updates[k] == null ? null : Number(updates[k]) || null) : String(updates[k] == null ? '' : updates[k]);
+    doc[k] = coerceField(k, updates[k]);
   }
   if ('website' in doc) doc.domain = normDomain(doc.website);
   if (!Object.keys(doc).length) return { updated: 0 };
@@ -262,7 +285,7 @@ async function bulkUpdate(client, ids, updates) {
   const doc = {};
   for (const k in (updates || {})) {
     if (!EDITABLE.has(k)) continue;
-    doc[k] = k === 'founded' ? (updates[k] === '' || updates[k] == null ? null : Number(updates[k]) || null) : String(updates[k] == null ? '' : updates[k]);
+    doc[k] = coerceField(k, updates[k]);
   }
   if ('website' in doc) doc.domain = normDomain(doc.website);
   const list = [...new Set((ids || []).map((x) => String(x == null ? '' : x).trim()).filter(Boolean))];
@@ -357,7 +380,10 @@ function prettyRow(d) {
   return { ...d, name: titleCase(d.name), industry: titleCase(d.industry), locality: titleCase(d.locality), region: titleCase(d.region), country: titleCase(d.country) };
 }
 
-const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+// An array renders with the SAME '; ' separator these fields used when they were joined strings, so
+// every downstream consumer of the CSV is unaffected by the array conversion. String(['a','b']) would
+// have given 'a,b' -- commas, inside a comma-separated file.
+const esc = (v) => `"${(Array.isArray(v) ? v.join('; ') : String(v == null ? '' : v)).replace(/"/g, '""')}"`;
 function rowToCsvLine(d0) {
   const d = prettyRow(d0);
   return [d.name, d.website, d.domain, d.company_type, d.website_type, d.location_count || 0,
@@ -378,4 +404,4 @@ const csvHeader = () => OUT_COLS.join(',');
 // 23 hosts from Scott's alternate-domain list — so the loaders below now skip those too.
 const { NON_COMPANY_DOMAINS, isBadCompanyDomain } = require('./non-company-domains');
 
-module.exports = { INDEX, MAPPING, OUT_COLS, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, canonPlace, canonPlaces, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, getRoleEmailTerms, setRoleEmailTerms, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, bulkUpdate, getEmailModel, setEmailModelByDomain, makeClient: os.makeClient };
+module.exports = { INDEX, MAPPING, OUT_COLS, MULTI_VALUE, asList, coerceField, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, canonPlace, canonPlaces, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, getRoleEmailTerms, setRoleEmailTerms, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, bulkUpdate, getEmailModel, setEmailModelByDomain, makeClient: os.makeClient };

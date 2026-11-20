@@ -1480,7 +1480,8 @@ module.exports = {
   isBioAllottedDomain, bioAllotmentDomains, extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules, pathIdHints,
   cleanEmail, setEmailBlocklist, loadEmailBlocklist, setAdminRoleTerms, getAdminRoleTerms, getBuiltInRoleTerms, analyzePhones, splitExtension, intlLineType,
   geocodeRecords, geocodePhone, findPosition,
-  toE164, countryCodeFromDomain, pathIdFromUrl, getBaseDomain, nameSlugFromUrl, lastPathSeg, lastPathFromUrl, structuredFromHtml, findSocials };   // reused by the Sheet importer + Site Search + DB normalizer
+  toE164, countryCodeFromDomain, pathIdFromUrl, getBaseDomain, nameSlugFromUrl, lastPathSeg, lastPathFromUrl, structuredFromHtml, findSocials,
+  normalizeForMatching, isKnownDir };   // the directory matchers, so callers never write a second copy   // reused by the Sheet importer + Site Search + DB normalizer
 
 // ---------------------------------------------------------------- self-test
 if(require.main === module){
