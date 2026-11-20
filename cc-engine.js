@@ -910,6 +910,27 @@ async function discoverBioSitemaps(opts = {}){
 // meeting / taxonomy / blog sitemaps whose URLs happen to trip the bio detector don't pollute the Library.
 const NEG_SITEMAP_NAME = /(?:^|[\/_-])(attachment|attachments|media|image|images|gallery|galleries|photo|photos|blog|news|article|articles|post|posts|press|press-release|event|events|meeting|meetings|calendar|taxonomy|categor(?:y|ies)|tag|tags|product|products|video|videos|download|downloads|faq|faqs|review|reviews|course|courses|webinar|webinars)(?:[-_.]|$)/i;
 
+// Does a keyword hint identify this sitemap's filename as a people directory?
+//
+// This was `fname.includes(k)`, which has no word boundary at all. With the Path ID keywords feeding it
+// that misfires badly: the hint "rep" matched reports-sitemap.xml, "boe" matched boeing-sitemap.xml,
+// "bod" matched body-content-sitemap.xml and "firm" matched confirmation-sitemap.xml -- every one of
+// which would then be filed as a people directory and have ALL its URLs captured. Matching on the
+// filename's SEGMENTS keeps the looseness that makes hints useful (hint "agent" still matches
+// agents-sitemap.xml) while dropping the accidents, and singular/plural is handled explicitly rather
+// than by hoping a substring covers it.
+function hintMatchesName(fname, k) {
+  if (!k || k.length < 3) return false;
+  const segs = String(fname || "").replace(/\.(xml|gz|txt|php|aspx)$/i, "").split(/[-_.\/]+/).filter(Boolean);
+  if (!segs.length) return false;
+  if (/[-_.\/]/.test(k)) {
+    // A multi-word hint ("our-attorneys", "loan-officer") spans segments, so compare the joined form.
+    return segs.join("-").includes(k.replace(/[-_.\/]+/g, "-"));
+  }
+  const sing = (s) => (s.endsWith("s") ? s.slice(0, -1) : s);
+  return segs.some((s) => s === k || sing(s) === k || s === sing(k) || sing(s) === sing(k));
+}
+
 // Like discoverBioSitemaps, but classifies each qualifying child sitemap as People OR Location and
 // returns watches carrying `kind`. People = filename in bioSitemapNames OR bio-ratio passes; Location =
 // filename in locationSitemapNames OR location-ratio passes. When both pass, the higher ratio wins.
@@ -960,7 +981,7 @@ async function discoverSitemaps(opts = {}){
     // People directory (keep all its URLs), as long as it isn't a known non-directory feed. Lets the
     // monitor rescue People sitemaps the strict filename/ratio pass missed (e.g. numeric-id agent URLs).
     if (!bioName && !locName && keywordHints && keywordHints.size && !NEG_SITEMAP_NAME.test(fname)) {
-      for (const k of keywordHints) { if (k && k.length >= 3 && fname.includes(k)) { bioName = true; break; } }
+      for (const k of keywordHints) { if (hintMatchesName(fname, k)) { bioName = true; break; } }
     }
     if (!bioName && !locName && NEG_SITEMAP_NAME.test(fname)) continue;   // content-type feed, not a people/location directory
     let total = 0; const bio = [], loc = [], all = [];
@@ -2147,6 +2168,15 @@ if(require.main === module){
       ok("discoverSitemaps keyword pass rescues it as People (keeps all urls)", kwHint.watches.length === 1 && kwHint.watches[0].kind === "People" && kwHint.watches[0].byName === true && kwHint.watches[0].itemCount === 3);
       const kwNeg = await discoverSitemaps({ urls: [`https://${kwHost}/attachment-sitemap.xml`], keywordHints: new Set(["attachment"]), _fetchDoc: async () => kwOpaque });
       ok("discoverSitemaps keyword pass does not override a negative-name feed", kwNeg.watches.length === 0);
+      // hintMatchesName: segment matching, not bare substring. With ~968 Path ID hints now feeding this,
+      // `fname.includes(k)` filed reports-/boeing-/body-/confirmation- sitemaps as people directories.
+      ok("hint does not fire mid-word (rep / reports)", hintMatchesName("reports-sitemap.xml", "rep") === false);
+      ok("hint does not fire mid-word (boe / boeing)", hintMatchesName("boeing-sitemap.xml", "boe") === false);
+      ok("hint does not fire inside a word (firm / confirmation)", hintMatchesName("confirmation-sitemap.xml", "firm") === false);
+      ok("hint still matches the plural (agent / agents)", hintMatchesName("agents-sitemap.xml", "agent") === true);
+      ok("hint still matches the singular (agents / agent)", hintMatchesName("agent-sitemap.xml", "agents") === true);
+      ok("multi-word hint spans segments", hintMatchesName("our-attorneys-sitemap.xml", "our-attorneys") === true);
+      ok("hint under 3 chars is ignored", hintMatchesName("bo-sitemap.xml", "bo") === false);
 
       // 7c) discoverBioUrlsFromCC: a domain's CC index -> keep only bio-looking captures
       const ccHost = "ccfirm.com";

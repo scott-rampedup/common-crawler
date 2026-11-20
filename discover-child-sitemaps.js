@@ -22,7 +22,7 @@ const sitemaps = require('./sitemaps');
 const miner = require('./cc-athena-miner');
 const ccEngine = require('./cc-engine');
 const { makeCcS3 } = require('./cc-s3');
-const { loadGenderMap } = require('./extractor');
+const { loadGenderMap, pathIdHints } = require('./extractor');
 
 const arg = (n, d) => { const i = process.argv.indexOf('--' + n); return i > 0 ? process.argv[i + 1] : d; };
 const has = (n) => process.argv.includes('--' + n);
@@ -74,6 +74,12 @@ async function pool(items, n, fn) { let i = 0; const workers = Array.from({ leng
   const coClient = companies.makeClient(process.env.OPENSEARCH_ENDPOINT);
   const smClient = sitemaps.makeClient(process.env.OPENSEARCH_ENDPOINT);
   await sitemaps.ensureIndex(smClient);
+  // Path ID keywords (Overture Workbook, data/path-id.json) as cc-engine `keywordHints`. The hook has
+  // existed and been selftested since the keyword second-pass was added, but no production caller ever
+  // passed it -- discovery ran on the 60 exact filenames in 'Sitemap extensions.csv' plus the bio-ratio
+  // fallback, which costs a fetch per candidate. These 968 People hints are matched against the
+  // filename's segments, so 'agent' still catches agents-sitemap.xml without 'rep' catching reports-.
+  const keywordHints = pathIdHints('People');
   const bioNames = loadNameSet('Sitemap extensions.csv');
   const locNames = loadNameSet('Sitemap extensions - locations.csv');
   const genderMap = loadGenderMap(path.join(__dirname, 'names-genders.csv'));
@@ -151,7 +157,7 @@ async function pool(items, n, fn) { let i = 0; const workers = Array.from({ leng
       // flat urlset — classify the sitemap itself by bio/location ratio (reuses the engine's classifier)
       tally.urlsets++;
       try {
-        const { watches } = await ccEngine.discoverSitemaps({ content: xml, sourceUrl: row.url, directoryRules: {}, genderMap, bioSitemapNames: bioNames, locationSitemapNames: locNames });
+        const { watches } = await ccEngine.discoverSitemaps({ content: xml, sourceUrl: row.url, directoryRules: {}, genderMap, bioSitemapNames: bioNames, locationSitemapNames: locNames, keywordHints });
         const w = (watches || [])[0];
         if (w && (w.kind === 'People' || w.kind === 'Location')) addDoc(row.url, row.domain, '', w.kind, w.keyword || fileOf(row.url), { url_count: w.urlCount, item_count: w.itemCount, ratio: w.ratio, by_name: w.byName });
       } catch (e) { /* */ }

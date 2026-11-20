@@ -51,6 +51,12 @@ function loadNames(file) {
   try { return new Set(fs.readFileSync(path.join(__dirname, file), 'utf8').split(/\r?\n/).map((s) => s.trim().toLowerCase()).filter((l, i) => l && !(i === 0 && l === 'name'))); }
   catch (e) { return new Set(); }
 }
+// Path ID keywords (Overture Workbook, data/path-id.json) as cc-engine `keywordHints`. The hook has
+// existed and been selftested since the keyword second-pass was added, but no production caller ever
+// passed it -- discovery ran on the 60 exact filenames in 'Sitemap extensions.csv' plus the bio-ratio
+// fallback, which costs a fetch per candidate. These 968 People hints are matched against the
+// filename's segments, so 'agent' still catches agents-sitemap.xml without 'rep' catching reports-.
+const keywordHints = ex.pathIdHints('People');
 const bioSitemapNames = loadNames('Sitemap extensions.csv');
 const locationSitemapNames = loadNames('Sitemap extensions - locations.csv');
 const genderMap = ex.loadGenderMap(path.join(__dirname, 'names-genders.csv'));
@@ -124,7 +130,7 @@ async function* streamDomains(client) {
         const urls = await withTimeout(resolveSitemaps(domain), DOMAIN_TIMEOUT);
         if (urls.length) {
           const { watches } = await withTimeout(
-            ccEngine.discoverSitemaps({ urls, directoryRules, genderMap, bioSitemapNames, locationSitemapNames, minCount: MIN_COUNT, minRatio: MIN_RATIO }),
+            ccEngine.discoverSitemaps({ urls, directoryRules, genderMap, bioSitemapNames, locationSitemapNames, keywordHints, minCount: MIN_COUNT, minRatio: MIN_RATIO }),
             WALK_TIMEOUT);
           const keep = watches.filter((w) => w.byName || w.itemCount >= MIN_COUNT);
           if (keep.length) {

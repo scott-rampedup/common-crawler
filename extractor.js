@@ -216,7 +216,41 @@ const BIO_DIR_RAW = [
   "team.php","team_bio","therapist","therapists","toxicologist","uha-doctors","urologist","urologists",
   "veterinarian","wealth-manager","wealth-managers",
 ];
-const BIO_DIRS = new Set(BIO_DIR_RAW.map((s) => normalizeForMatching(s)).filter(Boolean));
+// The Path ID tab of the Overture Workbook, exported to data/path-id.json. Only the rows Scott typed as
+// Directory="People" AND Is BIO feed this set (970 of 1,162): the other is_bio rows are Locations,
+// Company, News, Contact and Investor Relations pages, and folding those in here would make
+// classifyDirectory return "BIO URL" for a branch-office page. Measured 2026-11-20, 248 of the People
+// paths were unknown to BIO_DIR_RAW above -- abogada, agentbio, attorneyprofile, anesthesiologists,
+// appraisers, arbitrator, avvocati, biografias, boardmembers and the like.
+// Loaded from a file for the same reason as the personal-domain list: the next workbook revision is a
+// re-export, not a hand-merge into this array.
+function loadPathIdDirs() {
+  try {
+    const rows = JSON.parse(fs.readFileSync(path.join(__dirname, "data", "path-id.json"), "utf8"));
+    return rows.filter((r) => r && r.is_bio && r.directory === "People").map((r) => r.path_id);
+  } catch (e) {
+    return [];          // file absent -> the built-in list above still applies
+  }
+}
+const BIO_DIRS = new Set(
+  BIO_DIR_RAW.concat(loadPathIdDirs()).map((s) => normalizeForMatching(s)).filter(Boolean)
+);
+
+// The same Path ID table, served RAW (hyphens intact) for cc-engine's sitemap `keywordHints`, which
+// matches against a filename's segments rather than a normalized URL path. `directory` picks the slice:
+// "People" for bio sitemaps, "Locations" for location ones. Exported from here because this is already
+// where the file is read; the callers are the sitemap discovery scripts.
+function pathIdHints(directory = "People") {
+  try {
+    const rows = JSON.parse(fs.readFileSync(path.join(__dirname, "data", "path-id.json"), "utf8"));
+    return new Set(rows
+      .filter((r) => r && r.directory === directory && (directory !== "People" || r.is_bio))
+      .map((r) => String(r.path_id || "").trim().toLowerCase())
+      .filter((s) => s.length >= 3));          // cc-engine ignores anything shorter anyway
+  } catch (e) {
+    return new Set();
+  }
+}
 
 // Domains whose every page is a BIO URL, from data/bio-domain-allotments.txt. For sites that publish
 // person pages with no directory term in the path at all -- a Mary Kay consultant is a bare slug on the
@@ -1443,7 +1477,7 @@ function loadDirectoryRules(filePath){
 }
 
 module.exports = {
-  isBioAllottedDomain, bioAllotmentDomains, extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules,
+  isBioAllottedDomain, bioAllotmentDomains, extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules, pathIdHints,
   cleanEmail, setEmailBlocklist, loadEmailBlocklist, setAdminRoleTerms, getAdminRoleTerms, getBuiltInRoleTerms, analyzePhones, splitExtension, intlLineType,
   geocodeRecords, geocodePhone, findPosition,
   toE164, countryCodeFromDomain, pathIdFromUrl, getBaseDomain, nameSlugFromUrl, lastPathSeg, lastPathFromUrl, structuredFromHtml, findSocials };   // reused by the Sheet importer + Site Search + DB normalizer

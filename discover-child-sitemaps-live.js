@@ -16,7 +16,7 @@
 const companies = require('./companies');
 const sitemaps = require('./sitemaps');
 const ccEngine = require('./cc-engine');
-const { loadGenderMap } = require('./extractor');
+const { loadGenderMap, pathIdHints } = require('./extractor');
 const fs = require('fs');
 const path = require('path');
 
@@ -61,6 +61,12 @@ async function pool(items, n, fn) { let i = 0; const workers = Array.from({ leng
   const smClient = sitemaps.makeClient(process.env.OPENSEARCH_ENDPOINT);
   await sitemaps.ensureIndex(smClient);
   const genderMap = loadGenderMap(path.join(__dirname, 'names-genders.csv'));
+  // Path ID keywords (Overture Workbook, data/path-id.json) as cc-engine `keywordHints`. The hook has
+  // existed and been selftested since the keyword second-pass was added, but no production caller ever
+  // passed it -- discovery ran on the 60 exact filenames in 'Sitemap extensions.csv' plus the bio-ratio
+  // fallback, which costs a fetch per candidate. These 968 People hints are matched against the
+  // filename's segments, so 'agent' still catches agents-sitemap.xml without 'rep' catching reports-.
+  const keywordHints = pathIdHints('People');
   const bioNames = loadNameSet('Sitemap extensions.csv');
   const locNames = loadNameSet('Sitemap extensions - locations.csv');
   if (!process.env.PROXY_URL && !process.env.PROXY_FALLBACK_URL) console.error('WARNING: no PROXY_URL set — live fetches go direct (may be blocked).');
@@ -115,7 +121,7 @@ async function pool(items, n, fn) { let i = 0; const workers = Array.from({ leng
     if (!smUrls.length) smUrls = CANDIDATES(d);
     let watches = [];
     try {
-      const r = await ccEngine.discoverSitemaps({ urls: smUrls.slice(0, 8), directoryRules: {}, genderMap, bioSitemapNames: bioNames, locationSitemapNames: locNames });
+      const r = await ccEngine.discoverSitemaps({ urls: smUrls.slice(0, 8), directoryRules: {}, genderMap, bioSitemapNames: bioNames, locationSitemapNames: locNames, keywordHints });
       watches = (r.watches || []).filter((w) => w.kind === 'People' || w.kind === 'Location');
     } catch (e) { tally.errors++; }
     if (watches.length) {
