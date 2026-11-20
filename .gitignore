@@ -73,3 +73,8 @@ logs/*.log
 
 # Generated export (64MB) — reproducible from the companies index, never an input.
 team-pages-distinct.csv
+
+# Local data artifacts — harvest dumps and timestamped backups. Never belong in the repo;
+# git add -A swept two of these in (4.5MB + 747KB) before this rule existed.
+*.ndjson
+*.bak-*

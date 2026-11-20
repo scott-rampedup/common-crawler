@@ -157,5 +157,28 @@ T('new fields are absent on an empty page', ()=>{
   for (const k of ['linkedin_url','team_page','whatsapp','founded']) if (k in r.updates) throw new Error('wrote '+k);
 });
 
+// ---- decision 8: sitemap_url from robots.txt ----
+const cc = require('./cc-engine');
+const ROBOTS = ['User-agent: *', 'Disallow: /tmp/', 'Sitemap: https://x.com/sitemap-news.xml', 'Sitemap: https://x.com/sitemap-team.xml'].join(String.fromCharCode(10));
+const ROBOTS_NONE = ['User-agent: *', 'Disallow: /tmp/'].join(String.fromCharCode(10));
+T('picks the sitemap carrying a People path ID', () => eq(che.pickSitemap(cc.parseRobots(ROBOTS).sitemaps), 'https://x.com/sitemap-team.xml', 'pick'));
+T('falls back to a sitemap index', () => eq(che.pickSitemap(['https://x.com/news.xml','https://x.com/sitemap_index.xml']), 'https://x.com/sitemap_index.xml', 'pick'));
+T('falls back to the first declared', () => eq(che.pickSitemap(['https://x.com/a.xml','https://x.com/b.xml']), 'https://x.com/a.xml', 'pick'));
+T('nothing declared -> empty, so no key is written', () => eq(che.pickSitemap([]), '', 'pick'));
+T('robots.txt with no Sitemap line', () => eq(che.pickSitemap(cc.parseRobots(ROBOTS_NONE).sitemaps), '', 'pick'));
+
+// ---- decision 9: email_hash ----
+const { emailHash } = require('./email-hash');
+T('enrichFromHtml writes email_hash beside email', () => {
+  const r = enrichFromHtml({ domain: 'a.com' }, page('<a href="mailto:Jane.Doe@a.com">j</a>'), {});
+  eq(r.updates.email, 'jane.doe@a.com', 'email');
+  eq(r.updates.email_hash, emailHash('jane.doe@a.com'), 'email_hash');
+});
+T('no email -> no email_hash key', () => {
+  const r = enrichFromHtml({ domain: 'a.com' }, EMPTY, {});
+  if ('email_hash' in r.updates) throw new Error('wrote a hash with no address');
+});
+T('hash is of the PP canonical form, not the raw address', () => eq(emailHash('Jane.Doe+x@googlemail.com'), emailHash('janedoe@gmail.com'), 'canonical'));
+
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

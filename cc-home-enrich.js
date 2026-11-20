@@ -14,6 +14,7 @@
 const cc = require('./cc-engine');
 const ex = require('./extractor');
 const co = require('./companies');     // asList + the MULTI_VALUE contract
+const { emailHash } = require('./email-hash');   // the Public Prospects canonical hash
 
 // Websites that belong in "Alternate Websites", not the primary Website (seed list; the Admin UI can edit it).
 const ALT_DEFAULT = ['linktr.ee', 'youtube.com', 'crunchbase.com', 'twitter.com', 'x.com', 'yelp.com', 'etsy.com', 'about.me', 'sites.google.com', 'amazon.com/shop', 'wix.com', 'wixsite.com'];
@@ -211,10 +212,29 @@ async function resolveHome(domain, { crawls, demoMode = false } = {}) {
 // workbook's 928 People path IDs, normalised on both sides -- pathIdHints returns them raw-lowercased
 // while isKnownDir matches normalised segments, so comparing the two shapes directly finds nothing.
 let PEOPLE_DIRS = null;
-function isTeamListing(url) {
+function peopleDirs() {
   if (!PEOPLE_DIRS) PEOPLE_DIRS = new Set([...ex.pathIdHints('People')].map(ex.normalizeForMatching).filter(Boolean));
+  return PEOPLE_DIRS;
+}
+function isTeamListing(url) {
   const seg = ex.lastPathSeg(url);
-  return !!seg && ex.isKnownDir(ex.normalizeForMatching(seg), PEOPLE_DIRS);
+  return !!seg && ex.isKnownDir(ex.normalizeForMatching(seg), peopleDirs());
+}
+
+// robots.txt usually declares SEVERAL sitemaps -- a news one, a product one, an index. sitemap_url holds
+// one, and the one worth holding is whichever lists PEOPLE. Preference order:
+//   1. a filename carrying a People path ID   (sitemap-team.xml, agents-sitemap.xml, our-staff.xml)
+//   2. a sitemap index                        (it points at the rest, so nothing is unreachable)
+//   3. the first declared
+// The path IDs are the workbook's own 928 People terms, the same list that classifies a bio URL, so a
+// team-page sitemap is identified by exactly the keywords that identify a team page.
+function pickSitemap(list) {
+  const urls = [...new Set((list || []).map((u) => String(u == null ? '' : u).trim()).filter(Boolean))];
+  if (!urls.length) return '';
+  const dirs = peopleDirs();
+  const peopleish = urls.find((u) => u.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).some((sg) => dirs.has(sg)));
+  if (peopleish) return peopleish;
+  return urls.find((u) => /sitemap[-_]?index/i.test(u)) || urls[0];
 }
 
 // founded: schema.org foundingDate on an Organization node. The value arrives as "1998" or
@@ -463,7 +483,12 @@ function enrichFromHtml(company, html, { genderMap = {}, altList, now, crawl } =
   if (now) up.cc_refreshed_at = now;          // when this company was last CC-refreshed (drives deltas + "last refreshed")
   if (crawl) up.cc_crawl = crawl;             // the CC crawl the freshest capture came from
   if (phone && !String(company.phone || '').trim()) up.phone = phone;
-  if (email) { up.email = email; up.email_type = ex.classifyEmail(email); }
+  if (email) {
+    up.email = email;
+    up.email_type = ex.classifyEmail(email);
+    const eh = emailHash(email);          // '' for a non-address, and then no key is written
+    if (eh) up.email_hash = eh;
+  }
   if ('website' in rc) up.website = '';
   const people = p.linkedin.map((u) => { const n = nameFromLinkedin(u); return { linkedin: u, first: n.first, last: n.last }; }).filter((x) => x.first && x.last);
   return { updates: up, people, contacts: structured };
@@ -501,4 +526,4 @@ async function enrichCompany(company, { genderMap = {}, crawls, fetchWarc, altLi
   return { found: true, updates: r.updates, people: r.people, ptr: { url: ptr.url } };
 }
 
-module.exports = { ALT_DEFAULT, asList, mergeList, hostPath, reclassifyOnly, resolveHome, parseHome, buildContacts, buildEmployees, reclassifyWebsite, enrichFromHtml, enrichCompany, hasPath, isAlternate, nameFromLinkedin, nameFromEmail, nameFromBio };
+module.exports = { ALT_DEFAULT, asList, mergeList, pickSitemap, isTeamListing, hostPath, reclassifyOnly, resolveHome, parseHome, buildContacts, buildEmployees, reclassifyWebsite, enrichFromHtml, enrichCompany, hasPath, isAlternate, nameFromLinkedin, nameFromEmail, nameFromBio };

@@ -122,8 +122,18 @@ async function refresh(client, targets, A, output, crawls, genderMap, altList) {
   // key -> the records that asked for it. One URL can serve several records (a domain with several
   // rows), so the pointer result fans back out rather than matching one-to-one.
   const byKey = new Map();
+  // SITEMAP_URL, from robots.txt, on this same pass. robots.txt IS in the Common Crawl index
+  // (mime-detected text/x-robots); sitemap.xml generally is NOT, so this is the only way to learn a
+  // site's declared sitemap without a live fetch. Keyed on the DOMAIN, so a domain with 400 Location
+  // rows still costs exactly one extra key.
+  const robotsByKey = new Map();
   let noUrl = 0, badKey = 0;
   for (const t of targets) {
+    const dom = String(t.domain || '').trim();
+    if (dom) {
+      const rk = miner.normalizeKey('https://' + dom + '/robots.txt');
+      if (rk) { if (!robotsByKey.has(rk)) robotsByKey.set(rk, []); robotsByKey.get(rk).push(t); }
+    }
     const url = targetUrl(t);
     if (!url) { noUrl++; continue; }
     const k = miner.normalizeKey(url);
@@ -131,11 +141,11 @@ async function refresh(client, targets, A, output, crawls, genderMap, altList) {
     if (!byKey.has(k)) byKey.set(k, []);
     byKey.get(k).push(t);
   }
-  console.error(`  keys: ${N(byKey.size)} distinct (${N(noUrl)} record(s) with no usable URL, ${N(badKey)} unparseable)`);
+  console.error(`  keys: ${N(byKey.size)} distinct + ${N(robotsByKey.size)} robots.txt (${N(noUrl)} record(s) with no usable URL, ${N(badKey)} unparseable)`);
   if (!byKey.size) return { found: 0, updated: 0 };
 
   const keysFile = path.join(os.tmpdir(), `cc-refresh-keys-${stamp}.tsv`);
-  fs.writeFileSync(keysFile, [...byKey.keys()].join('\n') + '\n');
+  fs.writeFileSync(keysFile, [...byKey.keys(), ...robotsByKey.keys()].join('\n') + '\n');
   const prefix = `cc-refresh-keys/${stamp}/`;
   if (DRY) { console.error(`  [dry] would upload ${N(byKey.size)} key(s) to s3://${BUCKET}/${prefix}`); return { found: 0, updated: 0 }; }
 
@@ -150,7 +160,7 @@ async function refresh(client, targets, A, output, crawls, genderMap, altList) {
   const header = rows.shift();                      // url,filename,offset,length,timestamp
   console.error(`  pointers: ${N(rows.length)} (header: ${header && header.join(',')})`);
 
-  let i = 0, found = 0, updated = 0, errs = 0, withLogo = 0, withPostal = 0, bioUrls = 0;
+  let i = 0, found = 0, updated = 0, errs = 0, withLogo = 0, withPostal = 0, bioUrls = 0, robotsFound = 0, sitemaps = 0;
   const t0 = Date.now();
   const worker = async () => {
     for (;;) {
@@ -159,9 +169,20 @@ async function refresh(client, targets, A, output, crawls, genderMap, altList) {
       const [url, filename, offset, length] = rows[k];
       const key = miner.normalizeKey(url);
       const recs = (key && byKey.get(key)) || [];
-      if (!recs.length) continue;
+      const robotRecs = (key && robotsByKey.get(key)) || [];
+      if (!recs.length && !robotRecs.length) continue;
       try {
         const warc = await cc.fetchWarc({ filename, offset: Number(offset), length: Number(length) });
+        // A robots.txt pointer: parse the declared sitemaps, keep the one most likely to list people.
+        // warcToHtml returns the raw payload, so it serves plain text as well as HTML.
+        if (robotRecs.length) {
+          const sm = che.pickSitemap(cc.parseRobots(cc.warcToHtml(warc) || '').sitemaps);
+          if (sm) {
+            robotsFound++;
+            for (const rec of robotRecs) { await co.update(client, rec.id, { sitemap_url: sm }); sitemaps++; }
+          }
+          continue;
+        }
         const html = cc.warcToHtml(warc);
         if (!html) continue;
         found++;
@@ -182,7 +203,8 @@ async function refresh(client, targets, A, output, crawls, genderMap, altList) {
   };
   await Promise.all(Array.from({ length: CONC }, worker));
   console.error(`  refresh done: ${N(found)} page(s) read, ${N(updated)} record(s) updated, ${N(withLogo)} logo, ${N(withPostal)} postal code, ${N(bioUrls)} bio URL(s), ${errs} error(s)`);
-  return { found, updated, withLogo, withPostal, bioUrls };
+  console.error(`  robots.txt: ${N(robotsFound)} declared a sitemap -> ${N(sitemaps)} record(s) given sitemap_url`);
+  return { found, updated, withLogo, withPostal, bioUrls, robotsFound, sitemaps };
 }
 
 // ---- half B: bio-page discovery on the same domains --------------------------------------------

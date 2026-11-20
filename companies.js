@@ -40,6 +40,8 @@ const MAPPING = {
       linkedin_url: { type: 'keyword' },
       contact_count: { type: 'integer' },   // # contacts sharing this root domain (set by count-sitemap batch)
       sitemap_url:   { type: 'keyword' },    // discovered bio sitemap (else render constructs {domain}/sitemap.xml)
+      // keyword, never text: a hash is matched whole or not at all, and an analyzer would tokenise it
+      email_hash:    { type: 'keyword' },
       naics_code:   { type: 'keyword' },                                 // NAICS 6 code from category (or industry) via naics-enrich
       naics_title:  { type: 'text', fields: { kw: { type: 'keyword' } } },
       email_pattern: { type: 'keyword' },    // local-part template for modelled emails, e.g. {first}.{last}
@@ -241,7 +243,9 @@ const EDITABLE = new Set(['name', 'website', 'industry', 'size', 'country', 'reg
   'description', 'email', 'email_type', 'facebook', 'instagram', 'map', 'linkedin_contact', 'bio_url', 'alternate_websites', 'contacts', 'contacts_count',
   'cc_refreshed_at', 'cc_crawl', 'email_pattern', 'email_domain',
   // home-page enrichment outputs; without these co.update() drops them without a word
-  'logo', 'postal_code', 'whatsapp', 'team_page']);
+  'logo', 'postal_code', 'whatsapp', 'team_page',
+  // SHA-256 over the Public Prospects canonical address form; see email-hash.js
+  'email_hash']);
 // ---- field shape ---------------------------------------------------------------------------------
 // Fields that legitimately hold MORE THAN ONE value, stored as arrays. bio_url carries >1 on 30.2% of
 // records and reaches 114; linkedin_contact 26.5% and reaches 64. Joined into one '; ' string they

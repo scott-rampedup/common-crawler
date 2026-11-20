@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const co = require('./companies');
+const { emailHash } = require('./email-hash');
 const os = require('./opensearch');
 const naics = require('./naics');
 const { classifyEmail } = require('./extractor');   // Employee contacts need an Email Type like any other
@@ -41,6 +42,9 @@ const CC = (g) => ({ name: g.name || '', website: g.website || '', category: g.c
   bio_url: co.asList(g.bio_url),
   linkedin_contact: co.asList(g.linkedin_contact), linkedin_url: co.asList(g.linkedin_url),   // /in vs /company kept distinct
   email: g.email || '', email_type: g.email_type || '',
+  // hashed here as well as in the refresh: populated on only one of the two write paths the field
+  // would be useless for a join, which is the single thing it exists to do.
+  ...(emailHash(g.email || '') ? { email_hash: emailHash(g.email || '') } : {}),
   // per-LOCATION closure status from the Maps export (Open / Temporarily closed / blank). Only set on
   // Location records -- an HQ is an aggregate over a domain, where a closure would be meaningless.
   company_status: g.company_status || '',
