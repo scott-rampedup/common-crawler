@@ -167,6 +167,19 @@ COPY (
 
 // ---------------------------------------------------------------- per-record transform
 const clean = (s) => String(s == null ? '' : s).trim();
+
+// Overture ships 4.3% of its website values with no scheme -- "www.americansamoa.gov", measured over a
+// 40,000-place sample. Everything downstream must get an absolute URL, because extractor.classifyDirectory
+// calls `new URL(url).pathname` WITHOUT a try/catch and takes the whole run down on a throw. That is
+// exactly how the first full-shard run on Fly died ("ERR Invalid URL") after the local sample passed:
+// the sample held scheme-less websites, but none that ALSO matched a Path ID, which is the only route to
+// that call. Normalising once here is safer than guarding each call site.
+function absUrl(u) {
+  const s = clean(u);
+  if (!s) return '';
+  const withScheme = /^https?:\/\//i.test(s) ? s : 'http://' + s.replace(/^\/+/, '');
+  try { return new URL(withScheme).toString(); } catch (e) { return ''; }
+}
 const hostOf = (u) => { try { return normHost(new URL(/^https?:\/\//i.test(u) ? u : 'http://' + u).hostname); } catch (e) { return ''; } };
 const rootOf = (h) => (h ? (psl.registrableOrHost(h) || h) : '');
 
@@ -236,7 +249,9 @@ function toLocation(r) {
 
   // Steps 1-3 + the alternate/social filter. The first website that is NOT a social, shortener, host or
   // directory wins; the rest are kept as alternates so nothing is silently discarded.
-  const sites = (r.websites || []).map(clean).filter(Boolean);
+  // Normalised to absolute URLs up front: a scheme-less value otherwise reaches classifyDirectory and
+  // throws. Anything that will not parse at all is dropped here rather than carried as a bad website.
+  const sites = (r.websites || []).map(absUrl).filter(Boolean);
   const socials = {};
   let website = '', alternates = [];
   for (const u of sites) {
@@ -392,6 +407,14 @@ if (require.main === module && has('selftest')) {
   eq('a bio website is flagged', b && b.bio_url, 'https://acmerealty.com/agents/jane-doe');
   eq('...and carries its directory', b && b.directory, 'People');
 
+  // 4.3% of Overture websites arrive with no scheme. One of those that ALSO matches a Path ID is what
+  // killed the first full-shard run: classifyDirectory calls new URL(url).pathname with no try/catch.
+  const ns = toLocation({ ...base, websites: ['www.acmerealty.com/agents/jane-doe'] });
+  eq('scheme-less website still parses', ns && ns.root_domain, 'acmerealty.com');
+  eq('...and still flags the bio', ns && ns.bio_url, 'http://www.acmerealty.com/agents/jane-doe');
+  eq('unparseable website yields nothing', toLocation({ ...base, websites: ['http://'] }), null);
+  eq('empty website yields nothing', toLocation({ ...base, websites: [''] }), null);
+
   console.log('overture-load selftest: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 }
@@ -408,14 +431,23 @@ async function main() {
   fs.mkdirSync(OUT, { recursive: true });
   const locOut = fs.createWriteStream(path.join(OUT, 'overture-locations.ndjson'));
   const bio = new Set();
-  let seen = 0, kept = 0, noDomain = 0, bioFound = 0;
+  let seen = 0, kept = 0, noDomain = 0, bioFound = 0, errored = 0;
   const t0 = Date.now();
 
   const onLine = (line) => {
     if (!line.trim()) return;
     let r; try { r = JSON.parse(line); } catch (e) { return; }
     seen++;
-    const doc = toLocation(r);
+    // One malformed record must not end a 26M-row run. The first full-shard attempt died on a single
+    // unparseable URL after 37 seconds, losing the whole shard's work; the count is reported at the end
+    // so a rising number is visible rather than silent.
+    let doc;
+    try { doc = toLocation(r); }
+    catch (e) {
+      errored++;
+      if (errored <= 3) console.error(`  skipped a record: ${e.message} (${clean(r && r.id)})`);
+      return;
+    }
     if (!doc) { noDomain++; return; }
     if (doc.bio_url) { bio.add(doc.bio_url); bioFound++; }
     locOut.write(JSON.stringify(doc) + '\n');
@@ -458,6 +490,7 @@ async function main() {
   console.error(`  Locations written  ${kept.toLocaleString()}`);
   console.error(`  no usable domain   ${noDomain.toLocaleString()}`);
   console.error(`  bio URLs           ${bio.size.toLocaleString()}  -> overture-bio-urls.txt`);
+  if (errored) console.error(`  SKIPPED on error   ${errored.toLocaleString()}`);
 }
 
 if (require.main === module && !has('selftest')) {
