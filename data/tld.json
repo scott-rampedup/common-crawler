@@ -1,0 +1,2374 @@
+{
+ "ac": {
+  "industry": "Business",
+  "country": "Ascension Island"
+ },
+ "ac.in": {
+  "industry": "Education",
+  "country": "India"
+ },
+ "ac.jp": {
+  "industry": "Education",
+  "country": "Japan"
+ },
+ "ac.uk": {
+  "industry": "Education",
+  "country": "United Kingdom"
+ },
+ "academy": {
+  "industry": "Education",
+  "country": "Education"
+ },
+ "accountant": {
+  "industry": "Financial",
+  "country": "Global"
+ },
+ "accountants": {
+  "industry": "Financial",
+  "country": "Global"
+ },
+ "ad": {
+  "industry": "Business",
+  "country": "Andorra"
+ },
+ "ae": {
+  "industry": "Business",
+  "country": "United Arab Emirates"
+ },
+ "ae.org": {
+  "industry": "Non-Profit",
+  "country": "United Arab Emirates"
+ },
+ "af": {
+  "industry": "Business",
+  "country": "Afghanistan"
+ },
+ "ag": {
+  "industry": "Business",
+  "country": "Antigua and Barbuda"
+ },
+ "agency": {
+  "industry": "Professional Service",
+  "country": "Global"
+ },
+ "ai": {
+  "industry": "Technology",
+  "country": "Global"
+ },
+ "airforce": {
+  "industry": "Military",
+  "country": "Global"
+ },
+ "al": {
+  "industry": "Business",
+  "country": "Albania"
+ },
+ "am": {
+  "industry": "Business",
+  "country": "Armenia"
+ },
+ "an": {
+  "industry": "Business",
+  "country": "Bonaire"
+ },
+ "ao": {
+  "industry": "Business",
+  "country": "Angola"
+ },
+ "app": {
+  "industry": "Technology",
+  "country": "Global"
+ },
+ "aq": {
+  "industry": "Business",
+  "country": "Antarctica"
+ },
+ "ar": {
+  "industry": "Business",
+  "country": "Argentina"
+ },
+ "army": {
+  "industry": "Military",
+  "country": "Global"
+ },
+ "as": {
+  "industry": "Business",
+  "country": "American Samoa"
+ },
+ "at": {
+  "industry": "Business",
+  "country": "Austria"
+ },
+ "attorney": {
+  "industry": "Legal",
+  "country": "Global"
+ },
+ "au": {
+  "industry": "Business",
+  "country": "Australia"
+ },
+ "aw": {
+  "industry": "Business",
+  "country": "Aruba"
+ },
+ "ax": {
+  "industry": "Business",
+  "country": "Åland"
+ },
+ "az": {
+  "industry": "Business",
+  "country": "Azerbaijan"
+ },
+ "ba": {
+  "industry": "Business",
+  "country": "Bosnia and Herzegovina"
+ },
+ "bank": {
+  "industry": "Financial",
+  "country": "Global"
+ },
+ "bb": {
+  "industry": "Business",
+  "country": "Barbados"
+ },
+ "bd": {
+  "industry": "Business",
+  "country": "Bangladesh"
+ },
+ "be": {
+  "industry": "Business",
+  "country": "Belgium"
+ },
+ "bf": {
+  "industry": "Business",
+  "country": "Burkina Faso"
+ },
+ "bg": {
+  "industry": "Business",
+  "country": "Bulgaria"
+ },
+ "bh": {
+  "industry": "Business",
+  "country": "Bahrain"
+ },
+ "bi": {
+  "industry": "Business",
+  "country": "Burundi"
+ },
+ "bj": {
+  "industry": "Business",
+  "country": "Benin"
+ },
+ "bl": {
+  "industry": "Business",
+  "country": "Saint Barthélemy"
+ },
+ "bm": {
+  "industry": "Business",
+  "country": "Bermuda"
+ },
+ "bn": {
+  "industry": "Business",
+  "country": "Brunei"
+ },
+ "bo": {
+  "industry": "Business",
+  "country": "Bolivia"
+ },
+ "bq": {
+  "industry": "Business",
+  "country": "Bonaire"
+ },
+ "br": {
+  "industry": "Business",
+  "country": "Brazil"
+ },
+ "bs": {
+  "industry": "Business",
+  "country": "Bahamas"
+ },
+ "bt": {
+  "industry": "Business",
+  "country": "Bhutan"
+ },
+ "bv": {
+  "industry": "Business",
+  "country": "Bouvet Island"
+ },
+ "bw": {
+  "industry": "Business",
+  "country": "Botswana"
+ },
+ "by": {
+  "industry": "Business",
+  "country": "Belarus"
+ },
+ "bz": {
+  "industry": "Business",
+  "country": "Belize"
+ },
+ "ca": {
+  "industry": "Business",
+  "country": "Canada"
+ },
+ "cat": {
+  "industry": "Business",
+  "country": "Catalonia"
+ },
+ "cc": {
+  "industry": "Business",
+  "country": "Cocos"
+ },
+ "cd": {
+  "industry": "Business",
+  "country": "Congo, Democratic Republic of the"
+ },
+ "cf": {
+  "industry": "Business",
+  "country": "Central African Republic"
+ },
+ "cg": {
+  "industry": "Business",
+  "country": "Congo, Republic of the"
+ },
+ "ch": {
+  "industry": "Business",
+  "country": "Switzerland"
+ },
+ "ci": {
+  "industry": "Business",
+  "country": "Côte d’Ivoire"
+ },
+ "ck": {
+  "industry": "Business",
+  "country": "Cook Islands"
+ },
+ "cl": {
+  "industry": "Business",
+  "country": "Chile"
+ },
+ "cloud": {
+  "industry": "Technology",
+  "country": "Global"
+ },
+ "cm": {
+  "industry": "Business",
+  "country": "Cameroon"
+ },
+ "cn": {
+  "industry": "Business",
+  "country": "China"
+ },
+ "co": {
+  "industry": "Business",
+  "country": "Global"
+ },
+ "co.id": {
+  "industry": "Business",
+  "country": "Indonesia"
+ },
+ "co.il": {
+  "industry": "Business",
+  "country": "Israel"
+ },
+ "co.in": {
+  "industry": "Business",
+  "country": "India"
+ },
+ "co.jp": {
+  "industry": "Business",
+  "country": "Japan"
+ },
+ "co.ke": {
+  "industry": "Business",
+  "country": "Kenya"
+ },
+ "co.kr": {
+  "industry": "Business",
+  "country": "South Korea"
+ },
+ "co.nz": {
+  "industry": "Business",
+  "country": "New Zealand"
+ },
+ "co.th": {
+  "industry": "Business",
+  "country": "Thailand"
+ },
+ "co.uk": {
+  "industry": "Business",
+  "country": "United Kingdom"
+ },
+ "co.za": {
+  "industry": "Business",
+  "country": "South Africa"
+ },
+ "college": {
+  "industry": "Business",
+  "country": "Education"
+ },
+ "com": {
+  "industry": "Business",
+  "country": "Global"
+ },
+ "com.ar": {
+  "industry": "Business",
+  "country": "Argentina"
+ },
+ "com.au": {
+  "industry": "Business",
+  "country": "Australia"
+ },
+ "com.br": {
+  "industry": "Business",
+  "country": "Brazil"
+ },
+ "com.cn": {
+  "industry": "Business",
+  "country": "China"
+ },
+ "com.co": {
+  "industry": "Business",
+  "country": "Colombia"
+ },
+ "com.hk": {
+  "industry": "Business",
+  "country": "Hong Kong"
+ },
+ "com.mx": {
+  "industry": "Business",
+  "country": "Mexico"
+ },
+ "com.my": {
+  "industry": "Business",
+  "country": "Malaysia"
+ },
+ "com.ng": {
+  "industry": "Business",
+  "country": "Nigeria"
+ },
+ "com.pe": {
+  "industry": "Business",
+  "country": "Peru"
+ },
+ "com.ph": {
+  "industry": "Business",
+  "country": "Philippines"
+ },
+ "com.pk": {
+  "industry": "Business",
+  "country": "Pakistan"
+ },
+ "com.pl": {
+  "industry": "Business",
+  "country": "Poland"
+ },
+ "com.sa": {
+  "industry": "Business",
+  "country": "Saudi Arabia"
+ },
+ "com.sg": {
+  "industry": "Business",
+  "country": "Singapore"
+ },
+ "com.tr": {
+  "industry": "Business",
+  "country": "Turkey"
+ },
+ "com.tw": {
+  "industry": "Business",
+  "country": "Taiwan"
+ },
+ "com.ua": {
+  "industry": "Business",
+  "country": "Ukraine"
+ },
+ "com.uy": {
+  "industry": "Business",
+  "country": "Uruguay"
+ },
+ "com.vn": {
+  "industry": "Business",
+  "country": "Vietnam"
+ },
+ "cpa": {
+  "industry": "Financial",
+  "country": "Global"
+ },
+ "cr": {
+  "industry": "Business",
+  "country": "Costa Rica"
+ },
+ "credit": {
+  "industry": "Financial",
+  "country": "Global"
+ },
+ "creditcard": {
+  "industry": "Financial",
+  "country": "Global"
+ },
+ "creditunion": {
+  "industry": "Financial",
+  "country": "Global"
+ },
+ "cu": {
+  "industry": "Business",
+  "country": "Cuba"
+ },
+ "cv": {
+  "industry": "Business",
+  "country": "Cape Verde"
+ },
+ "cw": {
+  "industry": "Business",
+  "country": "Curacao"
+ },
+ "cx": {
+  "industry": "Business",
+  "country": "Christmas Island"
+ },
+ "cy": {
+  "industry": "Business",
+  "country": "Cyprus"
+ },
+ "cz": {
+  "industry": "Business",
+  "country": "Czech Republic"
+ },
+ "de": {
+  "industry": "Business",
+  "country": "Germany"
+ },
+ "defense": {
+  "industry": "Military",
+  "country": "Global"
+ },
+ "dental": {
+  "industry": "Healthcare",
+  "country": "Global"
+ },
+ "dentist": {
+  "industry": "Healthcare",
+  "country": "Global"
+ },
+ "dj": {
+  "industry": "Business",
+  "country": "Djibouti"
+ },
+ "dk": {
+  "industry": "Business",
+  "country": "Denmark"
+ },
+ "dm": {
+  "industry": "Business",
+  "country": "Dominica"
+ },
+ "do": {
+  "industry": "Business",
+  "country": "Dominican Republic"
+ },
+ "doctor": {
+  "industry": "Healthcare",
+  "country": "Global"
+ },
+ "dz": {
+  "industry": "Business",
+  "country": "Algeria"
+ },
+ "ec": {
+  "industry": "Business",
+  "country": "Ecuador"
+ },
+ "edu": {
+  "industry": "Education",
+  "country": "Global"
+ },
+ "edu.af": {
+  "industry": "Education",
+  "country": "Afghanistan"
+ },
+ "edu.au": {
+  "industry": "Education",
+  "country": "Australia"
+ },
+ "edu.az": {
+  "industry": "Education",
+  "country": "Azerbaijan"
+ },
+ "edu.bh": {
+  "industry": "Education",
+  "country": "Bahrain"
+ },
+ "edu.bi": {
+  "industry": "Education",
+  "country": "Burundi"
+ },
+ "edu.br": {
+  "industry": "Education",
+  "country": "Brazil"
+ },
+ "edu.ck": {
+  "industry": "Education",
+  "country": "Cook Islands"
+ },
+ "edu.cv": {
+  "industry": "Education",
+  "country": "Cape Verde"
+ },
+ "edu.eg": {
+  "industry": "Education",
+  "country": "Egypt"
+ },
+ "edu.es": {
+  "industry": "Education",
+  "country": "Spain"
+ },
+ "edu.ge": {
+  "industry": "Education",
+  "country": "Georgia"
+ },
+ "edu.gh": {
+  "industry": "Education",
+  "country": "Ghana"
+ },
+ "edu.gl": {
+  "industry": "Education",
+  "country": "Greenland"
+ },
+ "edu.gr": {
+  "industry": "Education",
+  "country": "Greece"
+ },
+ "edu.hk": {
+  "industry": "Education",
+  "country": "Hong Kong"
+ },
+ "edu.hn": {
+  "industry": "Education",
+  "country": "Honduras"
+ },
+ "edu.ht": {
+  "industry": "Education",
+  "country": "Haiti"
+ },
+ "edu.in": {
+  "industry": "Education",
+  "country": "India"
+ },
+ "edu.kh": {
+  "industry": "Education",
+  "country": "Cambodia"
+ },
+ "edu.ki": {
+  "industry": "Education",
+  "country": "Kiribati"
+ },
+ "edu.kn": {
+  "industry": "Education",
+  "country": "Saint Kitts and Nevis"
+ },
+ "edu.kw": {
+  "industry": "Education",
+  "country": "Kuwait"
+ },
+ "edu.lb": {
+  "industry": "Education",
+  "country": "Lebanon"
+ },
+ "edu.lk": {
+  "industry": "Education",
+  "country": "Sri Lanka"
+ },
+ "edu.lv": {
+  "industry": "Education",
+  "country": "Latvia"
+ },
+ "edu.mk": {
+  "industry": "Education",
+  "country": "North Macedonia"
+ },
+ "edu.mr": {
+  "industry": "Education",
+  "country": "Mauritania"
+ },
+ "edu.mt": {
+  "industry": "Education",
+  "country": "Malta"
+ },
+ "edu.mw": {
+  "industry": "Education",
+  "country": "Malawi"
+ },
+ "edu.my": {
+  "industry": "Education",
+  "country": "Malaysia"
+ },
+ "edu.mz": {
+  "industry": "Education",
+  "country": "Mozambique"
+ },
+ "edu.na": {
+  "industry": "Education",
+  "country": "Namibia"
+ },
+ "edu.ng": {
+  "industry": "Education",
+  "country": "Nigeria"
+ },
+ "edu.ni": {
+  "industry": "Education",
+  "country": "Nicaragua"
+ },
+ "edu.om": {
+  "industry": "Education",
+  "country": "Oman"
+ },
+ "edu.pa": {
+  "industry": "Education",
+  "country": "Panama"
+ },
+ "edu.pe": {
+  "industry": "Education",
+  "country": "Peru"
+ },
+ "edu.pf": {
+  "industry": "Education",
+  "country": "French Polynesia"
+ },
+ "edu.pl": {
+  "industry": "Education",
+  "country": "Poland"
+ },
+ "edu.py": {
+  "industry": "Education",
+  "country": "Paraguay"
+ },
+ "edu.qa": {
+  "industry": "Education",
+  "country": "Qatar"
+ },
+ "edu.rs": {
+  "industry": "Education",
+  "country": "Serbia"
+ },
+ "edu.sa": {
+  "industry": "Education",
+  "country": "Saudi Arabia"
+ },
+ "edu.sg": {
+  "industry": "Education",
+  "country": "Singapore"
+ },
+ "edu.sl": {
+  "industry": "Education",
+  "country": "Sierra Leone"
+ },
+ "edu.sn": {
+  "industry": "Education",
+  "country": "Senegal"
+ },
+ "edu.sv": {
+  "industry": "Education",
+  "country": "El Salvador"
+ },
+ "edu.ua": {
+  "industry": "Education",
+  "country": "Ukraine"
+ },
+ "edu.uy": {
+  "industry": "Education",
+  "country": "Uruguay"
+ },
+ "edu.vn": {
+  "industry": "Education",
+  "country": "Vietnam"
+ },
+ "education": {
+  "industry": "Education",
+  "country": "Global"
+ },
+ "ee": {
+  "industry": "Business",
+  "country": "Estonia"
+ },
+ "eg": {
+  "industry": "Business",
+  "country": "Egypt"
+ },
+ "eh": {
+  "industry": "Business",
+  "country": "Western Sahara"
+ },
+ "er": {
+  "industry": "Business",
+  "country": "Eritrea"
+ },
+ "es": {
+  "industry": "Business",
+  "country": "Spain"
+ },
+ "et": {
+  "industry": "Business",
+  "country": "Ethiopia"
+ },
+ "eu": {
+  "industry": "Business",
+  "country": "European Union"
+ },
+ "eus": {
+  "industry": "Business",
+  "country": "Basque Country"
+ },
+ "fi": {
+  "industry": "Business",
+  "country": "Finland"
+ },
+ "financial": {
+  "industry": "Financial",
+  "country": "Global"
+ },
+ "fj": {
+  "industry": "Business",
+  "country": "Fiji"
+ },
+ "fk": {
+  "industry": "Business",
+  "country": "Falkland Islands"
+ },
+ "fm": {
+  "industry": "Business",
+  "country": "Federated States Of Micronesia"
+ },
+ "fo": {
+  "industry": "Business",
+  "country": "Faeroe Islands"
+ },
+ "fr": {
+  "industry": "Business",
+  "country": "France"
+ },
+ "ga": {
+  "industry": "Business",
+  "country": "Gabon"
+ },
+ "gal": {
+  "industry": "Business",
+  "country": "Galicia"
+ },
+ "gc.ca": {
+  "industry": "Government",
+  "country": "Canada"
+ },
+ "gd": {
+  "industry": "Business",
+  "country": "Grenada"
+ },
+ "ge": {
+  "industry": "Business",
+  "country": "Georgia"
+ },
+ "gf": {
+  "industry": "Business",
+  "country": "French Guiana"
+ },
+ "gg": {
+  "industry": "Business",
+  "country": "Guernsey"
+ },
+ "gh": {
+  "industry": "Business",
+  "country": "Ghana"
+ },
+ "gi": {
+  "industry": "Business",
+  "country": "Gibraltar"
+ },
+ "gl": {
+  "industry": "Business",
+  "country": "Greenland"
+ },
+ "gm": {
+  "industry": "Business",
+  "country": "Gambia"
+ },
+ "gn": {
+  "industry": "Business",
+  "country": "Guinea"
+ },
+ "gov": {
+  "industry": "Government",
+  "country": "Global"
+ },
+ "gov.ae": {
+  "industry": "Government",
+  "country": "United Arab Emirates"
+ },
+ "gov.af": {
+  "industry": "Government",
+  "country": "Afghanistan"
+ },
+ "gov.au": {
+  "industry": "Government",
+  "country": "Australia"
+ },
+ "gov.az": {
+  "industry": "Government",
+  "country": "Azerbaijan"
+ },
+ "gov.br": {
+  "industry": "Government",
+  "country": "Brazil"
+ },
+ "gov.ck": {
+  "industry": "Government",
+  "country": "Cook Islands"
+ },
+ "gov.eg": {
+  "industry": "Government",
+  "country": "Egypt"
+ },
+ "gov.ge": {
+  "industry": "Government",
+  "country": "Georgia"
+ },
+ "gov.gi": {
+  "industry": "Government",
+  "country": "Gibraltar"
+ },
+ "gov.gn": {
+  "industry": "Government",
+  "country": "Guinea"
+ },
+ "gov.hk": {
+  "industry": "Government",
+  "country": "Hong Kong"
+ },
+ "gov.ki": {
+  "industry": "Government",
+  "country": "Kiribati"
+ },
+ "gov.kn": {
+  "industry": "Government",
+  "country": "Saint Kitts and Nevis"
+ },
+ "gov.my": {
+  "industry": "Government",
+  "country": "Malaysia"
+ },
+ "gov.ng": {
+  "industry": "Government",
+  "country": "Nigeria"
+ },
+ "gov.om": {
+  "industry": "Government",
+  "country": "Oman"
+ },
+ "gov.pf": {
+  "industry": "Government",
+  "country": "French Polynesia"
+ },
+ "gov.ua": {
+  "industry": "Government",
+  "country": "Ukraine"
+ },
+ "gov.uk": {
+  "industry": "Government",
+  "country": "United Kingdom"
+ },
+ "gov.vn": {
+  "industry": "Government",
+  "country": "Vietnam"
+ },
+ "gp": {
+  "industry": "Business",
+  "country": "Guadeloupe"
+ },
+ "gq": {
+  "industry": "Business",
+  "country": "Equatorial Guinea"
+ },
+ "gr": {
+  "industry": "Business",
+  "country": "Greece"
+ },
+ "gs": {
+  "industry": "Business",
+  "country": "South Georgia and the South Sandwich Islands"
+ },
+ "gt": {
+  "industry": "Business",
+  "country": "Guatemala"
+ },
+ "gu": {
+  "industry": "Business",
+  "country": "Guam"
+ },
+ "gw": {
+  "industry": "Business",
+  "country": "Guinea-Bissau"
+ },
+ "gy": {
+  "industry": "Business",
+  "country": "Guyana"
+ },
+ "hk": {
+  "industry": "Business",
+  "country": "Hong Kong"
+ },
+ "hk.org": {
+  "industry": "Non-Profit",
+  "country": "Hong Kong"
+ },
+ "hm": {
+  "industry": "Business",
+  "country": "Heard Island and McDonald Islands"
+ },
+ "hn": {
+  "industry": "Business",
+  "country": "Honduras"
+ },
+ "hospital": {
+  "industry": "Healthcare",
+  "country": "Global"
+ },
+ "hr": {
+  "industry": "Business",
+  "country": "Croatia"
+ },
+ "ht": {
+  "industry": "Business",
+  "country": "Haiti"
+ },
+ "hu": {
+  "industry": "Business",
+  "country": "Hungary"
+ },
+ "id": {
+  "industry": "Business",
+  "country": "Indonesia"
+ },
+ "ie": {
+  "industry": "Business",
+  "country": "Ireland"
+ },
+ "il": {
+  "industry": "Business",
+  "country": "Israel"
+ },
+ "im": {
+  "industry": "Business",
+  "country": "Isle Of Man"
+ },
+ "in": {
+  "industry": "Business",
+  "country": "India"
+ },
+ "institute": {
+  "industry": "Business",
+  "country": "Education"
+ },
+ "io": {
+  "industry": "Business",
+  "country": "Global"
+ },
+ "iq": {
+  "industry": "Business",
+  "country": "Iraq"
+ },
+ "ir": {
+  "industry": "Business",
+  "country": "Iran"
+ },
+ "is": {
+  "industry": "Business",
+  "country": "Iceland"
+ },
+ "it": {
+  "industry": "Business",
+  "country": "Italy"
+ },
+ "je": {
+  "industry": "Business",
+  "country": "Jersey"
+ },
+ "jm": {
+  "industry": "Business",
+  "country": "Jamaica"
+ },
+ "jo": {
+  "industry": "Business",
+  "country": "Jordan"
+ },
+ "jp": {
+  "industry": "Business",
+  "country": "Japan"
+ },
+ "k12.ak.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.al.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.ar.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.az.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.ca.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.co.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.ct.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.dc.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.de.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.fl.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.fm.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.ga.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.gu.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.hi.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.ia.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.id.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.il.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.in.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.ks.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.ky.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.la.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.ma.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.md.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.me.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.mh.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.mi.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.mn.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.mo.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.mp.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.ms.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.mt.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.nc.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.nd.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.ne.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.nh.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.nj.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.nm.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.nv.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.ny.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.oh.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.ok.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.or.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.pa.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.pr.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.pw.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.ri.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.sc.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.sd.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.tn.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.tx.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.ut.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.va.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.vi.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.vt.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.wa.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.wi.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.wv.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "k12.wy.us": {
+  "industry": "Education",
+  "country": "United States"
+ },
+ "ke": {
+  "industry": "Business",
+  "country": "Kenya"
+ },
+ "kg": {
+  "industry": "Business",
+  "country": "Kyrgyzstan"
+ },
+ "kh": {
+  "industry": "Business",
+  "country": "Cambodia"
+ },
+ "ki": {
+  "industry": "Business",
+  "country": "Kiribati"
+ },
+ "km": {
+  "industry": "Business",
+  "country": "Comoros"
+ },
+ "kn": {
+  "industry": "Business",
+  "country": "Saint Kitts and Nevis"
+ },
+ "kp": {
+  "industry": "Business",
+  "country": "North Korea"
+ },
+ "kr": {
+  "industry": "Business",
+  "country": "South Korea"
+ },
+ "kw": {
+  "industry": "Business",
+  "country": "Kuwait"
+ },
+ "ky": {
+  "industry": "Business",
+  "country": "Cayman Islands"
+ },
+ "kz": {
+  "industry": "Business",
+  "country": "Kazakhstan"
+ },
+ "la": {
+  "industry": "Business",
+  "country": "Laos"
+ },
+ "law": {
+  "industry": "Legal",
+  "country": "Global"
+ },
+ "lawyer": {
+  "industry": "Legal",
+  "country": "Global"
+ },
+ "lb": {
+  "industry": "Business",
+  "country": "Lebanon"
+ },
+ "lc": {
+  "industry": "Business",
+  "country": "Saint Lucia"
+ },
+ "li": {
+  "industry": "Business",
+  "country": "Liechtenstein"
+ },
+ "lk": {
+  "industry": "Business",
+  "country": "Sri Lanka"
+ },
+ "loan": {
+  "industry": "Financial",
+  "country": "Global"
+ },
+ "loans": {
+  "industry": "Financial",
+  "country": "Global"
+ },
+ "lr": {
+  "industry": "Business",
+  "country": "Liberia"
+ },
+ "ls": {
+  "industry": "Business",
+  "country": "Lesotho"
+ },
+ "lt": {
+  "industry": "Business",
+  "country": "Lithuania"
+ },
+ "lu": {
+  "industry": "Business",
+  "country": "Luxembourg"
+ },
+ "lv": {
+  "industry": "Business",
+  "country": "Latvia"
+ },
+ "ly": {
+  "industry": "Business",
+  "country": "Global"
+ },
+ "ma": {
+  "industry": "Business",
+  "country": "Morocco"
+ },
+ "mc": {
+  "industry": "Business",
+  "country": "Monaco"
+ },
+ "md": {
+  "industry": "Business",
+  "country": "Moldova"
+ },
+ "me": {
+  "industry": "Business",
+  "country": "Montenegro"
+ },
+ "mf": {
+  "industry": "Business",
+  "country": "Saint Martin"
+ },
+ "mg": {
+  "industry": "Business",
+  "country": "Madagascar"
+ },
+ "mh": {
+  "industry": "Business",
+  "country": "Marshall Islands"
+ },
+ "mil": {
+  "industry": "Military",
+  "country": "Global"
+ },
+ "mk": {
+  "industry": "Business",
+  "country": "Macedonia"
+ },
+ "ml": {
+  "industry": "Business",
+  "country": "Mali"
+ },
+ "mm": {
+  "industry": "Business",
+  "country": "Burma"
+ },
+ "mn": {
+  "industry": "Business",
+  "country": "Mongolia"
+ },
+ "mo": {
+  "industry": "Business",
+  "country": "Macau"
+ },
+ "mp": {
+  "industry": "Business",
+  "country": "Northern Mariana Islands"
+ },
+ "mq": {
+  "industry": "Business",
+  "country": "Martinique"
+ },
+ "mr": {
+  "industry": "Business",
+  "country": "Mauritania"
+ },
+ "ms": {
+  "industry": "Business",
+  "country": "Montserrat"
+ },
+ "mt": {
+  "industry": "Business",
+  "country": "Malta"
+ },
+ "mu": {
+  "industry": "Business",
+  "country": "Mauritius"
+ },
+ "mv": {
+  "industry": "Business",
+  "country": "Maldives"
+ },
+ "mw": {
+  "industry": "Business",
+  "country": "Malawi"
+ },
+ "mx": {
+  "industry": "Business",
+  "country": "Mexico"
+ },
+ "my": {
+  "industry": "Business",
+  "country": "Malaysia"
+ },
+ "mz": {
+  "industry": "Business",
+  "country": "Mozambique"
+ },
+ "na": {
+  "industry": "Business",
+  "country": "Namibia"
+ },
+ "nc": {
+  "industry": "Business",
+  "country": "New Caledonia"
+ },
+ "ne": {
+  "industry": "Business",
+  "country": "Niger"
+ },
+ "net": {
+  "industry": "Business",
+  "country": "Global"
+ },
+ "net.au": {
+  "industry": "Business",
+  "country": "Australia"
+ },
+ "nf": {
+  "industry": "Business",
+  "country": "Norfolk Island"
+ },
+ "ng": {
+  "industry": "Business",
+  "country": "Nigeria"
+ },
+ "ni": {
+  "industry": "Business",
+  "country": "Nicaragua"
+ },
+ "nl": {
+  "industry": "Business",
+  "country": "Bonaire"
+ },
+ "no": {
+  "industry": "Business",
+  "country": "Norway"
+ },
+ "np": {
+  "industry": "Business",
+  "country": "Nepal"
+ },
+ "nr": {
+  "industry": "Business",
+  "country": "Nauru"
+ },
+ "nu": {
+  "industry": "Business",
+  "country": "Niue"
+ },
+ "nz": {
+  "industry": "Business",
+  "country": "New Zealand"
+ },
+ "om": {
+  "industry": "Business",
+  "country": "Oman"
+ },
+ "org": {
+  "industry": "Non-Profit",
+  "country": "Global"
+ },
+ "org.ae": {
+  "industry": "Non-Profit",
+  "country": "United Arab Emirates"
+ },
+ "org.af": {
+  "industry": "Non-Profit",
+  "country": "Afghanistan"
+ },
+ "org.ag": {
+  "industry": "Non-Profit",
+  "country": "Antigua and Barbuda"
+ },
+ "org.am": {
+  "industry": "Non-Profit",
+  "country": "Armenia"
+ },
+ "org.ar": {
+  "industry": "Non-Profit",
+  "country": "Argentina"
+ },
+ "org.au": {
+  "industry": "Non-Profit",
+  "country": "Australia"
+ },
+ "org.az": {
+  "industry": "Non-Profit",
+  "country": "Azerbaijan"
+ },
+ "org.bb": {
+  "industry": "Non-Profit",
+  "country": "Barbados"
+ },
+ "org.bd": {
+  "industry": "Non-Profit",
+  "country": "Bangladesh"
+ },
+ "org.bh": {
+  "industry": "Non-Profit",
+  "country": "Bahrain"
+ },
+ "org.bi": {
+  "industry": "Non-Profit",
+  "country": "Burundi"
+ },
+ "org.bm": {
+  "industry": "Non-Profit",
+  "country": "Bermuda"
+ },
+ "org.bn": {
+  "industry": "Non-Profit",
+  "country": "Brunei"
+ },
+ "org.bo": {
+  "industry": "Non-Profit",
+  "country": "Bolivia"
+ },
+ "org.br": {
+  "industry": "Non-Profit",
+  "country": "Brazil"
+ },
+ "org.bs": {
+  "industry": "Non-Profit",
+  "country": "Bahamas"
+ },
+ "org.bt": {
+  "industry": "Non-Profit",
+  "country": "Bhutan"
+ },
+ "org.bw": {
+  "industry": "Non-Profit",
+  "country": "Botswana"
+ },
+ "org.bz": {
+  "industry": "Non-Profit",
+  "country": "Belize"
+ },
+ "org.cd": {
+  "industry": "Non-Profit",
+  "country": "Democratic Republic Of The Congo"
+ },
+ "org.ck": {
+  "industry": "Non-Profit",
+  "country": "Cook Islands"
+ },
+ "org.cn": {
+  "industry": "Non-Profit",
+  "country": "China"
+ },
+ "org.cv": {
+  "industry": "Non-Profit",
+  "country": "Cape Verde"
+ },
+ "org.cy": {
+  "industry": "Non-Profit",
+  "country": "Cyprus"
+ },
+ "org.dm": {
+  "industry": "Non-Profit",
+  "country": "Dominica"
+ },
+ "org.do": {
+  "industry": "Non-Profit",
+  "country": "Dominican Republic"
+ },
+ "org.ec": {
+  "industry": "Non-Profit",
+  "country": "Ecuador"
+ },
+ "org.eg": {
+  "industry": "Non-Profit",
+  "country": "Egypt"
+ },
+ "org.es": {
+  "industry": "Non-Profit",
+  "country": "Spain"
+ },
+ "org.et": {
+  "industry": "Non-Profit",
+  "country": "Ethiopia"
+ },
+ "org.fj": {
+  "industry": "Non-Profit",
+  "country": "Fiji"
+ },
+ "org.ge": {
+  "industry": "Non-Profit",
+  "country": "Georgia"
+ },
+ "org.gh": {
+  "industry": "Non-Profit",
+  "country": "Ghana"
+ },
+ "org.gi": {
+  "industry": "Non-Profit",
+  "country": "Gibraltar"
+ },
+ "org.gl": {
+  "industry": "Non-Profit",
+  "country": "Greenland"
+ },
+ "org.gn": {
+  "industry": "Non-Profit",
+  "country": "Guinea"
+ },
+ "org.gp": {
+  "industry": "Non-Profit",
+  "country": "Guadeloupe"
+ },
+ "org.gr": {
+  "industry": "Non-Profit",
+  "country": "Greece"
+ },
+ "org.gt": {
+  "industry": "Non-Profit",
+  "country": "Guatemala"
+ },
+ "org.hk": {
+  "industry": "Non-Profit",
+  "country": "Hong Kong"
+ },
+ "org.hn": {
+  "industry": "Non-Profit",
+  "country": "Honduras"
+ },
+ "org.ht": {
+  "industry": "Non-Profit",
+  "country": "Haiti"
+ },
+ "org.hu": {
+  "industry": "Non-Profit",
+  "country": "Hungary"
+ },
+ "org.il": {
+  "industry": "Non-Profit",
+  "country": "Israel"
+ },
+ "org.im": {
+  "industry": "Non-Profit",
+  "country": "Isle Of Man"
+ },
+ "org.in": {
+  "industry": "Non-Profit",
+  "country": "India"
+ },
+ "org.je": {
+  "industry": "Non-Profit",
+  "country": "Jersey"
+ },
+ "org.jm": {
+  "industry": "Non-Profit",
+  "country": "Jamaica"
+ },
+ "org.jo": {
+  "industry": "Non-Profit",
+  "country": "Jordan"
+ },
+ "org.kg": {
+  "industry": "Non-Profit",
+  "country": "Kyrgyzstan"
+ },
+ "org.kh": {
+  "industry": "Non-Profit",
+  "country": "Cambodia"
+ },
+ "org.ki": {
+  "industry": "Non-Profit",
+  "country": "Kiribati"
+ },
+ "org.km": {
+  "industry": "Non-Profit",
+  "country": "Comoros"
+ },
+ "org.kw": {
+  "industry": "Non-Profit",
+  "country": "Kuwait"
+ },
+ "org.ky": {
+  "industry": "Non-Profit",
+  "country": "Cayman Islands"
+ },
+ "org.kz": {
+  "industry": "Non-Profit",
+  "country": "Kazakhstan"
+ },
+ "org.lb": {
+  "industry": "Non-Profit",
+  "country": "Lebanon"
+ },
+ "org.lc": {
+  "industry": "Non-Profit",
+  "country": "Saint Lucia"
+ },
+ "org.lk": {
+  "industry": "Non-Profit",
+  "country": "Sri Lanka"
+ },
+ "org.lr": {
+  "industry": "Non-Profit",
+  "country": "Liberia"
+ },
+ "org.ls": {
+  "industry": "Non-Profit",
+  "country": "Lesotho"
+ },
+ "org.lv": {
+  "industry": "Non-Profit",
+  "country": "Latvia"
+ },
+ "org.ly": {
+  "industry": "Non-Profit",
+  "country": "Libya"
+ },
+ "org.ma": {
+  "industry": "Non-Profit",
+  "country": "Morocco"
+ },
+ "org.mg": {
+  "industry": "Non-Profit",
+  "country": "Madagascar"
+ },
+ "org.mk": {
+  "industry": "Non-Profit",
+  "country": "North Macedonia"
+ },
+ "org.ml": {
+  "industry": "Non-Profit",
+  "country": "Mali"
+ },
+ "org.mm": {
+  "industry": "Non-Profit",
+  "country": "Myanmar"
+ },
+ "org.mo": {
+  "industry": "Non-Profit",
+  "country": "Macau"
+ },
+ "org.mr": {
+  "industry": "Non-Profit",
+  "country": "Mauritania"
+ },
+ "org.ms": {
+  "industry": "Non-Profit",
+  "country": "Montserrat"
+ },
+ "org.mt": {
+  "industry": "Non-Profit",
+  "country": "Malta"
+ },
+ "org.mu": {
+  "industry": "Non-Profit",
+  "country": "Mauritius"
+ },
+ "org.mw": {
+  "industry": "Non-Profit",
+  "country": "Malawi"
+ },
+ "org.mx": {
+  "industry": "Non-Profit",
+  "country": "Mexico"
+ },
+ "org.my": {
+  "industry": "Non-Profit",
+  "country": "Malaysia"
+ },
+ "org.mz": {
+  "industry": "Non-Profit",
+  "country": "Mozambique"
+ },
+ "org.na": {
+  "industry": "Non-Profit",
+  "country": "Namibia"
+ },
+ "org.ne": {
+  "industry": "Non-Profit",
+  "country": "Niger"
+ },
+ "org.nf": {
+  "industry": "Non-Profit",
+  "country": "Norfolk Island"
+ },
+ "org.ng": {
+  "industry": "Non-Profit",
+  "country": "Nigeria"
+ },
+ "org.ni": {
+  "industry": "Non-Profit",
+  "country": "Nicaragua"
+ },
+ "org.np": {
+  "industry": "Non-Profit",
+  "country": "Nepal"
+ },
+ "org.nr": {
+  "industry": "Non-Profit",
+  "country": "Nauru"
+ },
+ "org.nz": {
+  "industry": "Non-Profit",
+  "country": "New Zealand"
+ },
+ "org.om": {
+  "industry": "Non-Profit",
+  "country": "Oman"
+ },
+ "org.pa": {
+  "industry": "Non-Profit",
+  "country": "Panama"
+ },
+ "org.pe": {
+  "industry": "Non-Profit",
+  "country": "Peru"
+ },
+ "org.pf": {
+  "industry": "Non-Profit",
+  "country": "French Polynesia"
+ },
+ "org.pg": {
+  "industry": "Non-Profit",
+  "country": "Papua New Guinea"
+ },
+ "org.ph": {
+  "industry": "Non-Profit",
+  "country": "Philippines"
+ },
+ "org.pk": {
+  "industry": "Non-Profit",
+  "country": "Pakistan"
+ },
+ "org.pl": {
+  "industry": "Non-Profit",
+  "country": "Poland"
+ },
+ "org.pr": {
+  "industry": "Non-Profit",
+  "country": "Puerto Rico"
+ },
+ "org.ps": {
+  "industry": "Non-Profit",
+  "country": "Palestine"
+ },
+ "org.pt": {
+  "industry": "Non-Profit",
+  "country": "Portugal"
+ },
+ "org.py": {
+  "industry": "Non-Profit",
+  "country": "Paraguay"
+ },
+ "org.qa": {
+  "industry": "Non-Profit",
+  "country": "Qatar"
+ },
+ "org.ro": {
+  "industry": "Non-Profit",
+  "country": "Romania"
+ },
+ "org.rs": {
+  "industry": "Non-Profit",
+  "country": "Serbia"
+ },
+ "org.ru": {
+  "industry": "Non-Profit",
+  "country": "Russia"
+ },
+ "org.rw": {
+  "industry": "Non-Profit",
+  "country": "Rwanda"
+ },
+ "org.sa": {
+  "industry": "Non-Profit",
+  "country": "Saudi Arabia"
+ },
+ "org.sb": {
+  "industry": "Non-Profit",
+  "country": "Solomon Islands"
+ },
+ "org.sc": {
+  "industry": "Non-Profit",
+  "country": "Seychelles"
+ },
+ "org.sg": {
+  "industry": "Non-Profit",
+  "country": "Singapore"
+ },
+ "org.sk": {
+  "industry": "Non-Profit",
+  "country": "Slovakia"
+ },
+ "org.sl": {
+  "industry": "Non-Profit",
+  "country": "Sierra Leone"
+ },
+ "org.sn": {
+  "industry": "Non-Profit",
+  "country": "Senegal"
+ },
+ "org.so": {
+  "industry": "Non-Profit",
+  "country": "Somalia"
+ },
+ "org.sv": {
+  "industry": "Non-Profit",
+  "country": "El Salvador"
+ },
+ "org.sz": {
+  "industry": "Non-Profit",
+  "country": "Eswatini"
+ },
+ "org.tc": {
+  "industry": "Non-Profit",
+  "country": "Turks and Caicos"
+ },
+ "org.td": {
+  "industry": "Non-Profit",
+  "country": "Chad"
+ },
+ "org.tj": {
+  "industry": "Non-Profit",
+  "country": "Tajikistan"
+ },
+ "org.tn": {
+  "industry": "Non-Profit",
+  "country": "Tunisia"
+ },
+ "org.tr": {
+  "industry": "Non-Profit",
+  "country": "Turkey"
+ },
+ "org.tt": {
+  "industry": "Non-Profit",
+  "country": "Trinidad and Tobago"
+ },
+ "org.tw": {
+  "industry": "Non-Profit",
+  "country": "Taiwan"
+ },
+ "org.ua": {
+  "industry": "Non-Profit",
+  "country": "Ukraine"
+ },
+ "org.ug": {
+  "industry": "Non-Profit",
+  "country": "Uganda"
+ },
+ "org.uk": {
+  "industry": "Non-Profit",
+  "country": "United Kingdom"
+ },
+ "org.uy": {
+  "industry": "Non-Profit",
+  "country": "Uruguay"
+ },
+ "org.uz": {
+  "industry": "Non-Profit",
+  "country": "Uzbekistan"
+ },
+ "org.vc": {
+  "industry": "Non-Profit",
+  "country": "Saint Vincent and The Grenadines"
+ },
+ "org.ve": {
+  "industry": "Non-Profit",
+  "country": "Venezuela"
+ },
+ "org.vi": {
+  "industry": "Non-Profit",
+  "country": "US Virgin Islands"
+ },
+ "org.vn": {
+  "industry": "Non-Profit",
+  "country": "Vietnam"
+ },
+ "org.vu": {
+  "industry": "Non-Profit",
+  "country": "Vanuatu"
+ },
+ "org.ws": {
+  "industry": "Non-Profit",
+  "country": "Samoa"
+ },
+ "org.ye": {
+  "industry": "Non-Profit",
+  "country": "Yemen"
+ },
+ "org.za": {
+  "industry": "Non-Profit",
+  "country": "South Africa"
+ },
+ "org.zm": {
+  "industry": "Non-Profit",
+  "country": "Zambia"
+ },
+ "pa": {
+  "industry": "Business",
+  "country": "Panama"
+ },
+ "pe": {
+  "industry": "Business",
+  "country": "Peru"
+ },
+ "pf": {
+  "industry": "Business",
+  "country": "French Polynesia"
+ },
+ "pg": {
+  "industry": "Business",
+  "country": "Papua New Guinea"
+ },
+ "ph": {
+  "industry": "Business",
+  "country": "Philippines"
+ },
+ "pk": {
+  "industry": "Business",
+  "country": "Pakistan"
+ },
+ "pl": {
+  "industry": "Business",
+  "country": "Poland"
+ },
+ "pm": {
+  "industry": "Business",
+  "country": "Saint-Pierre and Miquelon"
+ },
+ "pn": {
+  "industry": "Business",
+  "country": "Pitcairn Islands"
+ },
+ "pr": {
+  "industry": "Business",
+  "country": "Puerto Rico"
+ },
+ "ps": {
+  "industry": "Business",
+  "country": "Gaza Strip"
+ },
+ "pt": {
+  "industry": "Business",
+  "country": "Portugal"
+ },
+ "pw": {
+  "industry": "Business",
+  "country": "Palau"
+ },
+ "py": {
+  "industry": "Business",
+  "country": "Paraguay"
+ },
+ "qa": {
+  "industry": "Business",
+  "country": "Qatar"
+ },
+ "re": {
+  "industry": "Business",
+  "country": "Réunion"
+ },
+ "realestate": {
+  "industry": "Real Estate",
+  "country": "Global"
+ },
+ "realtor": {
+  "industry": "Real Estate",
+  "country": "Global"
+ },
+ "realty": {
+  "industry": "Real Estate",
+  "country": "Global"
+ },
+ "ro": {
+  "industry": "Business",
+  "country": "Romania"
+ },
+ "rs": {
+  "industry": "Business",
+  "country": "Serbia"
+ },
+ "ru": {
+  "industry": "Business",
+  "country": "Russia"
+ },
+ "rw": {
+  "industry": "Business",
+  "country": "Rwanda"
+ },
+ "sa": {
+  "industry": "Business",
+  "country": "Saudi Arabia"
+ },
+ "sb": {
+  "industry": "Business",
+  "country": "Solomon Islands"
+ },
+ "sc": {
+  "industry": "Business",
+  "country": "Seychelles"
+ },
+ "sd": {
+  "industry": "Business",
+  "country": "Sudan"
+ },
+ "se": {
+  "industry": "Business",
+  "country": "Sweden"
+ },
+ "sg": {
+  "industry": "Business",
+  "country": "Singapore"
+ },
+ "sh": {
+  "industry": "Business",
+  "country": "Saint Helena"
+ },
+ "shop": {
+  "industry": "e-Commerce",
+  "country": "Global"
+ },
+ "si": {
+  "industry": "Business",
+  "country": "Slovenia"
+ },
+ "site": {
+  "industry": "Business",
+  "country": "Global"
+ },
+ "sj": {
+  "industry": "Business",
+  "country": "Svalbard and Jan Mayen Islands"
+ },
+ "sk": {
+  "industry": "Business",
+  "country": "Slovakia"
+ },
+ "sl": {
+  "industry": "Business",
+  "country": "Sierra Leone"
+ },
+ "sm": {
+  "industry": "Business",
+  "country": "San Marino"
+ },
+ "sn": {
+  "industry": "Business",
+  "country": "Senegal"
+ },
+ "so": {
+  "industry": "Business",
+  "country": "Somalia"
+ },
+ "sr": {
+  "industry": "Business",
+  "country": "Suriname"
+ },
+ "ss": {
+  "industry": "Business",
+  "country": "South Sudan"
+ },
+ "st": {
+  "industry": "Business",
+  "country": "São Tomé and Príncipe"
+ },
+ "sv": {
+  "industry": "Business",
+  "country": "El Salvador"
+ },
+ "sx": {
+  "industry": "Business",
+  "country": "Sint Maarten"
+ },
+ "sy": {
+  "industry": "Business",
+  "country": "Syria"
+ },
+ "sz": {
+  "industry": "Business",
+  "country": "Eswatini"
+ },
+ "tc": {
+  "industry": "Business",
+  "country": "Turks and Caicos"
+ },
+ "td": {
+  "industry": "Business",
+  "country": "Chad"
+ },
+ "technology": {
+  "industry": "Technology",
+  "country": "Global"
+ },
+ "tf": {
+  "industry": "Business",
+  "country": "Antarctic Lands"
+ },
+ "tg": {
+  "industry": "Business",
+  "country": "Togo"
+ },
+ "th": {
+  "industry": "Business",
+  "country": "Thailand"
+ },
+ "tj": {
+  "industry": "Business",
+  "country": "Tajikistan"
+ },
+ "tk": {
+  "industry": "Business",
+  "country": "Tokelau"
+ },
+ "tl": {
+  "industry": "Business",
+  "country": "East Timor"
+ },
+ "tm": {
+  "industry": "Business",
+  "country": "Turkmenistan"
+ },
+ "tn": {
+  "industry": "Business",
+  "country": "Tunisia"
+ },
+ "to": {
+  "industry": "Business",
+  "country": "Tonga"
+ },
+ "tp": {
+  "industry": "Business",
+  "country": "East Timor"
+ },
+ "tr": {
+  "industry": "Business",
+  "country": "Turkey"
+ },
+ "tt": {
+  "industry": "Business",
+  "country": "Trinidad & Tobago"
+ },
+ "tv": {
+  "industry": "Business",
+  "country": "Tuvalu"
+ },
+ "tw": {
+  "industry": "Business",
+  "country": "Taiwan"
+ },
+ "tz": {
+  "industry": "Business",
+  "country": "Tanzania"
+ },
+ "ua": {
+  "industry": "Business",
+  "country": "Ukraine"
+ },
+ "ug": {
+  "industry": "Business",
+  "country": "Uganda"
+ },
+ "uk": {
+  "industry": "Business",
+  "country": "United Kingdom"
+ },
+ "us": {
+  "industry": "Business",
+  "country": "United States"
+ },
+ "us.org": {
+  "industry": "Non-Profit",
+  "country": "United States"
+ },
+ "uy": {
+  "industry": "Business",
+  "country": "Uruguay"
+ },
+ "uz": {
+  "industry": "Business",
+  "country": "Uzbekistan"
+ },
+ "va": {
+  "industry": "Business",
+  "country": "Vatican City"
+ },
+ "vc": {
+  "industry": "Business",
+  "country": "Saint Vincent and The Grenadines"
+ },
+ "ve": {
+  "industry": "Business",
+  "country": "Venezuela"
+ },
+ "vg": {
+  "industry": "Business",
+  "country": "British Virgin Islands"
+ },
+ "vi": {
+  "industry": "Business",
+  "country": "United States Virgin Islands"
+ },
+ "vn": {
+  "industry": "Business",
+  "country": "Vietnam"
+ },
+ "vu": {
+  "industry": "Business",
+  "country": "Vanuatu"
+ },
+ "wf": {
+  "industry": "Business",
+  "country": "Wallis and Futuna"
+ },
+ "ws": {
+  "industry": "Business",
+  "country": "Samoa"
+ },
+ "ye": {
+  "industry": "Business",
+  "country": "Yemen"
+ },
+ "yt": {
+  "industry": "Business",
+  "country": "Mayotte"
+ },
+ "za": {
+  "industry": "Business",
+  "country": "South Africa"
+ },
+ "zm": {
+  "industry": "Business",
+  "country": "Zambia"
+ },
+ "zw": {
+  "industry": "Business",
+  "country": "Zimbabwe"
+ }
+}

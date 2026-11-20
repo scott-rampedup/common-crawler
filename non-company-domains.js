@@ -160,6 +160,11 @@ const PLATFORM_HOSTS = new Set([
   // genuine employer (the law firm), not a host.
   'etsy.com', 'amazon.com', 'wix.com', 'calendly.com', 'angel.co', 'godaddy.com', 'github.com',
   'lnk.bio', 'meetup.com', 'patreon.com', 'tinyurl.com', 'easyleadz.com', 'zumvu.com', 'leadinfo.com',
+  // URL shorteners. A redirector can never be an employer, and they arrive as a business "website" more
+  // often than expected: goo.gl alone stood as the root domain of 516 places in a 40,000-row Overture
+  // sample before it was listed here. Scott's Domain tab has tinyurl.com and lnk.bio but not these.
+  'goo.gl', 'bit.ly', 'ow.ly', 'buff.ly', 't.co', 'rb.gy', 'cutt.ly', 'shorturl.at', 'rebrand.ly',
+  'is.gd', 'tiny.cc', 'bl.ink', 'short.io', 'qr.page', 'wa.link', 'linktr.ee',
   'idealist.org', 'complaintsboard.com', 'information.com', 'intensedebate.com', 'leadiq.com',
   'opendorse.com', 'prowly.com', 'indiemart.com', 'hugedomains.com',
 ]);
