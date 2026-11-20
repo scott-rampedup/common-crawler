@@ -71,7 +71,15 @@ async function loadFile(file, toActions, label) {
   // HQ: existing -> partial update (company_type + rollups + location_count); synthesized -> index new
   await loadFile(path.join(IN, 'gm-hq.ndjson'), (o) => o.isNew
     ? [{ index: { _index: co.INDEX, _id: o.id } }, hqNewToDoc(o.id, o.doc)]
-    : [{ update: { _index: co.INDEX, _id: o.id } }, { doc: { company_type: 'HQ', location_count: o.doc.location_count || 0, bio_url: o.doc.bio_url || '', linkedin_contact: o.doc.linkedin_contact || '', ...(o.doc.linkedin_url ? { linkedin_url: o.doc.linkedin_url } : {}), ...(o.doc.email ? { email: o.doc.email, email_type: o.doc.email_type || '' } : {}) } }], 'HQ');
+    // bio_url and linkedin_contact are written ONLY when the incoming record actually has one, the same
+    // way linkedin_url / email / email_type beside them already behave. They used to be written
+    // unconditionally with a `|| ''` fallback, which turns an absent value into a destructive blank on an
+    // EXISTING company. That was harmless for Google Maps, whose team-profile columns usually carry a
+    // value, and is not harmless for Overture, which has a bio URL on 0.5% of records: measured against
+    // the real gm-build output for one shard, 347,131 existing HQs would be updated, 1.8% of them hold a
+    // bio_url today, so ~6,300 companies per shard (~100,900 across the release) would lose the field
+    // that feeds the Contact Crawler, in exchange for nothing.
+    : [{ update: { _index: co.INDEX, _id: o.id } }, { doc: { company_type: 'HQ', location_count: o.doc.location_count || 0, ...(o.doc.bio_url ? { bio_url: o.doc.bio_url } : {}), ...(o.doc.linkedin_contact ? { linkedin_contact: o.doc.linkedin_contact } : {}), ...(o.doc.linkedin_url ? { linkedin_url: o.doc.linkedin_url } : {}), ...(o.doc.email ? { email: o.doc.email, email_type: o.doc.email_type || '' } : {}) } }], 'HQ');
   // child Locations -> index by cid (dedupes the same business across scrape dates)
   await loadFile(path.join(IN, 'gm-loc.ndjson'), (o) => { const d = locToDoc(o.doc); return [{ index: { _index: co.INDEX, _id: d.id } }, d]; }, 'Locations');
   // contacts -> score-gated upsert into the Master DB (email-keyed)
