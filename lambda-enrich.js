@@ -51,7 +51,7 @@ exports.handler = async (event = {}) => {
     try {
       const company = { domain: c.domain || '', website: c.website || '', full_address: c.full_address || '', phone: c.phone || '' };
       const r = che.enrichFromHtml(company, html, { genderMap, altList, now, crawl });
-      const bio = String(r.updates.bio_url || '').split(';').map((s) => s.trim()).filter(Boolean);
+      const bio = che.asList(r.updates.bio_url);   // array now; String(array).split(';') fused them into one
       bioUrls += bio.length; contactsN += (r.contacts || []).length;
       return { id: c.id, domain: c.domain, updates: r.updates, contacts: r.contacts || [], bio };
     } catch (e) { return null; }

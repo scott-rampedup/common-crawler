@@ -68,7 +68,7 @@ const readline = require('readline');
         if (!html) continue;
         const r = che.enrichFromHtml(company, html, { genderMap: gm, altList, now });
         await withRetry(() => co.update(client, company.id, r.updates)); updated++; contacts += (r.updates.contacts_count || 0);
-        if (bioSet) for (const u of String(r.updates.bio_url || '').split(';')) { const t = u.trim(); if (t) bioSet.add(t); }
+        if (bioSet) for (const u of che.asList(r.updates.bio_url)) bioSet.add(u);   // reads either shape
         for (const c of (r.contacts || [])) {
           if (!c.email) continue;                        // email-keyed store: skip email-less contacts
           const doc = os.recordToDoc({ 'Time Stamp': today, 'Source': 'CC Home', 'Web Source URL': c.bio || ('https://' + company.domain + '/'), 'Domain': company.domain, 'First': c.first, 'Last': c.last, 'Gender': c.gender, 'Email Address': c.email, 'LinkedIn URL': c.linkedin }, now);

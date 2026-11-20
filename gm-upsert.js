@@ -22,13 +22,24 @@ const client = co.makeClient(process.env.OPENSEARCH_ENDPOINT);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function withRetry(fn) { for (let a = 0; ; a++) { try { return await fn(); } catch (e) { if (a >= 6) throw e; await sleep(Math.min(16000, 500 * 2 ** a)); } } }
 
+// "has a value", for the STRING-or-ARRAY fields below. These guards used a bare truthiness test,
+// which was right
+// while the fields were strings and became wrong the moment they turned into arrays: [] is TRUTHY in
+// JavaScript, so an empty array would have been spread into the update and blanked the field -- the
+// exact bio_url blanking this branch was fixed to prevent, walking back in through the array change.
+const hasVal = (v) => (Array.isArray(v) ? v.length > 0 : !!String(v == null ? '' : v).trim());
+
 const CC = (g) => ({ name: g.name || '', website: g.website || '', category: g.category || '', full_address: g.full_address || '',
   // The Location's own page, carried through from gm-load so a per-location crawl has something to
   // fetch other than the shared homepage.
   ...(g.page_url ? { page_url: g.page_url } : {}),
   phone: g.phone || '', phone_type: g.phone_type || '', website_type: g.website_type || '', facebook: g.facebook || '', instagram: g.instagram || '',
-  whatsapp: g.whatsapp || '', cid: g.cid || '', team_page: g.team_page || '', bio_url: g.bio_url || '',
-  linkedin_contact: g.linkedin_contact || '', linkedin_url: g.linkedin_url || '',   // /in vs /company kept distinct
+  whatsapp: g.whatsapp || '', cid: g.cid || '', team_page: g.team_page || '',
+  // multi-value fields as ARRAYS, the same shape the refresh writes. gm-upsert builds its bulk bodies
+  // directly rather than through co.update(), so it does not get coerceField() for free -- left as
+  // '; ' strings here the index would have carried two shapes of the same field at once.
+  bio_url: co.asList(g.bio_url),
+  linkedin_contact: co.asList(g.linkedin_contact), linkedin_url: co.asList(g.linkedin_url),   // /in vs /company kept distinct
   email: g.email || '', email_type: g.email_type || '',
   // per-LOCATION closure status from the Maps export (Open / Temporarily closed / blank). Only set on
   // Location records -- an HQ is an aggregate over a domain, where a closure would be meaningless.
@@ -79,7 +90,7 @@ async function loadFile(file, toActions, label) {
     // the real gm-build output for one shard, 347,131 existing HQs would be updated, 1.8% of them hold a
     // bio_url today, so ~6,300 companies per shard (~100,900 across the release) would lose the field
     // that feeds the Contact Crawler, in exchange for nothing.
-    : [{ update: { _index: co.INDEX, _id: o.id } }, { doc: { company_type: 'HQ', location_count: o.doc.location_count || 0, ...(o.doc.bio_url ? { bio_url: o.doc.bio_url } : {}), ...(o.doc.linkedin_contact ? { linkedin_contact: o.doc.linkedin_contact } : {}), ...(o.doc.linkedin_url ? { linkedin_url: o.doc.linkedin_url } : {}), ...(o.doc.email ? { email: o.doc.email, email_type: o.doc.email_type || '' } : {}) } }], 'HQ');
+    : [{ update: { _index: co.INDEX, _id: o.id } }, { doc: { company_type: 'HQ', location_count: o.doc.location_count || 0, ...(hasVal(o.doc.bio_url) ? { bio_url: o.doc.bio_url } : {}), ...(hasVal(o.doc.linkedin_contact) ? { linkedin_contact: o.doc.linkedin_contact } : {}), ...(hasVal(o.doc.linkedin_url) ? { linkedin_url: o.doc.linkedin_url } : {}), ...(hasVal(o.doc.email) ? { email: o.doc.email, email_type: o.doc.email_type || '' } : {}) } }], 'HQ');
   // child Locations -> index by cid (dedupes the same business across scrape dates)
   await loadFile(path.join(IN, 'gm-loc.ndjson'), (o) => { const d = locToDoc(o.doc); return [{ index: { _index: co.INDEX, _id: d.id } }, d]; }, 'Locations');
   // contacts -> score-gated upsert into the Master DB (email-keyed)

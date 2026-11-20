@@ -169,7 +169,7 @@ async function refresh(client, targets, A, output, crawls, genderMap, altList) {
           const r = che.enrichFromHtml(rec, html, { genderMap, altList, now: new Date().toISOString(), crawl: crawls[0] });
           if (r.updates.logo) withLogo++;
           if (r.updates.postal_code) withPostal++;
-          if (r.updates.bio_url) bioUrls += r.updates.bio_url.split(';').filter(Boolean).length;
+          if (r.updates.bio_url) bioUrls += co.asList(r.updates.bio_url).length;   // array now, no .split
           await co.update(client, rec.id, r.updates);
           updated++;
         }
