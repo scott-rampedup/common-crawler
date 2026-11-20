@@ -98,11 +98,19 @@ const phoneType = (p) => { if (!wireless || !p) return ''; try { const t = wbc.c
 // require a plausible E.164 length -- 10 to 13 digits -- which is what separates the real number from
 // the digit-shifted noise. Returns the business line, which for these one- and two-person businesses
 // is usually the owner's; for a larger company it is the shared number, not a personal DDI.
-function bestPhone(details) {
+// `facebook` is passed so a Facebook PAGE ID cannot be mistaken for a phone. The vendor's crawler
+// scrapes the numeric id out of facebook.com/<id> and files it under xb_phones, typed "Fixed Line":
+//   xb_phones   +328515505211
+//   xb_facebook https://www.facebook.com/328515505211
+// It is 12 digits, so the E.164 length test below waves it through, and gm-build then stamps it as the
+// phone on EVERY contact at that domain. 166 of the 40,490 enrichment phones in the 20-11-2026 export
+// (0.41%) were this. Systematic, not coincidence -- a real number equalling a page id across 166 rows.
+function bestPhone(details, facebook) {
+  const fbId = (String(facebook || '').match(/facebook\.com\/(\d{6,})/) || [])[1] || '';
   const rank = (t) => (/^mobile$/i.test(t) ? 0 : /^fixed line$/i.test(t) ? 1 : 9);
   const items = splitMulti(details)
     .map((s) => { const p = String(s).split("|"); return { num: (p[0] || "").trim(), type: (p[1] || "").trim() }; })
-    .filter((x) => { const d = x.num.replace(/[^0-9]/g, ""); return d.length >= 10 && d.length <= 13 && rank(x.type) < 9; })
+    .filter((x) => { const d = x.num.replace(/[^0-9]/g, ""); if (fbId && d === fbId) return false; return d.length >= 10 && d.length <= 13 && rank(x.type) < 9; })
     .sort((a, b) => rank(a.type) - rank(b.type) || a.num.length - b.num.length);
   return items[0] || null;
 }
@@ -203,6 +211,8 @@ if (require.main === module) (async () => {
       // pull EVERY email in xb_emails (not just the first), each run through cleanEmail — which drops the
       // ones we don't import (blocklist + junk: images/example.com/phone-misreads). email = primary; the
       // full list feeds contact-building downstream so no address is lost.
+      // computed once; it was being recomputed for .num and again for .type
+      const xbp = bestPhone(f.xb_phone_details, f.xb_facebook) || {};
       const emails = [...new Set(splitMulti(f.xb_emails).map((e) => ex.cleanEmail(e).toLowerCase()).filter(Boolean))];
       const email = emails[0] || '';
       const out = {
@@ -228,8 +238,8 @@ if (require.main === module) (async () => {
         email, emails, email_type: email ? ex.classifyEmail(email) : '',
         phone: f.phone, phone_type: phoneType(f.phone),
         // the enrichment phone, kept separate from the listing phone above so neither overwrites the other
-        xb_phone: (bestPhone(f.xb_phone_details) || {}).num || "",
-        xb_phone_type: (bestPhone(f.xb_phone_details) || {}).type || "",
+        xb_phone: xbp.num || "",
+        xb_phone_type: xbp.type || "",
         whatsapp: f.xb_whatsapp, facebook: f.xb_facebook, instagram: f.xb_instagram,
         linkedin_contact: liProfiles(f.xb_linkedin_profile).join('; '),   // personal profiles (linkedin.com/in)
         linkedin_url: liCompanies(f.xb_linkedin_company).join('; '),      // company page (linkedin.com/company)
