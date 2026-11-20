@@ -245,7 +245,43 @@ const EDITABLE = new Set(['name', 'website', 'industry', 'size', 'country', 'reg
   // home-page enrichment outputs; without these co.update() drops them without a word
   'logo', 'postal_code', 'whatsapp', 'team_page',
   // SHA-256 over the Public Prospects canonical address form; see email-hash.js
-  'email_hash']);
+  'email_hash',
+  // registrable domain + the parent company's name. Both were in the mapping at 0.0% with nothing
+  // writing them; without them here co.update() would drop the refresh's root_domain in silence.
+  'root_domain', 'company_name']);
+// ---- root_domain -------------------------------------------------------------------------------
+// The REGISTRABLE domain (eTLD+1), which is what makes this field worth having: domain already holds
+// the host, so a root_domain that merely repeats it is a duplicate column. Reduced properly,
+// shadyside.pizzaparma.us and pizzaparma.us share one root_domain and the locations of a chain group
+// under their company.
+//
+// Suffixes come from data/tld.json, which carries 299 multi-part entries (co.uk, com.au, ac.jp) beside
+// the 294 single ones. It is not the full public suffix list, so this is approximate in the same way
+// Public Prospects' pp_registrable is approximate -- the long tail of private suffixes
+// (something.s3.amazonaws.com) reduces one label too far. For company domains that is rare enough to
+// accept; what it must never do is return something SHORTER than a real registrable domain for the
+// common cases, and the longest-suffix match below is what guarantees that.
+let TLD_SUFFIXES = null;
+function tldSuffixes() {
+  if (!TLD_SUFFIXES) {
+    try { TLD_SUFFIXES = new Set(Object.keys(require('./data/tld.json'))); }
+    catch (e) { TLD_SUFFIXES = new Set(['com', 'org', 'net', 'edu', 'gov', 'io', 'co']); }
+  }
+  return TLD_SUFFIXES;
+}
+function registrableDomain(host) {
+  const h = String(host == null ? '' : host).trim().toLowerCase()
+    .replace(/^https?:\/\//, '').replace(/[\/:?#].*$/, '').replace(/^www\./, '').replace(/\.+$/, '');
+  if (!h || !h.includes('.')) return '';
+  const labels = h.split('.').filter(Boolean);
+  const sfx = tldSuffixes();
+  // longest matching suffix wins, so co.uk beats uk and the label kept is the real registrant's
+  for (let i = Math.max(0, labels.length - 3); i < labels.length; i++) {
+    if (sfx.has(labels.slice(i).join('.'))) return i > 0 ? labels.slice(i - 1).join('.') : h;
+  }
+  return labels.slice(-2).join('.');     // unknown suffix: assume a single-label TLD
+}
+
 // ---- field shape ---------------------------------------------------------------------------------
 // Fields that legitimately hold MORE THAN ONE value, stored as arrays. bio_url carries >1 on 30.2% of
 // records and reaches 114; linkedin_contact 26.5% and reaches 64. Joined into one '; ' string they
@@ -408,4 +444,4 @@ const csvHeader = () => OUT_COLS.join(',');
 // 23 hosts from Scott's alternate-domain list — so the loaders below now skip those too.
 const { NON_COMPANY_DOMAINS, isBadCompanyDomain } = require('./non-company-domains');
 
-module.exports = { INDEX, MAPPING, OUT_COLS, MULTI_VALUE, asList, coerceField, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, canonPlace, canonPlaces, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, getRoleEmailTerms, setRoleEmailTerms, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, bulkUpdate, getEmailModel, setEmailModelByDomain, makeClient: os.makeClient };
+module.exports = { INDEX, MAPPING, OUT_COLS, MULTI_VALUE, asList, coerceField, registrableDomain, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, canonPlace, canonPlaces, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, getRoleEmailTerms, setRoleEmailTerms, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, bulkUpdate, getEmailModel, setEmailModelByDomain, makeClient: os.makeClient };

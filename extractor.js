@@ -367,6 +367,22 @@ const NON_TLD_EXT_RE = /\.(js|mjs|cjs|ts|css|scss|json|xml|map|woff2?|ttf|otf|eo
 // TLD that real companies use -- saylor_kolodsick_logo-cpa_cfp@2x.ai must go, someone@studio.ai must not.
 const ASSET_DIM_RE = /^\d+x(\b|[.\-_])/i;
 // Normalize/repair a scraped email; returns "" if it should be dropped.
+// A syntactically possible DNS name. Deliberately NOT a TLD allowlist -- see the call site.
+function isPlausibleDomain(domain){
+  const d = String(domain || "").toLowerCase();
+  if(d.length > 253 || !d.includes(".")) return false;
+  const labels = d.split(".");
+  if(labels.length < 2) return false;
+  for(const l of labels){
+    if(!l || l.length > 63) return false;
+    if(!/^[a-z0-9-]+$/.test(l)) return false;
+    if(l.startsWith("-") || l.endsWith("-")) return false;
+  }
+  const tld = labels[labels.length - 1];
+  if(tld.length < 2) return false;
+  return /^[a-z]+$/.test(tld) || /^xn--[a-z0-9-]+$/.test(tld);
+}
+
 function cleanEmail(raw){
   if(!raw) return "";
   let e = deobfuscateEmail(raw);
@@ -399,6 +415,13 @@ function cleanEmail(raw){
   if(NON_TLD_EXT_RE.test(domain)) return "";          // e.g. player@2.0.4.js -- a version, not a mailbox
   if(ASSET_DIM_RE.test(domain)) return "";            // e.g. logo@2x.ai / @2x-150x150.png -- a sprite
   if(domain === "example.com") return "";              // placeholder domain
+  // DNS LABEL VALIDITY. Every label is 1-63 chars of [a-z0-9-] and may not begin or end with a hyphen,
+  // and the TLD is letters (or xn-- punycode). This is the standard, not a list, so it costs nothing in
+  // coverage: an allowlist built from data/tld.json would reject every newer gTLD we have not enumerated.
+  // What it catches is scraped debris that merely LOOKS like an address -- a live sample of 60,000
+  // company emails turned up 48g9-.bybgnptut being stored and classified "Professional", because the
+  // existing tests only ask whether a domain contains a dot.
+  if(!isPlausibleDomain(domain)) return "";
 
   // A phone number misread into the address -- "5551234567john@acme.com" is really john@acme.com. That
   // artifact is real, but the test for it was "starts with a digit", which is not the same thing and
@@ -1480,7 +1503,7 @@ module.exports = {
   isBioAllottedDomain, bioAllotmentDomains, extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules, pathIdHints,
   cleanEmail, setEmailBlocklist, loadEmailBlocklist, setAdminRoleTerms, getAdminRoleTerms, getBuiltInRoleTerms, analyzePhones, splitExtension, intlLineType,
   geocodeRecords, geocodePhone, findPosition,
-  toE164, countryCodeFromDomain, pathIdFromUrl, getBaseDomain, nameSlugFromUrl, lastPathSeg, lastPathFromUrl, structuredFromHtml, findSocials,
+  isPlausibleDomain, toE164, countryCodeFromDomain, pathIdFromUrl, getBaseDomain, nameSlugFromUrl, lastPathSeg, lastPathFromUrl, structuredFromHtml, findSocials,
   normalizeForMatching, isKnownDir };   // the directory matchers, so callers never write a second copy   // reused by the Sheet importer + Site Search + DB normalizer
 
 // ---------------------------------------------------------------- self-test

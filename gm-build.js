@@ -40,7 +40,10 @@ function parseAddr(addr) {
 }
 // prefer a record's componentized city/region/country (Bing UK) over parsing the free-text address (Google US)
 const crcOf = (r) => (r && (r.region || r.locality)) ? { city: (r.locality || '').toLowerCase(), region: (r.region || '').toLowerCase(), country: (r.country || '').toLowerCase() } : parseAddr(r ? r.full_address : '');
-const splitL = (s) => String(s || '').split(/[\s;]+/).map((x) => x.trim()).filter(Boolean);
+// Reads BOTH shapes. hq0 comes straight out of OpenSearch, where bio_url / linkedin_contact /
+// linkedin_url are arrays now, and String(['a','b']) is 'a,b' -- splitting that on [;\s]+ returned
+// ONE fused entry and silently merged two URLs into a string that is neither.
+const splitL = (s) => co.asList(s);
 const LI_IN = /linkedin\.com\/in\//i;                                 // personal profile  -> linkedin_contact
 const LI_CO = /linkedin\.com\/(company|school|showcase)\//i;          // company page      -> linkedin_url
 const score = (r) => (r.email ? 2 : 0) + (r.website ? 1 : 0) + (r.phone ? 1 : 0) + (r.bio_url ? 2 : 0) + (r.name ? 1 : 0) + (r.full_address ? 1 : 0);
@@ -142,14 +145,26 @@ function processGroup(domain, locs, hq0) {
         website_type: rep.website_type, facebook: rep.facebook, instagram: rep.instagram, whatsapp: rep.whatsapp, cid: rep.cid, time_stamp: rep.time_stamp, source_map: rep.source_map,
         locality: hqCRC.city, region: hqCRC.region, country: hqCRC.country };
   // rolled-up contact fields onto the HQ (dedup already via sets)
-  hqDoc.bio_url = [...bio].join('; ');
-  hqDoc.linkedin_contact = [...li].join('; ');       // personal profiles (linkedin.com/in)
-  hqDoc.linkedin_url = [...coLi].join('; ');         // company page (linkedin.com/company)
+  hqDoc.bio_url = [...bio];                          // arrays, as the index holds them now
+  hqDoc.linkedin_contact = [...li];                  // personal profiles (linkedin.com/in)
+  hqDoc.linkedin_url = [...coLi];                    // company page (linkedin.com/company)
+  // root_domain and company_name, which until now were in the mapping at 0.0% with nothing writing
+  // them. root_domain is the REGISTRABLE domain, so a chain's locations on shadyside.pizzaparma.us and
+  // pizzaparma.us group together -- domain already holds the host, so anything less is a duplicate
+  // column. company_name is the PARENT's name: on an HQ its own, on a Location the HQ it belongs to,
+  // which is the same sense the contacts index uses the name in.
+  const hqName = String((hq0 && hq0.name) || rep.name || '').trim();
+  const rootDom = co.registrableDomain(domain);
+  if (hqName) hqDoc.company_name = hqName;
+  if (rootDom) hqDoc.root_domain = rootDom;
   if (emails.size) { hqDoc.email = [...emails][0]; hqDoc.email_type = ex.classifyEmail([...emails][0]); }
   hqDoc.location_count = locs.length;
 
   // strip the rolled-up fields off the child Location records (all roll up to the HQ)
-  const childDocs = children.map((c) => ({ ...c, bio_url: '', linkedin_contact: '', linkedin_url: '', email: '', email_type: '' }));
+  // [] not '' for the multi-value fields: these are deliberate CLEARS (everything rolls up to the HQ),
+  // and locToDoc writes the document directly rather than through coerceField.
+  const childDocs = children.map((c) => ({ ...c, bio_url: [], linkedin_contact: [], linkedin_url: [], email: '', email_type: '',
+    ...(hqName ? { company_name: hqName } : {}), ...(rootDom ? { root_domain: rootDom } : {}) }));
 
   // Phase 5 — contacts from the HQ's rolled-up signals
   let contacts = [];

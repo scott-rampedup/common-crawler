@@ -480,6 +480,11 @@ function enrichFromHtml(company, html, { genderMap = {}, altList, now, crawl } =
     if (p.address.region && !String(company.region || '').trim()) up.region = canonPlace(p.address.region);
     if (p.address.country && !String(company.country || '').trim()) up.country = canonPlace(p.address.country);
   }
+  // root_domain: derived from the record's own domain, so the refresh fills it too rather than
+  // leaving it to gm-upsert alone. company_name is NOT set here -- the refresh sees one company at
+  // a time and does not know which HQ a Location belongs to; gm-build does, and writes it there.
+  const rd = co.registrableDomain(company.domain || '');
+  if (rd) up.root_domain = rd;
   if (now) up.cc_refreshed_at = now;          // when this company was last CC-refreshed (drives deltas + "last refreshed")
   if (crawl) up.cc_crawl = crawl;             // the CC crawl the freshest capture came from
   if (phone && !String(company.phone || '').trim()) up.phone = phone;

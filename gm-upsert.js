@@ -54,7 +54,8 @@ const CC = (g) => ({ name: g.name || '', website: g.website || '', category: g.c
   ...(g.locality ? { locality: co.canonPlace(g.locality) } : {}), ...(g.region ? { region: co.canonPlace(g.region) } : {}),
   ...(g.country ? { country: co.canonPlace(g.country) } : {}),
   ...(g.time_stamp ? { time_stamp: g.time_stamp } : {}), ...(g.source_map ? { source_map: g.source_map } : {}) });
-const locToDoc = (g) => naics.assignNaics({ id: g.cid || ('gm:' + g.root_domain), domain: g.root_domain, company_type: 'Location', cc_refreshed_at: now, ...CC(g) });
+const locToDoc = (g) => naics.assignNaics({ id: g.cid || ('gm:' + g.root_domain), domain: g.root_domain, company_type: 'Location', cc_refreshed_at: now,
+  ...(g.company_name ? { company_name: g.company_name } : {}), ...(g.root_domain ? { root_domain: co.registrableDomain(g.root_domain) } : {}), ...CC(g) });
 const hqNewToDoc = (id, d) => naics.assignNaics({ id, domain: d.domain, company_type: 'HQ', locality: co.canonPlace(d.locality), region: co.canonPlace(d.region), country: co.canonPlace(d.country),
   location_count: d.location_count || 0, cc_refreshed_at: now, ...CC(d) });
 
@@ -94,7 +95,7 @@ async function loadFile(file, toActions, label) {
     // the real gm-build output for one shard, 347,131 existing HQs would be updated, 1.8% of them hold a
     // bio_url today, so ~6,300 companies per shard (~100,900 across the release) would lose the field
     // that feeds the Contact Crawler, in exchange for nothing.
-    : [{ update: { _index: co.INDEX, _id: o.id } }, { doc: { company_type: 'HQ', location_count: o.doc.location_count || 0, ...(hasVal(o.doc.bio_url) ? { bio_url: o.doc.bio_url } : {}), ...(hasVal(o.doc.linkedin_contact) ? { linkedin_contact: o.doc.linkedin_contact } : {}), ...(hasVal(o.doc.linkedin_url) ? { linkedin_url: o.doc.linkedin_url } : {}), ...(hasVal(o.doc.email) ? { email: o.doc.email, email_type: o.doc.email_type || '' } : {}) } }], 'HQ');
+    : [{ update: { _index: co.INDEX, _id: o.id } }, { doc: { company_type: 'HQ', location_count: o.doc.location_count || 0, ...(hasVal(o.doc.bio_url) ? { bio_url: o.doc.bio_url } : {}), ...(hasVal(o.doc.linkedin_contact) ? { linkedin_contact: o.doc.linkedin_contact } : {}), ...(hasVal(o.doc.linkedin_url) ? { linkedin_url: o.doc.linkedin_url } : {}), ...(hasVal(o.doc.email) ? { email: o.doc.email, email_type: o.doc.email_type || '' } : {}), ...(hasVal(o.doc.company_name) ? { company_name: o.doc.company_name } : {}), ...(hasVal(o.doc.root_domain) ? { root_domain: o.doc.root_domain } : {}) } }], 'HQ');
   // child Locations -> index by cid (dedupes the same business across scrape dates)
   await loadFile(path.join(IN, 'gm-loc.ndjson'), (o) => { const d = locToDoc(o.doc); return [{ index: { _index: co.INDEX, _id: d.id } }, d]; }, 'Locations');
   // contacts -> score-gated upsert into the Master DB (email-keyed)
