@@ -180,7 +180,14 @@ function processGroup(domain, locs, hq0) {
       for await (const l of rl) { if (!l.trim()) continue; let o; try { o = JSON.parse(l); } catch { continue; } if (o.root_domain) w.write(o.root_domain + '\t' + l + '\n'); }
       await new Promise((r) => w.end(r)); }
     console.error('sorting…');
-    const s = spawnSync(gnuSort(), ['-t', '\t', '-k1,1', '-T', OUT, tmp, '-o', sorted], { stdio: 'inherit' });
+    // GNU sort with no -S sizes its buffer against FREE memory, so on a shared box it expands to fill
+    // whatever node has not taken yet. Partition 0 of the Overture run finished with 0.18GB available
+    // on an 8GB machine that also serves the UI -- it fit, but nothing was holding it back. GM_SORT_MEM
+    // caps the buffer and spills the overflow to -T (the volume): slower, and cannot be OOM-killed.
+    // Unset = previous behaviour exactly, so the nightly gm pipeline is unchanged.
+    const sortArgs = ['-t', '\t', '-k1,1', '-T', OUT];
+    if (process.env.GM_SORT_MEM) sortArgs.push('-S', process.env.GM_SORT_MEM);
+    const s = spawnSync(gnuSort(), [...sortArgs, tmp, '-o', sorted], { stdio: 'inherit' });
     if (s.status !== 0) { console.error('sort failed'); process.exit(1); }
   }
 
