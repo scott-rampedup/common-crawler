@@ -50,13 +50,39 @@ function step(label, script, args) {
 
 // gm-build wants a plain file; the partitions are stored gzipped because the uncompressed set does not
 // fit. Expand one, use it, delete it.
+// STREAMED, not gunzipSync. A partition decompresses to ~2.55GB and gunzipSync returns a single Buffer,
+// so the first real run died here with:
+//   The value of "length" is out of range. It must be >= 0 && <= 2147483647. Received 2552511497
+// That is Node's hard maximum Buffer length (2GB-1); no partition count that keeps the gzipped set a
+// sensible size would stay under it, so the fix is to never hold the whole thing at once.
 function gunzipTo(src, dst) {
   const t0 = Date.now();
-  fs.writeFileSync(dst, zlib.gunzipSync(fs.readFileSync(src)));
-  return { bytes: fs.statSync(dst).size, secs: Math.round((Date.now() - t0) / 1000) };
+  return new Promise((resolve, reject) => {
+    const r = fs.createReadStream(src);
+    const g = zlib.createGunzip();
+    const w = fs.createWriteStream(dst);
+    r.on('error', reject); g.on('error', reject); w.on('error', reject);
+    w.on('finish', () => resolve({ bytes: fs.statSync(dst).size, secs: Math.round((Date.now() - t0) / 1000) }));
+    r.pipe(g).pipe(w);
+  });
 }
 
 function rm(p) { try { fs.rmSync(p, { recursive: true, force: true }); } catch (e) { /* already gone */ } }
+
+// Count newlines over a fixed buffer. Works at any file size; nothing is held beyond 1MB.
+function countLines(file) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.allocUnsafe(1 << 20);
+    let n = 0, read = 0, lastByte = 0;
+    while ((read = fs.readSync(fd, buf, 0, buf.length, null)) > 0) {
+      for (let i = 0; i < read; i++) if (buf[i] === 10) n++;
+      lastByte = buf[read - 1];
+    }
+    if (lastByte && lastByte !== 10) n++;        // a final line with no trailing newline still counts
+    return n;
+  } finally { fs.closeSync(fd); }
+}
 
 (async () => {
   if (!process.env.OPENSEARCH_ENDPOINT && !DRY) { console.error('need OPENSEARCH_ENDPOINT'); process.exit(1); }
@@ -93,7 +119,7 @@ function rm(p) { try { fs.rmSync(p, { recursive: true, force: true }); } catch (
 
     if (DRY) { console.error(`[dry] would build + upsert part-${p.i} (${(p.gz / 1e6).toFixed(0)} MB gz)`); continue; }
 
-    const g = gunzipTo(p.f, raw);
+    const g = await gunzipTo(p.f, raw);
     console.error(`\n█ partition ${p.i}: ${(g.bytes / 1e9).toFixed(2)} GB expanded in ${g.secs}s`);
 
     step(`PHASE 2/3  gm-build part-${p.i}`, 'gm-build.js', ['--in', raw, '--out', work]);
@@ -103,11 +129,10 @@ function rm(p) { try { fs.rmSync(p, { recursive: true, force: true }); } catch (
     step(`PHASE 3/3  gm-upsert part-${p.i}`, 'gm-upsert.js', ['--in', work]);
 
     for (const [k, f] of [['hq', 'gm-hq.ndjson'], ['loc', 'gm-loc.ndjson'], ['contacts', 'gm-contacts.ndjson']]) {
-      try {
-        let n = 0;
-        for (const chunk of fs.readFileSync(path.join(work, f)).toString('latin1').split('\n')) if (chunk.trim()) n++;
-        tally[k] += n;
-      } catch (e) { /* counted as zero */ }
+      // Counted by scanning bytes, never by building a string. gm-loc.ndjson was 972MB for a 1.48GB
+      // input and a partition is 2.55GB, so .toString() on it throws ERR_STRING_TOO_LONG -- V8 caps a
+      // single string well below the file size. Same family of mistake as the gunzipSync above.
+      try { tally[k] += countLines(path.join(work, f)); } catch (e) { /* counted as zero */ }
     }
     tally.parts++;
     rm(work);
