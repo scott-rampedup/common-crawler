@@ -425,6 +425,12 @@ function enrichFromHtml(company, html, { genderMap = {}, altList, now, crawl } =
   const { contacts, structured, count } = buildContacts({ linkedin: p.linkedin, emails: p.emails, bio: p.bio }, { genderMap, address });
   const rc = reclassifyWebsite(company.website, altList);
   const alt = [...new Set([...(p.alternateWebsites || []), ...(rc.altMove ? [rc.altMove] : [])])];
+  // ONLY [0]. parseHome returns every email and phone it finds on the page, and the extras are dropped
+  // here. That is now a DECISION, not an accident of the original implementation: asked whether to route
+  // the extras to the Contact Crawler, keep the role-based ones on the company, or accept the loss, the
+  // answer was accept the loss. It is why email and phone show 0% multi-valued in the field survey while
+  // bio_url shows 30.2% -- the data never had more than one because only one was ever kept.
+  // Revisit with buildContacts, which already receives the full p.emails list and does use it.
   const phone = (p.phones[0] || '').trim();
   const email = (p.emails[0] || '').toLowerCase();
   // THESE NINE USED TO BE WRITTEN UNCONDITIONALLY, so a page that parsed to nothing wrote '' over
