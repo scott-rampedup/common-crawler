@@ -445,7 +445,11 @@ function openSinks() {
   fs.mkdirSync(OUT, { recursive: true });
   if (!PARTS) {
     const s = fs.createWriteStream(path.join(OUT, 'overture-locations.ndjson'));
-    return { write: (line) => s.write(line), close: () => new Promise((r) => s.end(r)), label: 'overture-locations.ndjson' };
+    return {
+      write: (line) => (s.write(line) ? null : new Promise((r) => s.once('drain', r))),
+      close: () => new Promise((r) => s.end(r)),
+      label: 'overture-locations.ndjson',
+    };
   }
   const gz = [], raw = [];
   for (let i = 0; i < PARTS; i++) {
@@ -455,7 +459,18 @@ function openSinks() {
     gz.push(z); raw.push(f);
   }
   return {
-    write: (line) => gz[partOf(JSON.parse(line).root_domain, PARTS)].write(line),
+    // AWAITS BACKPRESSURE. The first full run was OOM-killed at 5.39GB resident on shard 4 of 16: this
+    // wrote to all 16 gzip streams and ignored the `false` return, so at ~10,800 records/sec the lines
+    // queued in each stream's internal buffer faster than zlib could compress them, and the queue is
+    // memory. Disk was never the problem -- 20GB was free when the kernel killed it.
+    //
+    // The key is passed in rather than re-parsed out of the line: the caller already has the parsed doc,
+    // and JSON.parse per line per write was pure waste on 26M records.
+    write: (line, key) => {
+      const z = gz[partOf(key, PARTS)];
+      if (z.write(line)) return null;              // accepted, nothing to wait on
+      return new Promise((r) => z.once('drain', r));
+    },
     close: async () => {
       await Promise.all(gz.map((z) => new Promise((r) => z.end(r))));
       await Promise.all(raw.map((f) => new Promise((r) => (f.writableFinished ? r() : f.on('finish', r)))));
@@ -470,7 +485,9 @@ async function main() {
   let seen = 0, kept = 0, noDomain = 0, bioFound = 0, errored = 0;
   const t0 = Date.now();
 
-  const onLine = (line) => {
+  // async, so the sink's backpressure can actually be awaited. Returning a promise from here and not
+  // awaiting it was the whole bug: the writes still queued, just in a different place.
+  const onLine = async (line) => {
     if (!line.trim()) return;
     let r; try { r = JSON.parse(line); } catch (e) { return; }
     seen++;
@@ -486,7 +503,8 @@ async function main() {
     }
     if (!doc) { noDomain++; return; }
     if (doc.bio_url) { bio.add(doc.bio_url); bioFound++; }
-    sink.write(JSON.stringify(doc) + '\n');
+    const wait = sink.write(JSON.stringify(doc) + '\n', doc.root_domain);
+    if (wait) await wait;          // buffer is full; let zlib catch up before reading the next line
     kept++;
     if (kept % 100000 === 0) {
       console.error(`  seen ${seen.toLocaleString()} | kept ${kept.toLocaleString()} | bio ${bioFound.toLocaleString()} | ${Math.round(kept / ((Date.now() - t0) / 1000))}/s`);
@@ -495,7 +513,7 @@ async function main() {
 
   if (IN) {
     const rl = readline.createInterface({ input: fs.createReadStream(IN), crlfDelay: Infinity });
-    for await (const line of rl) onLine(line);
+    for await (const line of rl) await onLine(line);
   } else {
     const keys = await listShards();
     console.error(`release ${RELEASE}: ${keys.length} shard(s), confidence >= ${MIN_CONF}, scratch ${TMP}`);
@@ -510,7 +528,7 @@ async function main() {
       });
       const before = kept;
       const rl = readline.createInterface({ input: fs.createReadStream(raw), crlfDelay: Infinity });
-      for await (const line of rl) onLine(line);
+      for await (const line of rl) await onLine(line);
       // Delete as we go: peak disk stays one shard, not the whole release.
       try { fs.unlinkSync(raw); } catch (e) { /* already gone */ }
       console.error(`  shard ${i + 1}/${keys.length}: +${(kept - before).toLocaleString()} Locations `
