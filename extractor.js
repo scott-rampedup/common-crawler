@@ -30,6 +30,13 @@ const zlib = require("zlib");
 const { classifyLineType, loadPhoneBlocks, blockLocation, PHONE_BLOCKS_CSV } = require("./wireless-block-classifier");
 const { intlMobileType } = require("./intl-mobile");
 const { modelEmail, templateFor } = require("./email-pattern");
+// The shared mailbox-provider test. FREE_DOMAINS below held 35 hosts and everything else fell through to
+// "Professional", so classifyEmail was labelling consumer mail as a work address: measured 2026-11-20 over
+// 6,000 random contacts, 5.2% of everything it called Professional was really a personal mailbox
+// (mail.ru, yandex.ru, t-online.de, libero.it, orange.fr, naver.com, web.de). Against the 12,444,062
+// contacts stored as Professional that is on the order of 647,000 mislabelled. A leaf module with no
+// requires of its own, so this cannot cycle back into extractor.
+const { isFreemail } = require("./non-company-domains");
 
 // ---------------------------------------------------------------- config
 // Free / consumer mailbox providers: an address here belongs to the PERSON, not to the company whose page
@@ -755,6 +762,11 @@ function classifyEmail(email){
   if(ROLE_LOCALS.has(local) || ROLE_LOCALS.has(base)) return "Role-Based";
   if(ROLE_LOCALS_ADMIN.has(local) || ROLE_LOCALS_ADMIN.has(base)) return "Role-Based";
   if(FREE_DOMAINS.has(domain)) return "Personal";
+  // The shared list (4,775 curated hosts + the first-label family rule), which reaches the national
+  // providers and every ccTLD variant FREE_DOMAINS above never enumerated. Checked AFTER the role tests,
+  // so info@libero.it is still Role-Based, and after FREE_DOMAINS so the legacy ISP entries keep working
+  // even if the data file is absent.
+  if(isFreemail(domain)) return "Personal";
   // Road Runner never issued mail at the bare apex -- every consumer address is regional
   // (tampabay.rr.com, austin.rr.com, woh.rr.com). An exact-match set catches ~none of them, so the
   // whole tree is matched by suffix. Kept as its own list because widening FREE_DOMAINS to suffix

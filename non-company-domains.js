@@ -23,6 +23,11 @@
  * Exact-match only, after lowercasing and stripping a leading www. — `domain` holds the registrable
  * domain, so a suffix rule would buy nothing and would risk eating real subsidiaries.
  */
+// The only requires in this leaf module, and only to read the bundled host list below. companies.js
+// requires opensearch.js which requires THIS file, so anything heavier would reopen the cycle that put
+// the list here in the first place.
+const fs = require('fs');
+const path = require('path');
 
 // Mailbox providers. Employment is never implied by any of these.
 //
@@ -53,7 +58,7 @@ const FREEMAIL_FAMILIES = new Set([
   'outlok', 'getimel',
 ]);
 
-const FREEMAIL_HOSTS = new Set([
+const CURATED_HOSTS = [
   // Global providers whose first label is not distinctive enough for a family rule.
   'me.com', 'mac.com', 'mail.com', 'gmx.com', 'gmx.de', 'gmx.net', 'gmx.at', 'gmx.ch',
   'yandex.com', 'yandex.ru', 'ya.ru', 'zoho.com', 'zoho.in', 'fastmail.com', 'hey.com', 'tutanota.com',
@@ -112,7 +117,33 @@ const FREEMAIL_HOSTS = new Set([
   'eircom.net', 'iol.ie', 'indigo.ie',
   '012.net.il', 'netvision.net.il', 'bezeqint.net', 'zahav.net.il',
   'com.com',                                               // a parked junk host, never an employer
-]);
+];
+
+// The "Personal Domains" column of the Overture Workbook, exported to data/personal-domains.txt
+// (4,775 hosts). Loaded from a file rather than pasted in, so the next revision of the workbook is a
+// re-export instead of a merge conflict in this file.
+//
+// UNION, never replacement, and the direction matters both ways. Measured 2026-11-20: the workbook holds
+// 4,498 hosts the curated list above does not — overwhelmingly disposable and national providers — while
+// 73 of the curated hosts are absent from the workbook, and the FAMILY rule still reaches ccTLD variants
+// no enumerated list can (yahoo.com.mx, hotmail.fr, outlook.com.br).
+//
+// Checked before adding, because this clears employer domains and a wrong clear is silent: none of the
+// 4,775 is a recognisable employer, and across the top 8,000 employer domains in the contacts index the
+// workbook clears just 6 the curated list missed — space.com (1,287 contacts), aon.at (590), pec.it (411),
+// india.com (367), kimo.com (278), inwind.it (237). Every one of those ran consumer mail (space.com as
+// free webmail, aon.at as Telekom Austria's ISP brand), so clearing them is the correct outcome, not a
+// casualty of it.
+function loadPersonalDomains() {
+  try {
+    return fs.readFileSync(path.join(__dirname, 'data', 'personal-domains.txt'), 'utf8')
+      .split(/\r?\n/).map((s) => s.trim().toLowerCase()).filter(Boolean);
+  } catch (e) {
+    return [];          // file absent (bare checkout, older bundle) -> the curated list above still applies
+  }
+}
+
+const FREEMAIL_HOSTS = new Set([...CURATED_HOSTS, ...loadPersonalDomains()]);
 
 // Social profiles, video, link-in-bio, directories, lead-gen scrapers, shared site builders and
 // domain parkers. Several ARE real employers (Amazon, GitHub, Etsy, Meetup, Patreon, GoDaddy, Wix) —
@@ -146,6 +177,12 @@ const firstLabel = (d) => normHost(d).split('.')[0];
 function isFreemail(dom) {
   const d = normHost(dom);
   if (!d) return false;
+  // A PLATFORM host is decided by the mailbox test below, never unconditionally, so it must not also
+  // read as freemail. This is a precedence rule rather than a special case: the workbook's personal-domain
+  // list and PLATFORM_HOSTS are maintained separately and overlapped on facebook.com the first time they
+  // were merged, which would have cleared the employer of the 586 genuine @facebook.com staff the mailbox
+  // test exists to keep. Any future overlap resolves the same way without another edit here.
+  if (PLATFORM_HOSTS.has(d)) return false;
   return FREEMAIL_HOSTS.has(d) || FREEMAIL_FAMILIES.has(firstLabel(d));
 }
 
@@ -241,6 +278,22 @@ if (require.main === module && process.argv.includes('--selftest')) {
   // A company whose name merely starts with a provider's label must not be swept up by the family rule.
   eq('livenation is not live.*', employerDomainFor('livenation.com', 'x@livenation.com'), 'livenation.com');
   eq('aolcorp is not aol.*', employerDomainFor('aolcorp.co.uk', 'x@aolcorp.co.uk'), 'aolcorp.co.uk');
+
+  // --- the workbook's personal-domain list, loaded from data/personal-domains.txt ---
+  // Hosts the hand-built list never had. If data/personal-domains.txt goes missing these fail loudly
+  // rather than silently reverting to the smaller list.
+  for (const d of ['space.com', 'aon.at', 'pec.it', 'india.com', 'kimo.com', 'inwind.it']) {
+    eq('workbook consumer host ' + d, employerDomainFor(d, 'x@' + d), '');
+  }
+  eq('workbook list actually loaded', FREEMAIL_HOSTS.size > 4000, true);
+
+  // PRECEDENCE: a platform host stays on the mailbox test even when the workbook also lists it as a
+  // personal domain. facebook.com is in both; without the guard in isFreemail it clears unconditionally
+  // and the 586 real @facebook.com staff lose their employer.
+  eq('platform beats the personal list', employerDomainFor('facebook.com', 'jane@facebook.com'), 'facebook.com');
+  eq('platform still fails a foreign mailbox', employerDomainFor('facebook.com', 'jane@gmail.com'), '');
+  eq('facebook is not read as freemail', isFreemail('facebook.com'), false);
+  eq('...but is still a bad company domain', isBadCompanyDomain('facebook.com'), true);
   console.log('non-company-domains selftest: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 }
