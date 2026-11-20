@@ -51,6 +51,9 @@ const SHARDS = Number(arg('shards', '0')) || 0;          // 0 = every shard in t
 const LIMIT = Number(arg('limit', '0')) || 0;
 const MIN_CONF = Number(arg('min-confidence', '0.5'));
 const DUCKDB = process.env.DUCKDB_BIN || 'duckdb';
+// Scratch for the per-shard extracts. Defaults under DATA_DIR because / is only 7.4GB on the Fly
+// machine while the mounted volume has 23GB, and one shard's JSON runs to roughly a gigabyte.
+const TMP = arg('tmp', path.join(process.env.DATA_DIR || '/tmp', 'overture-scratch'));
 const S3_HOST = 'overturemaps-us-west-2.s3.us-west-2.amazonaws.com';
 
 // ---------------------------------------------------------------- lookups from the workbook
@@ -127,7 +130,16 @@ function parseCsvRow(line) {
 // REQUIRES DUCKDB >= 2.0. The `lambda s: ...` form below is the new lambda syntax; 2.0 deprecated the
 // old `s -> ...` arrow and errors on it outright, so this SQL will not run on a 1.x CLI. The Dockerfile
 // pins the version for that reason.
-function buildSql(keys) {
+// One shard per call, into a real file.
+//
+// DuckDB 2.0 cannot COPY to stdout: '/dev/stdout', '/dev/fd/1' and the OVERWRITE / OVERWRITE_OR_IGNORE
+// flags all fail with `Cannot open file: File exists`, and the bare 'stdout' token silently writes a
+// file called "stdout" in the working directory. Verified on the deployed image, not assumed.
+//
+// Per-shard is the better shape regardless: 16 separate queries give the job a checkpoint every shard,
+// where one query over all of them would be a single long-running statement with nothing to resume from.
+// Each file is streamed and then deleted, so peak disk is one shard's worth (~1GB), not the whole run's.
+function buildSql(keys, outPath) {
   const files = keys.map((k) => `'https://${S3_HOST}/${k}'`).join(', ');
   return `INSTALL httpfs; LOAD httpfs;
 COPY (
@@ -150,7 +162,7 @@ COPY (
     AND confidence >= ${MIN_CONF}
     AND (operating_status IS NULL OR operating_status = 'open')
   ${LIMIT ? 'LIMIT ' + LIMIT : ''}
-) TO '/dev/stdout' (FORMAT JSON);`;
+) TO '${outPath}' (FORMAT JSON);`;
 }
 
 // ---------------------------------------------------------------- per-record transform
@@ -418,12 +430,25 @@ async function main() {
     for await (const line of rl) onLine(line);
   } else {
     const keys = await listShards();
-    console.error(`release ${RELEASE}: ${keys.length} shard(s), confidence >= ${MIN_CONF}`);
-    const sql = buildSql(keys);
-    const p = spawn(DUCKDB, ['-c', sql], { stdio: ['ignore', 'pipe', 'inherit'] });
-    const rl = readline.createInterface({ input: p.stdout, crlfDelay: Infinity });
-    for await (const line of rl) onLine(line);
-    await new Promise((res, rej) => p.on('exit', (c) => (c === 0 ? res() : rej(new Error('duckdb exited ' + c)))));
+    console.error(`release ${RELEASE}: ${keys.length} shard(s), confidence >= ${MIN_CONF}, scratch ${TMP}`);
+    fs.mkdirSync(TMP, { recursive: true });
+    for (let i = 0; i < keys.length; i++) {
+      const raw = path.join(TMP, `overture-shard-${i}.json`);
+      try { fs.unlinkSync(raw); } catch (e) { /* not there, which is the normal case */ }
+      const t1 = Date.now();
+      await new Promise((res, rej) => {
+        const p = spawn(DUCKDB, ['-c', buildSql([keys[i]], raw)], { stdio: ['ignore', 'inherit', 'inherit'] });
+        p.on('exit', (c) => (c === 0 ? res() : rej(new Error(`duckdb exited ${c} on shard ${i}`))));
+      });
+      const before = kept;
+      const rl = readline.createInterface({ input: fs.createReadStream(raw), crlfDelay: Infinity });
+      for await (const line of rl) onLine(line);
+      // Delete as we go: peak disk stays one shard, not the whole release.
+      try { fs.unlinkSync(raw); } catch (e) { /* already gone */ }
+      console.error(`  shard ${i + 1}/${keys.length}: +${(kept - before).toLocaleString()} Locations `
+        + `(${Math.round((Date.now() - t1) / 1000)}s)`);
+      if (LIMIT && seen >= LIMIT) break;
+    }
   }
 
   locOut.end();
@@ -436,6 +461,6 @@ async function main() {
 }
 
 if (require.main === module && !has('selftest')) {
-  if (has('sql')) { listShards().then((k) => console.log(buildSql(k))).catch((e) => { console.error(e.message); process.exit(1); }); }
+  if (has('sql')) { listShards().then((k) => console.log(buildSql(k.slice(0, 1), '<shard>.json'))).catch((e) => { console.error(e.message); process.exit(1); }); }
   else main().catch((e) => { console.error('ERR', e.message); process.exit(1); });
 }
