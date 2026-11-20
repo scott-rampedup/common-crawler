@@ -23,6 +23,7 @@ const LIMIT_DOMAINS = Number(arg('--limit-domains', '0')) || 0;
 if (!IN || !process.env.OPENSEARCH_ENDPOINT) { console.error('need --in <gm-locations.ndjson> + OPENSEARCH_ENDPOINT'); process.exit(1); }
 
 let client = co.makeClient(process.env.OPENSEARCH_ENDPOINT);
+let lastResolveErr = null;   // the most recent msearch failure, so a give-up can say WHY
 const genderMap = ex.loadGenderMap(path.join(__dirname, 'names-genders.csv'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -61,6 +62,20 @@ async function resolveChunk(chunk, map) {
       }
       return true;
     } catch (e) {
+      lastResolveErr = e;
+      // A dead credential is not a flaky link. 401/403 will never succeed on retry, and deferring it
+      // made a hard auth failure indistinguishable from a blip: the 20-11-2026 GM ingest spent 90
+      // minutes reporting "matched 0 | deferred 90,300" while every single request was coming back
+      //   403 {"message":"The security token included in the request is invalid."}
+      // and would have ground through 6 retries x 8 rounds before giving up with a message that did
+      // not name the cause. Stop on the first one and say what it was.
+      const code = (e && e.meta && e.meta.statusCode) || (e && e.statusCode) || 0;
+      if (code === 401 || code === 403) {
+        const raw = (e.meta && e.meta.body && (e.meta.body.message || e.meta.body.error)) || e.message;
+        throw new Error('OpenSearch rejected the credentials (HTTP ' + code + '): '
+          + (typeof raw === 'string' ? raw : JSON.stringify(raw))
+          + ' -- check the AWS keys this process is using; retrying cannot fix it.');
+      }
       if (a === 1 || a === 3) { try { client = co.makeClient(process.env.OPENSEARCH_ENDPOINT); } catch (x) {} }
       await sleep(Math.min(8000, 300 * 2 ** a));
     }
@@ -86,7 +101,8 @@ async function batchResolve(domains) {
     if (deferred.length) { console.error(`  round ${round}: ${deferred.length.toLocaleString()} domains deferred (link blip) — pausing 20s, rebuilding client, retrying`); await sleep(20000); try { client = co.makeClient(process.env.OPENSEARCH_ENDPOINT); } catch (x) {} }
     pending = deferred;
   }
-  if (pending.length) throw new Error(`batchResolve: ${pending.length} domains unresolved after 8 rounds — aborting (would false-synthesize)`);
+  if (pending.length) throw new Error(`batchResolve: ${pending.length} domains unresolved after 8 rounds — aborting (would false-synthesize)`
+    + (lastResolveErr ? ` | last error: ${lastResolveErr.message}` : ''));
   return map;
 }
 
