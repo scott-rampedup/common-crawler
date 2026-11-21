@@ -200,5 +200,20 @@ T('blocked: read_only alone still blocks writes',
 T('blocked: null/undefined body does not throw',
   () => { eq(co.blockedIndexWrites(null, 'companies'), [], 'null'); eq(co.blockedIndexWrites(undefined, 'companies'), [], 'undef'); });
 
+// ---- leastFreeBytes: the scheduler write gate reads _cat/allocation ----
+// The rows below are the real shapes _cat/allocation emits. A header row or an UNASSIGNED row parsed
+// as 0 would read as "no disk left" and stop every scheduled job, which is a worse outage than the one
+// the gate exists to prevent.
+T('leastFree: picks the smallest of several nodes',
+  () => eq(co.leastFreeBytes('n1 116000000000\nn2 110000000000'), 110000000000, 'min'));
+T('leastFree: skips the header row that ?v adds',
+  () => eq(co.leastFreeBytes('node disk.avail\nn1 116000000000'), 116000000000, 'header'));
+T('leastFree: skips the UNASSIGNED row, which has no numbers',
+  () => eq(co.leastFreeBytes('n1 116000000000\nUNASSIGNED'), 116000000000, 'unassigned'));
+T('leastFree: empty or null input is null, NOT zero',
+  () => { eq(co.leastFreeBytes(''), null, 'empty'); eq(co.leastFreeBytes(null), null, 'null'); });
+T('leastFree: a genuinely low value is reported, not swallowed',
+  () => eq(co.leastFreeBytes('n1 5000000000\nn2 110000000000'), 5000000000, 'low'));
+
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

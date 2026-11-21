@@ -431,7 +431,50 @@ async function stampRun(client, id, result) {
   });
 }
 
+// ---------------------------------------------------------------- the write gate
+//
+// Every job in the registry ends in a write. On 2026-11-21 OpenSearch crossed its flood-stage disk
+// watermark, set index.blocks.read_only_allow_delete on EVERY index at once, and refused about 7.4M
+// writes over six hours -- while cluster health stayed green and every exit code stayed 0. The block
+// does NOT clear itself when disk frees up. A scheduler with no gate keeps launching 16GB machines into
+// a cluster that is throwing all their output away, which costs money and reports success.
+//
+// The watermarks on this domain are ABSOLUTE BYTES, not percentages: AWS recomputes them from the EBS
+// volume size (flood stage was 4.9GB free at 50GB/node, 10GB free at 150GB/node). So "percent used" is
+// not the thing to test -- test free bytes against a margin above the flood stage, and test the blocks
+// directly, because only the second one catches a block that is already set.
+const FLOOD_MARGIN_GB = Number(process.env.SCHED_DISK_MARGIN_GB) || 15;
+
+async function writeGate(client) {
+  const req = (path) => client.transport.request({ method: 'GET', path });
+  const settings = (await req('/_all/_settings?filter_path=*.settings.index.blocks')).body || {};
+  const blocked = Object.keys(settings).filter((ix) => companies.blockedIndexWrites(settings, ix).length);
+  if (blocked.length) {
+    return { ok: false, why: `${blocked.length} index(es) are read-only: ${blocked.slice(0, 6).join(', ')}`
+      + `${blocked.length > 6 ? ', …' : ''}. The flood-stage watermark sets this and never clears it. `
+      + 'Free or add disk, then: PUT /_all/_settings {"index.blocks.read_only_allow_delete":null,"index.blocks.write":null}' };
+  }
+  const free = companies.leastFreeBytes((await req('/_cat/allocation?h=node,disk.avail&bytes=b')).body);
+  if (free === null) return { ok: true, note: 'could not read disk allocation; proceeding' };
+  const freeGb = free / 1073741824;
+  if (freeGb < FLOOD_MARGIN_GB) {
+    return { ok: false, why: `least free disk on a data node is ${freeGb.toFixed(1)}GB, under the `
+      + `${FLOOD_MARGIN_GB}GB margin — a job started now risks crossing the flood-stage watermark and `
+      + 'having its writes silently refused part way through' };
+  }
+  return { ok: true, freeGb };
+}
+
 async function evaluate(ctx) {
+  // Check ONCE per tick, not per job: a block is cluster-wide, and so is the disk it comes from.
+  let gate = { ok: true };
+  try { gate = await writeGate(ctx.contacts); }
+  catch (e) { console.error(`scheduler: write-gate check failed (${e.message}) — proceeding; jobs report their own errors`); }
+  if (!gate.ok) {
+    console.error(`scheduler: RUNNING NOTHING THIS TICK — ${gate.why}`);
+    if (!DRY) return;   // under --dry still fall through, so the due-ness report is not hidden
+  }
+
   for (const job of JOBS) {
     if (ONLY && job.id !== ONLY) continue;
     const log = (m) => console.log(`[${job.id}] ${m}`);

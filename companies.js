@@ -458,4 +458,22 @@ function blockedIndexWrites(body, index) {
   return Object.keys(blocks).filter((k) => String(blocks[k]) === 'true').sort();
 }
 
-module.exports = { INDEX, MAPPING, OUT_COLS, MULTI_VALUE, asList, blockedIndexWrites, coerceField, registrableDomain, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, canonPlace, canonPlaces, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, getRoleEmailTerms, setRoleEmailTerms, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, bulkUpdate, getEmailModel, setEmailModelByDomain, makeClient: os.makeClient };
+// Least free disk across the DATA nodes, from the body of
+// GET /_cat/allocation?h=node,disk.avail&bytes=b -- in bytes, or null when nothing parseable is there.
+//
+// _cat/allocation prints an UNASSIGNED row with no node and no numbers whenever shards are unassigned,
+// and the header row is present when v is passed. Both must be skipped rather than parsed as 0, which
+// would read as "no disk left" and stop every scheduled job.
+function leastFreeBytes(catText) {
+  let min = Infinity;
+  for (const line of String(catText == null ? '' : catText).trim().split('\n')) {
+    const cols = line.trim().split(/\s+/);
+    if (!cols.length) continue;
+    const v = Number(cols[1]);
+    if (cols[1] === undefined || cols[1] === '' || !Number.isFinite(v)) continue;  // header / UNASSIGNED
+    min = Math.min(min, v);
+  }
+  return Number.isFinite(min) ? min : null;
+}
+
+module.exports = { INDEX, MAPPING, OUT_COLS, MULTI_VALUE, asList, blockedIndexWrites, leastFreeBytes, coerceField, registrableDomain, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, canonPlace, canonPlaces, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, getRoleEmailTerms, setRoleEmailTerms, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, bulkUpdate, getEmailModel, setEmailModelByDomain, makeClient: os.makeClient };
