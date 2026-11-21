@@ -30,7 +30,7 @@ const https = require('https');
 const zlib = require('zlib');
 const fs = require('fs');
 const path = require('path');
-const { loadGenderMap } = require('./extractor');
+const { loadGenderMap, genderFromMap } = require('./extractor');
 
 const arg = (n, d) => { const i = process.argv.indexOf('--' + n); return i > 0 ? process.argv[i + 1] : d; };
 const has = (n) => process.argv.includes('--' + n);
@@ -200,7 +200,7 @@ function findPerson(sentence, genderMap) {
     const parts = cand.split(' ');
     if (parts.length < 2) continue;
     const first = normName(parts[0]);
-    if (!first || NOT_A_NAME.has(first) || !genderMap[first]) continue;
+    if (!first || NOT_A_NAME.has(first) || !genderFromMap(genderMap, first)) continue;
     const last = normName(parts[parts.length - 1]);
     if (!last || last.length < 2 || NOT_A_NAME.has(last)) continue;
     if (GEO_TAIL.test(cand)) continue;                    // "Montgomery County" is a place, not a hire

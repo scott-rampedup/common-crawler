@@ -672,7 +672,7 @@ function looksLikePersonSlug(slug, genderMap = {}){
   const last = name.last.toLowerCase();
   if(PERSON_SLUG_BLACKLIST.has(first) || PERSON_SLUG_BLACKLIST.has(last)) return false;
   if(!/^[a-z]+$/.test(first) || !/^[a-z]+$/.test(last)) return false;
-  if(genderMap && genderMap[first]) return true;
+  if(genderFromMap(genderMap, first)) return true;
   if(first.length <= 2 || last.length <= 2) return false;
   return true;
 }
@@ -1459,7 +1459,7 @@ function analyzePhones(records){
 
 // bio-signals requires extractor back (for its self-test), so load it lazily to avoid a require cycle.
 let _bs = null;
-function _bioSignals(){ if(!_bs){ try{ _bs = require("./bio-signals"); }catch(e){ _bs = { genderOfName:(f,m)=>(f&&m?(m[String(f).toLowerCase()]||""):""), genderFromDescription:()=>"", nameFromDescription:()=>null }; } } return _bs; }
+function _bioSignals(){ if(!_bs){ try{ _bs = require("./bio-signals"); }catch(e){ _bs = { genderOfName:(f,m)=>genderFromMap(m, String(f||"").toLowerCase()), genderFromDescription:()=>"", nameFromDescription:()=>null }; } } return _bs; }
 
 function loadGenderMap(filePath){
   const rows = loadRows(filePath);
@@ -1499,7 +1499,26 @@ function loadDirectoryRules(filePath){
   return rules;
 }
 
+// Gender for a name, from a map that MIGHT be a plain object.
+//
+// loadGenderMap builds with Object.create(null) precisely so that map["constructor"] is undefined, and
+// bio-signals.js carries the note "never a plain {} -- see loadGenderMap's prototype bug". But
+// cc-engine.js defaults `genderMap = {}` in six signatures, and a plain {} answers "constructor",
+// "tostring" and "valueof" with inherited FUNCTIONS. Those are truthy, and 'constructor' is all
+// lowercase letters, so it walks through the /^[a-z]+$/ name test below and is accepted as a known
+// first name; stringified into a record it becomes the literal gender
+// "function Object() { [native code] }", which is how one reached the contacts index.
+//
+// Guarding the DEFAULTS alone would not hold: the next caller to pass a plain object reopens it. So the
+// read is what is guarded -- a non-string answer is not a gender, whatever the map's prototype says.
+function genderFromMap(map, name){
+  if(!map || !name) return "";
+  const v = map[String(name)];
+  return typeof v === "string" ? v : "";
+}
+
 module.exports = {
+  genderFromMap,
   isBioAllottedDomain, bioAllotmentDomains, extractRecord, classifyEmail, classifyDirectory, nameFromSlug, loadGenderMap, loadDirectoryRules, pathIdHints,
   cleanEmail, setEmailBlocklist, loadEmailBlocklist, setAdminRoleTerms, getAdminRoleTerms, getBuiltInRoleTerms, analyzePhones, splitExtension, intlLineType,
   geocodeRecords, geocodePhone, findPosition,

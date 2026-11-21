@@ -242,5 +242,21 @@ T('chunk: one oversized URL still gets its own chunk rather than being dropped',
   eq(chunkByBytes([big], 100, 20000), [[big]], 'oversized');
 });
 
+// ---- genderFromMap: a plain {} must not answer with its prototype ----
+// cc-engine.js defaulted `genderMap = {}` in six signatures. A plain object answers "constructor",
+// "tostring" and "valueof" with inherited FUNCTIONS, which are truthy, and 'constructor' passes the
+// /^[a-z]+$/ first-name test -- so a page could mint a person whose gender stringified to
+// "function Object() { [native code] }". One such record reached the contacts index.
+const { genderFromMap } = require('./extractor');
+T('genderFromMap: plain {} does not leak constructor', () => eq(genderFromMap({}, 'constructor'), '', 'ctor'));
+T('genderFromMap: plain {} does not leak tostring/valueof',
+  () => { eq(genderFromMap({}, 'tostring'), '', 'toString'); eq(genderFromMap({}, 'valueof'), '', 'valueOf'); });
+T('genderFromMap: a real entry still answers', () => { const m = Object.create(null); m.jane = 'F'; eq(genderFromMap(m, 'jane'), 'F', 'jane'); });
+T('genderFromMap: an unknown name is empty', () => { const m = Object.create(null); m.jane = 'F'; eq(genderFromMap(m, 'zzz'), '', 'zzz'); });
+T('genderFromMap: a non-string value is not a gender',
+  () => { const m = Object.create(null); m.jane = 1; eq(genderFromMap(m, 'jane'), '', 'numeric'); });
+T('genderFromMap: null map / empty name are safe',
+  () => { eq(genderFromMap(null, 'x'), '', 'null'); eq(genderFromMap({}, ''), '', 'empty'); });
+
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -490,7 +490,7 @@ function normalizeFilterValue(value){
   return String(value || "").trim().toLowerCase();
 }
 
-function selectCandidates(records, { perDomainCap = 25, directoryRules = {}, genderMap = {}, directoryFilter = "" } = {}){
+function selectCandidates(records, { perDomainCap = 25, directoryRules = {}, genderMap = Object.create(null), directoryFilter = "" } = {}){
   const desiredFilter = normalizeFilterValue(directoryFilter);
   const byUrl = new Map();
 
@@ -557,7 +557,7 @@ function extractSameDomainLinks(html, baseUrl, domain){
 }
 
 // Does this URL look like a staff/bio or contact page? Reuses the Common Crawl gate. (offline-testable)
-function isBioOrContactUrl(url, directoryRules = {}, genderMap = {}){
+function isBioOrContactUrl(url, directoryRules = {}, genderMap = Object.create(null)){
   const dir = classifyDirectory(url, "", directoryRules, genderMap);
   return dir === "BIO URL" || dir === "Contact Us";
 }
@@ -671,7 +671,7 @@ function extractSitemapLocs(xml){
 
 // Walk a site's sitemaps and return every same-domain bio/contact URL that robots allows.
 async function collectSitemapCandidates(domain, opts, sitemaps, rules){
-  const { directoryRules = {}, genderMap = {}, _fetchDoc = fetchDoc,
+  const { directoryRules = {}, genderMap = Object.create(null), _fetchDoc = fetchDoc,
           maxSitemaps = 60, maxUrls = 60000, candidateCap = 2000 } = opts;
   const root = String(domain || "").toLowerCase().replace(/^www\./, "");
   const out = new Set();
@@ -716,7 +716,7 @@ async function collectSitemapCandidates(domain, opts, sitemaps, rules){
 // Returns every <loc> page URL that passes isBioOrContactUrl, deduped — ready to run as a
 // 'webpage' job. (offline-testable via opts._fetchDoc)
 async function extractBioUrlsFromSitemaps(opts = {}){
-  const { content = "", urls = [], directoryRules = {}, genderMap = {}, _fetchDoc = fetchDoc,
+  const { content = "", urls = [], directoryRules = {}, genderMap = Object.create(null), _fetchDoc = fetchDoc,
           maxSitemaps = 100, maxUrls = 200000, candidateCap = 100000 } = opts;
   const bio = new Set();
   const seenSm = new Set();
@@ -770,7 +770,7 @@ async function extractBioUrlsFromSitemaps(opts = {}){
 // memory limits never has to be built. Page URLs are de-duped across the whole run. When no
 // onGroup is given the groups are collected and returned. (offline-testable via opts._fetchDoc)
 async function extractBioUrlGroups(opts = {}){
-  const { content = "", urls = [], directoryRules = {}, genderMap = {}, _fetchDoc = fetchDoc,
+  const { content = "", urls = [], directoryRules = {}, genderMap = Object.create(null), _fetchDoc = fetchDoc,
           onGroup = null, maxSitemaps = 100, maxUrls = 200000, candidateCap = 100000 } = opts;
   const seenSm = new Set();
   const seenBio = new Set();                          // de-dupe page URLs across all sitemaps
@@ -836,7 +836,7 @@ async function extractBioUrlGroups(opts = {}){
 // their own <lastmod>. Returns { watches:[{sitemapUrl,parentUrl,lastmod,urlCount,bioCount,bioRatio,
 // domain,bioUrls:[{url,lastmod}]}], sitemapsFetched, totalUrls }. (offline-testable via opts._fetchDoc)
 async function discoverBioSitemaps(opts = {}){
-  const { content = "", urls = [], directoryRules = {}, genderMap = {}, _fetchDoc = fetchDoc,
+  const { content = "", urls = [], directoryRules = {}, genderMap = Object.create(null), _fetchDoc = fetchDoc,
           minBioRatio = 0.30, minBioCount = 3, maxSitemaps = 200, maxUrls = 500000,
           bioSitemapNames = null, sourceUrl = "" } = opts;
   // A child sitemap whose FILENAME is a known people/bio sitemap (e.g. agents-sitemap.xml) is treated
@@ -938,7 +938,7 @@ function hintMatchesName(fname, k) {
 // Delay between consecutive sitemap fetches on the SAME host during an index walk (env-tunable).
 const SITEMAP_FETCH_DELAY_MS = Number(process.env.SITEMAP_FETCH_DELAY_MS) || 120;
 async function discoverSitemaps(opts = {}){
-  const { content = "", urls = [], directoryRules = {}, genderMap = {}, _fetchDoc = fetchDoc,
+  const { content = "", urls = [], directoryRules = {}, genderMap = Object.create(null), _fetchDoc = fetchDoc,
           minRatio = 0.30, minCount = 3, maxSitemaps = 200, maxUrls = 500000,
           bioSitemapNames = null, locationSitemapNames = null, keywordHints = null, sourceUrl = "" } = opts;
   const fileNameOf = (u) => String(u || "").split("?")[0].split("#")[0].split("/").pop().toLowerCase();
@@ -1028,7 +1028,7 @@ async function discoverSitemaps(opts = {}){
 // Returns { bioUrls, totalUrls, domainsScanned, perDomain } — bioUrls run as a normal 'webpage'
 // job (which then reads each from CC via the bulk index cache). (offline-testable via opts._loadDomainIndex)
 async function discoverBioUrlsFromCC(opts = {}){
-  const { domains = [], directoryRules = {}, genderMap = {}, crawl = CRAWL,
+  const { domains = [], directoryRules = {}, genderMap = Object.create(null), crawl = CRAWL,
           maxPages = 100, maxBioPerDomain = 5000, _loadDomainIndex = loadDomainIndex,
           onProgress = () => {} } = opts;
   const hosts = [...new Set(domains.map(d => hostOf(String(d || "").trim())).filter(Boolean))];
@@ -1262,7 +1262,7 @@ async function fetchDoc(url, opts = {}){
 }
 
 async function liveCrawl(domain, opts = {}){
-  const { wireless, genderMap = {}, directoryRules = {} } = opts;
+  const { wireless, genderMap = Object.create(null), directoryRules = {} } = opts;
   const liveFetch = opts._liveFetch || liveFetchPage;     // fetch HTML pages
   const docFetch  = opts._fetchDoc  || fetchDoc;          // fetch robots.txt / sitemaps
   const maxPages = opts.maxPages || Number(process.env.LIVE_MAX_PAGES) || 150;   // raise to crawl more per site
@@ -1484,7 +1484,7 @@ function uniqueByEmail(records){
 async function run(csvPath, opts = {}){
   const {
     wirelessPath = (__dirname + "/phone-blocks.csv"),
-    genderMap = {}, directoryRules = {}, outPath = "cc-results.csv",
+    genderMap = Object.create(null), directoryRules = {}, outPath = "cc-results.csv",
     // injectable for testing; default to the real network functions
     _queryIndex = queryIndex, _queryIndexUrl = queryIndexUrl, _fetchWarc = fetchWarc, _liveCrawl = liveCrawl,
     _findSiteApi = findSiteApi,  // per-site JSON-API adapters (site-apis.js); injectable for tests
