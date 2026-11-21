@@ -30,92 +30,12 @@ const ONLY = arg('--only', '');            // 'load' = Phase 1 only (regenerate 
 const NO_QUEUE = process.argv.includes('--no-queue');
 const QUEUE_PREFIX = process.env.MONITOR_QUEUE_PREFIX || 'monitor-queue/pending/';
 
-// Queue the bio URLs the parse found, instead of leaving them on a machine that is about to be destroyed.
-//
-// gm-load writes gm-bio-urls.txt and nothing ever read it. Two runs produced bio URLs -- 14,084 from the
-// 17-08 export and ~14,000 more from 24-08 -- and both sets died with their machine's /tmp. They are the
-// most valuable output of the parse: pages naming a person at a business we now hold a record for.
-// Push through the app when we can reach it, so the Data Importer gets a named receipt for the list —
-// named after the Google Maps export it came from. The direct S3 write below stays as the fallback:
-// the URLs reaching the queue is the thing that must not depend on the app being up, and a missing
-// receipt is a smaller loss than a missing batch.
-async function queueViaApp(lines, sourceName) {
-  const base = String(process.env.APP_URL || process.env.COMMON_CRAWLER_URL || '').replace(/\/+$/, '');
-  const token = process.env.LOADER_TOKEN || '';
-  if (!base || !token) return false;
-  // By BYTES, not by URL count — see gm-bio-scan.js. A fixed 20,000-URL chunk is ~1.1MB for a typical
-  // export and 3.6MB for one with long URLs, and the server used to drop the connection on the latter
-  // with nothing but a 502 to show for it.
-  const MAX_BODY = 1500000;                 // headroom under the server's body cap
-  // The endpoint also caps a single request at BIO_URL_INGEST_MAX (20,000) URLs and SILENTLY DROPS the
-  // rest — it reports `capped` and returns 200. Byte-sized chunks ran to ~23,800 URLs, so every chunk
-  // lost its tail: 100,810 of 863,965 vanished while the push reported success. Respect both limits.
-  const MAX_URLS = 20000;
-  const chunks = [];
-  {
-    let cur = [], curBytes = 0;
-    for (const u of lines) {
-      const cost = u.length + 3;
-      if (cur.length && (curBytes + cost > MAX_BODY || cur.length >= MAX_URLS)) { chunks.push(cur); cur = []; curBytes = 0; }
-      cur.push(u); curBytes += cost;
-    }
-    if (cur.length) chunks.push(cur);
-  }
-  let sent = 0;
-  let listId = '';            // one receipt per export; later chunks append to it
-  for (let ci = 0; ci < chunks.length; ci++) {
-    const chunk = chunks[ci];
-    const body = JSON.stringify({
-      urls: chunk,
-      sourceUrl: sourceName,                 // the LIST NAME in the importer
-      source: 'Google Maps',
-      label: 'Google Maps: ' + sourceName,
-      listId,
-    });
-    const r = await fetch(base + '/api/bio-urls', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-loader-token': token },
-      body,
-    }).catch((e) => ({ ok: false, status: 0, _err: e.message }));
-    if (!r || !r.ok) { console.error(`  app push failed (${(r && (r.status || r._err)) || '?'}) — falling back to a direct queue write`); return false; }
-    if (!listId) { try { listId = (await r.json()).listId || ''; } catch { /* continue without appending */ } }
-    sent += chunk.length;
-  }
-  console.error(`  queued ${sent.toLocaleString()} bio URL(s) via the app, recorded as "${sourceName}"`);
-  return true;
-}
-
-async function queueBioUrls(file) {
-  if (NO_QUEUE || !fs.existsSync(file)) return;
-  const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
-  if (!lines.length) { console.error('  no bio URLs to queue'); return; }
-
-  // name the list after the export that produced it (gm-load leaves this beside the URL file)
-  let sourceName = 'Google Maps';
-  try {
-    const meta = JSON.parse(fs.readFileSync(file.replace(/\.txt$/, '') + '.meta.json', 'utf8'));
-    if (meta && Array.isArray(meta.sourceFiles) && meta.sourceFiles.length) {
-      sourceName = meta.sourceFiles.length === 1 ? meta.sourceFiles[0] : `${meta.sourceFiles[0]} +${meta.sourceFiles.length - 1} more`;
-    }
-  } catch { /* no meta: fall back to the generic name */ }
-
-  if (await queueViaApp(lines, sourceName)) return;
-  const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
-  const region = process.env.AWS_REGION || 'us-east-1';
-  const bucket = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-${region}`;
-  const s3 = new S3Client({ region });
-  let objects = 0, failed = 0;
-  for (let i = 0; i < lines.length; i += 3000) {
-    const chunk = lines.slice(i, i + 3000);
-    const key = `${QUEUE_PREFIX}${new Date().toISOString().replace(/[:.]/g, '-')}-gm-${chunk.length}.txt`;
-    try {
-      await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: chunk.join('\n') + '\n', ContentType: 'text/plain' }));
-      objects++;
-    } catch (e) { failed++; console.error(`  queue write FAILED: ${e.message}`); }
-    await new Promise((r) => setTimeout(r, 5));      // distinct timestamps in the key
-  }
-  console.error(`  queued ${lines.length.toLocaleString()} bio URL(s) -> ${objects} object(s) under ${QUEUE_PREFIX}${failed ? ` (${failed} FAILED)` : ''}`);
-}
+// Queueing the bio URLs lives in queue-bio-urls.js now, because overture-run.js needed the identical
+// hand-off and grew the identical bug without it: a producer that writes a URL file, prints where it
+// is, and passes it to nobody. The reasoning that was here -- app push for a named receipt in the Data
+// Importer, direct S3 write as the fallback so a batch never depends on the app being up, and both the
+// byte cap and the 20,000-URL cap honoured -- moved with it.
+const { queueBioUrls } = require('./queue-bio-urls');
 
 function step(label, script, args) {
   console.error(`\n══════ ${label} · ${new Date().toISOString().slice(11, 19)} ══════`);
@@ -149,7 +69,7 @@ function step(label, script, args) {
   step('Phase 1 — parse the export into Location records', 'gm-load.js',
     ['--src', DIR, '--out', DIR, ...(LIMIT ? ['--limit', LIMIT] : [])]);
   // Queue immediately after the parse, so the URLs are durable before anything else can fail.
-  await queueBioUrls(path.join(DIR, 'gm-bio-urls.txt'));
+  await queueBioUrls(path.join(DIR, 'gm-bio-urls.txt'), { source: 'Google Maps', tag: 'gm', noQueue: NO_QUEUE });
   if (ONLY === 'load') { console.error('\n--only load: stopping after Phase 1.'); return; }
 
   step('Phase 2/3/5 — group by domain, resolve HQ, build contacts', 'gm-build.js',

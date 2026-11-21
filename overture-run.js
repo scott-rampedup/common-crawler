@@ -28,6 +28,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const { spawnSync } = require('child_process');
+const { queueBioUrls } = require('./queue-bio-urls');
 
 const arg = (f, d) => { const i = process.argv.indexOf('--' + f); return i > -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : d; };
 const has = (f) => process.argv.includes('--' + f);
@@ -144,9 +145,14 @@ function countLines(file) {
   console.error(`  HQ records           ${N(tally.hq)}`);
   console.error(`  child Locations      ${N(tally.loc)}`);
   console.error(`  contacts             ${N(tally.contacts)}`);
+  // HAND THE BIO URLs ON, do not just report where they are. This printed a count and a path and
+  // queued nothing, so 168,154 Overture bio URLs sat on the volume until someone noticed -- the same
+  // failure gm-run.js already documents for Google Maps, where two exports' worth died with a machine's
+  // /tmp. Queueing them here is what makes them reachable: bio-pump picks the objects up continuously.
   const bio = path.join(DIR, 'overture-bio-urls.txt');
   if (fs.existsSync(bio)) {
     const n = fs.readFileSync(bio, 'utf8').split('\n').filter((x) => x.trim()).length;
     console.error(`  bio URLs for Hop-2   ${N(n)}  -> ${bio}`);
+    await queueBioUrls(bio, { source: 'Overture', tag: 'ov', noQueue: process.argv.includes('--no-queue') });
   }
 })().catch((e) => { console.error('ERR', e.message); process.exit(1); });

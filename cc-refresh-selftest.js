@@ -215,5 +215,32 @@ T('leastFree: empty or null input is null, NOT zero',
 T('leastFree: a genuinely low value is reported, not swallowed',
   () => eq(co.leastFreeBytes('n1 5000000000\nn2 110000000000'), 5000000000, 'low'));
 
+// ---- chunkByBytes: both caps must hold ----
+// The 20,000-URL cap is the endpoint's own, and exceeding it is SILENT: it reports `capped` and still
+// returns 200. Chunking by bytes alone once ran to ~23,800 URLs per chunk and lost 100,810 of 863,965
+// URLs while every push reported success. A test that only checked bytes would not have caught that.
+const { chunkByBytes } = require('./queue-bio-urls');
+T('chunk: respects the 20,000-URL cap even when the bytes would allow more', () => {
+  const lines = Array.from({ length: 50000 }, (_, i) => 'https://x.com/' + i);
+  const cs = chunkByBytes(lines, 1e9, 20000);
+  if (cs.some((c) => c.length > 20000)) throw new Error('a chunk exceeded the URL cap');
+  eq(cs.reduce((a, c) => a + c.length, 0), 50000, 'no URL dropped');
+});
+T('chunk: respects the byte cap even when the count would allow more', () => {
+  const lines = Array.from({ length: 200 }, () => 'https://x.com/' + 'a'.repeat(500));
+  const cs = chunkByBytes(lines, 10000, 20000);
+  for (const c of cs) { const b = c.reduce((a, u) => a + u.length + 3, 0); if (b > 10000 && c.length > 1) throw new Error('chunk over the byte cap: ' + b); }
+  eq(cs.reduce((a, c) => a + c.length, 0), 200, 'no URL dropped');
+});
+T('chunk: every URL survives chunking', () => {
+  const lines = Array.from({ length: 4321 }, (_, i) => 'https://x.com/' + i);
+  eq(chunkByBytes(lines, 5000, 100).flat(), lines, 'round trip');
+});
+T('chunk: empty input yields no chunks', () => eq(chunkByBytes([]), [], 'empty'));
+T('chunk: one oversized URL still gets its own chunk rather than being dropped', () => {
+  const big = 'https://x.com/' + 'a'.repeat(9999);
+  eq(chunkByBytes([big], 100, 20000), [[big]], 'oversized');
+});
+
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
