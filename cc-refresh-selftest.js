@@ -180,5 +180,25 @@ T('no email -> no email_hash key', () => {
 });
 T('hash is of the PP canonical form, not the raw address', () => eq(emailHash('Jane.Doe+x@googlemail.com'), emailHash('janedoe@gmail.com'), 'canonical'));
 
+// ---- the write-block guard (gm-upsert assertWritable) ----
+// The payload below is the REAL body the cluster returned on 2026-11-21 while the flood-stage block
+// was on, copied verbatim, so these check the parser against the shape it actually meets rather than
+// against one invented to suit it.
+const BLOCKED_REAL = { companies: { settings: { index: { blocks: { read_only_allow_delete: 'true', write: 'true' } } } } };
+T('blocked: the real flood-stage payload is detected',
+  () => eq(co.blockedIndexWrites(BLOCKED_REAL, 'companies'), ['read_only_allow_delete', 'write'], 'blocks'));
+T('blocked: an unblocked index is absent from the body, so nothing is reported',
+  () => eq(co.blockedIndexWrites({}, 'companies'), [], 'empty body'));
+T('blocked: filter_path can return the index with no blocks key',
+  () => eq(co.blockedIndexWrites({ companies: { settings: { index: {} } } }, 'companies'), [], 'no blocks'));
+T('blocked: "false" is a STRING and must not count as a block',
+  () => eq(co.blockedIndexWrites({ companies: { settings: { index: { blocks: { read_only_allow_delete: 'false' } } } } }, 'companies'), [], 'string false'));
+T('blocked: a block on a DIFFERENT index is not ours',
+  () => eq(co.blockedIndexWrites(BLOCKED_REAL, 'contacts'), [], 'other index'));
+T('blocked: read_only alone still blocks writes',
+  () => eq(co.blockedIndexWrites({ companies: { settings: { index: { blocks: { read_only: 'true' } } } } }, 'companies'), ['read_only'], 'read_only'));
+T('blocked: null/undefined body does not throw',
+  () => { eq(co.blockedIndexWrites(null, 'companies'), [], 'null'); eq(co.blockedIndexWrites(undefined, 'companies'), [], 'undef'); });
+
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

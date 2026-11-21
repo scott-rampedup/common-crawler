@@ -444,4 +444,18 @@ const csvHeader = () => OUT_COLS.join(',');
 // 23 hosts from Scott's alternate-domain list — so the loaders below now skip those too.
 const { NON_COMPANY_DOMAINS, isBadCompanyDomain } = require('./non-company-domains');
 
-module.exports = { INDEX, MAPPING, OUT_COLS, MULTI_VALUE, asList, coerceField, registrableDomain, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, canonPlace, canonPlaces, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, getRoleEmailTerms, setRoleEmailTerms, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, bulkUpdate, getEmailModel, setEmailModelByDomain, makeClient: os.makeClient };
+// Which write blocks are set on an index, from the body of
+// GET /<index>/_settings?filter_path=**.blocks -- pure, so it can be tested against the real payload
+// without taking a production index read-only to produce one.
+//
+// Values come back as the STRINGS "true"/"false", not booleans, which is why this compares to 'true'
+// rather than trusting truthiness: the string "false" is truthy and would report a block that is off.
+// Observed shape, captured from the cluster on 2026-11-21 while the flood-stage block was on:
+//   {"companies":{"settings":{"index":{"blocks":{"read_only_allow_delete":"true","write":"true"}}}}}
+// An index with no blocks is absent from the body entirely, so a missing key means writable.
+function blockedIndexWrites(body, index) {
+  const blocks = ((((((body || {})[index] || {}).settings || {}).index || {}).blocks) || {});
+  return Object.keys(blocks).filter((k) => String(blocks[k]) === 'true').sort();
+}
+
+module.exports = { INDEX, MAPPING, OUT_COLS, MULTI_VALUE, asList, blockedIndexWrites, coerceField, registrableDomain, CC_FIELDS, DEFAULT_ALT, NON_COMPANY_DOMAINS, isBadCompanyDomain, normDomain, canonPlace, canonPlaces, recordToDoc, ensureIndex, bulkIndex, buildQuery, search, count, facets, each, update, placeUpdates, getAltWebsites, setAltWebsites, getRoleEmailTerms, setRoleEmailTerms, effectiveSitemap, titleCase, prettyRow, rowToCsvLine, csvHeader, bulkUpdate, getEmailModel, setEmailModelByDomain, makeClient: os.makeClient };

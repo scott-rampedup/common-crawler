@@ -86,8 +86,7 @@ async function bulkFlush(body, tag) {
 // costs one request; not checking cost the run described above.
 async function assertWritable() {
   const s = await client.transport.request({ method: 'GET', path: `/${co.INDEX}/_settings?filter_path=**.blocks` });
-  const blocks = ((((((s.body || s) || {})[co.INDEX] || {}).settings || {}).index || {}).blocks) || {};
-  const on = Object.keys(blocks).filter((k) => String(blocks[k]) === 'true');
+  const on = co.blockedIndexWrites(s.body || s, co.INDEX);
   if (on.length) throw new Error(`${co.INDEX} will not accept writes: index.blocks.${on.join('=true, index.blocks.')}=true.\n`
     + '  The flood-stage disk watermark sets read_only_allow_delete and does not clear it on its own.\n'
     + '  Free or add disk, then clear it:\n'
