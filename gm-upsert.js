@@ -59,33 +59,65 @@ const locToDoc = (g) => naics.assignNaics({ id: g.cid || ('gm:' + g.root_domain)
 const hqNewToDoc = (id, d) => naics.assignNaics({ id, domain: d.domain, company_type: 'HQ', locality: co.canonPlace(d.locality), region: co.canonPlace(d.region), country: co.canonPlace(d.country),
   location_count: d.location_count || 0, cc_refreshed_at: now, ...CC(d) });
 
+// WHY THE REASONS ARE KEPT AND NOT JUST COUNTED. On 2026-11-21 the Overture and Google Maps runs
+// reported "1,140,906 applied, 1140906 err" and exited 0 while OpenSearch refused every single write
+// behind a flood-stage read-only block; 6.6M Location writes and 744k HQ updates were lost over about
+// six hours and the logs looked normal throughout. A count with no reason beside it is not a report,
+// and an exit code that ignores it is a lie, so keep the distinct reasons and fail on them below.
+const errReasons = new Map();
 async function bulkFlush(body, tag) {
   if (!body.length) return 0;
   const res = await withRetry(() => client.bulk({ body, refresh: false }));
   const b = res.body || res; let errs = 0;
-  if (b.errors) for (const it of b.items) { const r = it.update || it.index; if (r && r.error) errs++; }
+  if (b.errors) for (const it of b.items) {
+    const r = it.update || it.index;
+    if (r && r.error) {
+      errs++;
+      const k = r.error.type + (r.error.reason ? ': ' + String(r.error.reason).slice(0, 160) : '');
+      errReasons.set(k, (errReasons.get(k) || 0) + 1);
+    }
+  }
   return errs;
 }
 
+// Refuse to start when the index will not take writes. OpenSearch applies
+// index.blocks.read_only_allow_delete at the flood-stage disk watermark and does NOT lift it when disk
+// frees up again, so a green cluster says nothing about whether a write will land. Checking once here
+// costs one request; not checking cost the run described above.
+async function assertWritable() {
+  const s = await client.transport.request({ method: 'GET', path: `/${co.INDEX}/_settings?filter_path=**.blocks` });
+  const blocks = ((((((s.body || s) || {})[co.INDEX] || {}).settings || {}).index || {}).blocks) || {};
+  const on = Object.keys(blocks).filter((k) => String(blocks[k]) === 'true');
+  if (on.length) throw new Error(`${co.INDEX} will not accept writes: index.blocks.${on.join('=true, index.blocks.')}=true.\n`
+    + '  The flood-stage disk watermark sets read_only_allow_delete and does not clear it on its own.\n'
+    + '  Free or add disk, then clear it:\n'
+    + `  PUT /_all/_settings {"index.blocks.read_only_allow_delete":null,"index.blocks.write":null}`);
+}
+
 async function loadFile(file, toActions, label) {
-  if (!fs.existsSync(file)) { console.error(`  (no ${label})`); return; }
+  if (!fs.existsSync(file)) { console.error(`  (no ${label})`); return 0; }
   const rl = readline.createInterface({ input: fs.createReadStream(file), crlfDelay: Infinity });
   let body = [], n = 0, errs = 0;
   for await (const l of rl) {
     if (!l.trim()) continue; let o; try { o = JSON.parse(l); } catch { continue; }
     const acts = toActions(o); if (!acts) continue;
     body.push(...acts); n++;
-    if (body.length >= 2000) { errs += await bulkFlush(body); body = []; if (n % 100000 === 0) console.error(`    ${label}: ${n.toLocaleString()} (${errs} err)`); }
+    if (body.length >= 2000) { errs += await bulkFlush(body); body = []; if (n % 100000 === 0) console.error(`    ${label}: ${(n - errs).toLocaleString()} applied / ${errs.toLocaleString()} rejected`); }
   }
   errs += await bulkFlush(body);
-  console.error(`  ${label}: ${n.toLocaleString()} applied, ${errs} err`);
+  // "applied" means APPLIED. It used to print the attempt counter under that word, which is how a run
+  // that landed nothing still read as a success.
+  console.error(`  ${label}: ${(n - errs).toLocaleString()} applied, ${errs.toLocaleString()} rejected, ${n.toLocaleString()} attempted`);
+  return errs;
 }
 
 (async () => {
   if (!process.env.OPENSEARCH_ENDPOINT) { console.error('OPENSEARCH_ENDPOINT required'); process.exit(1); }
   const t0 = Date.now();
+  await assertWritable();
+  let rejected = 0;
   // HQ: existing -> partial update (company_type + rollups + location_count); synthesized -> index new
-  await loadFile(path.join(IN, 'gm-hq.ndjson'), (o) => o.isNew
+  rejected += await loadFile(path.join(IN, 'gm-hq.ndjson'), (o) => o.isNew
     ? [{ index: { _index: co.INDEX, _id: o.id } }, hqNewToDoc(o.id, o.doc)]
     // bio_url and linkedin_contact are written ONLY when the incoming record actually has one, the same
     // way linkedin_url / email / email_type beside them already behave. They used to be written
@@ -97,16 +129,24 @@ async function loadFile(file, toActions, label) {
     // that feeds the Contact Crawler, in exchange for nothing.
     : [{ update: { _index: co.INDEX, _id: o.id } }, { doc: { company_type: 'HQ', location_count: o.doc.location_count || 0, ...(hasVal(o.doc.bio_url) ? { bio_url: o.doc.bio_url } : {}), ...(hasVal(o.doc.linkedin_contact) ? { linkedin_contact: o.doc.linkedin_contact } : {}), ...(hasVal(o.doc.linkedin_url) ? { linkedin_url: o.doc.linkedin_url } : {}), ...(hasVal(o.doc.email) ? { email: o.doc.email, email_type: o.doc.email_type || '' } : {}), ...(hasVal(o.doc.company_name) ? { company_name: o.doc.company_name } : {}), ...(hasVal(o.doc.root_domain) ? { root_domain: o.doc.root_domain } : {}) } }], 'HQ');
   // child Locations -> index by cid (dedupes the same business across scrape dates)
-  await loadFile(path.join(IN, 'gm-loc.ndjson'), (o) => { const d = locToDoc(o.doc); return [{ index: { _index: co.INDEX, _id: d.id } }, d]; }, 'Locations');
+  rejected += await loadFile(path.join(IN, 'gm-loc.ndjson'), (o) => { const d = locToDoc(o.doc); return [{ index: { _index: co.INDEX, _id: d.id } }, d]; }, 'Locations');
   // contacts -> score-gated upsert into the Master DB (email-keyed)
   { const file = path.join(IN, 'gm-contacts.ndjson');
     if (fs.existsSync(file)) { const rl = readline.createInterface({ input: fs.createReadStream(file), crlfDelay: Infinity });
-      let buf = [], n = 0; const flush = async () => { if (!buf.length) return; const b = buf.splice(0); try { await withRetry(() => os.bulkUpsert(client, b)); } catch (e) {} };
+      // This catch used to be empty, so a contacts batch could fail wholesale and still be counted as
+      // upserted. Count what was actually lost and keep the reason.
+      let buf = [], n = 0, cerr = 0, cwhy = '';
+      const flush = async () => { if (!buf.length) return; const b = buf.splice(0);
+        try { await withRetry(() => os.bulkUpsert(client, b)); }
+        catch (e) { cerr += b.length; if (!cwhy) cwhy = (e && e.message) || String(e); } };
       for await (const l of rl) { if (!l.trim()) continue; let c; try { c = JSON.parse(l); } catch { continue; }
         if (!c.email) continue;
         const doc = os.recordToDoc({ 'Time Stamp': now.slice(0, 10), 'Source': 'Employee', 'Web Source URL': c.bio || c.src || '', 'Domain': (c.email || '').split('@')[1] || '', 'First': c.first, 'Last': c.last, 'Gender': c.gender, 'Email Address': c.email, 'Email Type': classifyEmail(c.email), 'LinkedIn URL': c.linkedin, 'Phone': c.phone || '', 'Phone Type': c.phone_type || '' }, now);
         if (doc.email) { buf.push(doc); n++; } if (buf.length >= 2000) await flush(); }
-      await flush(); console.error(`  employees: ${n.toLocaleString()} upserted to Master DB (Source="Employee")`); }
+      await flush();
+      console.error(`  employees: ${(n - cerr).toLocaleString()} upserted to Master DB (Source="Employee")`
+        + (cerr ? `, ${cerr.toLocaleString()} LOST — ${cwhy}` : ''));
+      rejected += cerr; }
     else console.error('  (no gm-contacts.ndjson)'); }
 
   // backfill LAST (retried) so a connection blip on the big 35.6M update_by_query can't abort the GM writes
@@ -119,5 +159,13 @@ async function loadFile(file, toActions, label) {
     } catch (e) { console.error('  backfill submit failed:', e.message, '(re-run: node gm-upsert.js --backfill-hq)'); }
   }
 
+  if (rejected) {
+    console.error(`\nREJECTED ${rejected.toLocaleString()} writes. Reasons:`);
+    for (const [k, v] of [...errReasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)) {
+      console.error(`  ${v.toLocaleString()} x ${k}`);
+    }
+    console.error(`FAILED after ${Math.round((Date.now() - t0) / 1000)}s — the input is unchanged, re-run once the cause is fixed.`);
+    process.exit(2);          // non-zero, so a chain script stops instead of marching on
+  }
   console.error(`DONE in ${Math.round((Date.now() - t0) / 1000)}s`);
 })().catch((e) => { console.error('ERR', e && e.stack || e); process.exit(1); });
