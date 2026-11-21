@@ -19,6 +19,24 @@ const { classifyEmail } = require('./extractor');   // Employee contacts need an
 
 const arg = (f, d) => { const i = process.argv.indexOf(f); return i > -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : d; };
 const IN = arg('--in', ''); const now = new Date().toISOString();
+
+// PROVENANCE. Overture records carry source_map ("overture:2026-11-18.0 (meta,Overture)"), so the
+// release a record came from is a query. Google Maps records carried NOTHING: after the 2026-11-20
+// export landed, the only way to show which records it produced was to look ids up from the input file
+// -- which works exactly as long as nobody deletes the file. An ingest you cannot ask about afterwards
+// is an ingest you cannot audit, reconcile or roll back.
+//
+// Derived from the --in directory (/data/gm-20261120 -> "gm:2026-11-20") so an ordinary run is
+// labelled without anyone remembering a flag; --source-map overrides it.
+//
+// Set on NEW records only -- synthesized HQs and child Locations, both of which go through CC(). An
+// existing HQ being updated keeps the source_map it already had: that company may have come from
+// Overture, and overwriting its provenance with "the last thing that touched it" would destroy the
+// information this field exists to hold.
+const SOURCE_MAP = arg('--source-map', (() => {
+  const m = /gm-(\d{4})(\d{2})(\d{2})/.exec(require('path').basename(IN || ''));
+  return m ? `gm:${m[1]}-${m[2]}-${m[3]}` : (IN ? 'gm:' + require('path').basename(IN) : '');
+})());
 const client = co.makeClient(process.env.OPENSEARCH_ENDPOINT);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function withRetry(fn) { for (let a = 0; ; a++) { try { return await fn(); } catch (e) { if (a >= 6) throw e; await sleep(Math.min(16000, 500 * 2 ** a)); } } }
@@ -53,7 +71,7 @@ const CC = (g) => ({ name: g.name || '', website: g.website || '', category: g.c
   // stored as "United States" was unreachable through the very facet it counted into.
   ...(g.locality ? { locality: co.canonPlace(g.locality) } : {}), ...(g.region ? { region: co.canonPlace(g.region) } : {}),
   ...(g.country ? { country: co.canonPlace(g.country) } : {}),
-  ...(g.time_stamp ? { time_stamp: g.time_stamp } : {}), ...(g.source_map ? { source_map: g.source_map } : {}) });
+  ...(g.time_stamp ? { time_stamp: g.time_stamp } : {}), ...((g.source_map || SOURCE_MAP) ? { source_map: g.source_map || SOURCE_MAP } : {}) });
 const locToDoc = (g) => naics.assignNaics({ id: g.cid || ('gm:' + g.root_domain), domain: g.root_domain, company_type: 'Location', cc_refreshed_at: now,
   ...(g.company_name ? { company_name: g.company_name } : {}), ...(g.root_domain ? { root_domain: co.registrableDomain(g.root_domain) } : {}), ...CC(g) });
 const hqNewToDoc = (id, d) => naics.assignNaics({ id, domain: d.domain, company_type: 'HQ', locality: co.canonPlace(d.locality), region: co.canonPlace(d.region), country: co.canonPlace(d.country),
@@ -114,6 +132,7 @@ async function loadFile(file, toActions, label) {
   if (!process.env.OPENSEARCH_ENDPOINT) { console.error('OPENSEARCH_ENDPOINT required'); process.exit(1); }
   const t0 = Date.now();
   await assertWritable();
+  console.error(`source_map for NEW records: ${SOURCE_MAP || '(none — pass --source-map)'}`);
   let rejected = 0;
   // HQ: existing -> partial update (company_type + rollups + location_count); synthesized -> index new
   rejected += await loadFile(path.join(IN, 'gm-hq.ndjson'), (o) => o.isNew
