@@ -124,7 +124,12 @@ function cleanContactLinkedin(u) {
 // Lazily loads cc-home-enrich + li-name + the gender map; all cached. Never throws.
 let _che = null, _gmap = null, _li = null;
 const _cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : '';
-const _gmapLoad = () => { if (!_gmap) { try { _gmap = require('./extractor').loadGenderMap(require('path').join(__dirname, 'names-genders.csv')); } catch (e) { _gmap = {}; } } return _gmap; };
+// The fallback is Object.create(null), NOT {}: loadGenderMap already returns a null-prototype map for
+// the reason documented there, but this catch handed back a plain object, so a failed CSV load silently
+// re-armed the same bug on the contact ingest path -- a first name of "constructor"/"tostring"/"valueof"
+// reads back the inherited FUNCTION. The read below goes through genderFromMap, which only accepts a
+// string, so neither the map's prototype nor a future caller's choice of literal can put one in a record.
+const _gmapLoad = () => { if (!_gmap) { try { _gmap = require('./extractor').loadGenderMap(require('path').join(__dirname, 'names-genders.csv')); } catch (e) { _gmap = Object.create(null); } } return _gmap; };
 const _liLoad = () => { if (_li === null) { try { _li = require('./li-name'); } catch (e) { _li = false; } } return _li; };
 // OpenSearch refuses any keyword term over 32,766 BYTES and rejects the WHOLE document with
 // illegal_argument_exception. The bulk item fails while bulkUpsert still counts it toward `indexed`,
@@ -162,7 +167,7 @@ function ensureNameGender(doc) {
     }
     // 2) gender from the name we have
     if ((!doc.gender || !String(doc.gender).trim()) && doc.first) {
-      doc.gender = _gmapLoad()[String(doc.first).toLowerCase()] || '';
+      doc.gender = require('./extractor').genderFromMap(_gmapLoad(), String(doc.first).toLowerCase());
     }
     // 3) no name at all, or a name the map can't gender -> use the LinkedIn slug's name. li-name.resolve
     //    only overwrites an EXISTING name when the slug name resolves to a gender.
