@@ -10,7 +10,7 @@
  */
 const https = require("https");
 const http = require("http");
-const { cleanEmail, classifyEmail, toE164, getBaseDomain, countryCodeFromDomain, splitExtension, nameFromSlug } = require("./extractor");
+const { cleanEmail, classifyEmail, toE164, getBaseDomain, countryCodeFromDomain, splitExtension, nameFromSlug, genderFromMap } = require("./extractor");
 
 const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36";
 const digits = (s) => String(s || "").replace(/\D/g, "");
@@ -221,7 +221,9 @@ function recordFromCardText(text, sourceUrl, opts = {}) {
   try { rec['Domain'] = getBaseDomain(url) || ''; } catch (e) { /* leave blank */ }
   if (!rec['First'] || !rec['Last']) return null;
   if (!rec['Email Address'] && !rec['Phone']) return null;      // unreachable -> not a usable contact
-  if (!rec['Gender'] && opts.genderMap) rec['Gender'] = opts.genderMap[String(rec['First']).toLowerCase()] || '';
+  // genderFromMap: opts.genderMap is caller-supplied and may be a plain {}, which answers a first name
+  // of "Constructor"/"Tostring" with an inherited function. See extractor.loadGenderMap.
+  if (!rec['Gender'] && opts.genderMap) rec['Gender'] = genderFromMap(opts.genderMap, String(rec['First']).toLowerCase());
   return rec;
 }
 

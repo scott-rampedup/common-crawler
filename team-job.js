@@ -53,7 +53,7 @@ function toRecord(p, pageUrl, genderMap, nowIso) {
     'Last': p.last || '',
     // Gender is not cosmetic here: modelMissingEmails only models for records that have one, so a
     // person without a gender lookup silently loses the modelled address the user asked for.
-    'Gender': (genderMap && genderMap[String(p.first || '').toLowerCase()]) || '',
+    'Gender': ex.genderFromMap(genderMap, String(p.first || '').toLowerCase()),
     'Title': '',
     'Position': p.title || '',
     'Description': '',

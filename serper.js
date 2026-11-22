@@ -107,7 +107,7 @@ function bioRowToRecord(r, genderMap = {}, today){
   if(!/^https?:\/\//i.test(url)) return null;
   const nm = _ex.nameFromSlug(_ex.nameSlugFromUrl(url));
   const first = nm.first || "", last = nm.last || "";
-  const gender = first ? (genderMap[first.toLowerCase()] || "") : "";
+  const gender = first ? _ex.genderFromMap(genderMap, first.toLowerCase()) : "";
   const domain = _ex.getBaseDomain(url);
   const cc = _ex.countryCodeFromDomain(domain);
   const pathHit = _ex.pathIdFromUrl(url);

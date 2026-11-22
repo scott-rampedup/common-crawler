@@ -258,5 +258,18 @@ T('genderFromMap: a non-string value is not a gender',
 T('genderFromMap: null map / empty name are safe',
   () => { eq(genderFromMap(null, 'x'), '', 'null'); eq(genderFromMap({}, ''), '', 'empty'); });
 
+// The dangerous shape is not the visible function -- it is a coercion that makes one look plausible.
+// contacts-csv-ingest letter()s the map's answer, and String(Object) starts "function", so /^f/i
+// matched and a first name of "Constructor" was ingested as a confident 'F'. Garbage announces
+// itself; a wrong gender on a real-looking contact does not. Guard the pair, not just the map.
+const letter = (g) => (/^m/i.test(g) ? 'M' : /^f/i.test(g) ? 'F' : '');
+T('letter(): raw prototype leak would read as F -- the bug this guards',
+  () => eq(letter({}['constructor']), 'F', 'unguarded coercion still does this'));
+T('letter(genderFromMap()): a prototype name yields no gender',
+  () => { eq(letter(genderFromMap({}, 'constructor')), '', 'ctor'); eq(letter(genderFromMap({}, 'tostring')), '', 'toString'); });
+T('letter(genderFromMap()): a real entry survives the pair',
+  () => { const m = Object.create(null); m.jane = 'F'; m.bob = 'M';
+          eq(letter(genderFromMap(m, 'jane')), 'F', 'jane'); eq(letter(genderFromMap(m, 'bob')), 'M', 'bob'); });
+
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -333,7 +333,7 @@ function buildContacts({ linkedin = [], emails = [], bio = [] }, { genderMap = {
   const contacts = [], structured = [];
   for (const g of groups.values()) {
     if (g.types.size < 2) continue;                                  // need >= 2 agreeing fields
-    const gender = genderMap[(g.first || '').toLowerCase()] || '';   // must be gender-assignable
+    const gender = ex.genderFromMap(genderMap, (g.first || '').toLowerCase());   // must be gender-assignable
     if (!gender) continue;
     contacts.push([g.first, g.last, gender, g.email || '', address || '', g.linkedin || '', g.bio || ''].join(', ') + ';');
     structured.push({ first: g.first, last: g.last, gender, email: g.email || '', address: address || '', linkedin: g.linkedin || '', bio: g.bio || '' });
@@ -379,7 +379,7 @@ function buildEmployees({ linkedin = [], emails = [], bio = [] }, { genderMap = 
   const structured = [];
   for (const p of people) {
     if (!p.email) continue;                                              // email-keyed store needs an email
-    const gender = genderMap[(p.first || '').toLowerCase()] || '';
+    const gender = ex.genderFromMap(genderMap, (p.first || '').toLowerCase());
     if (!p.linkedin && !p.bio && !gender) continue;                     // email-only person must have a known first name
     structured.push({ first: p.first, last: p.last, gender, email: p.email, address, linkedin: p.linkedin, bio: p.bio });
   }

@@ -145,7 +145,10 @@ function buildRecords(text, genderMap) {
   let genderFixed = 0, genderBlank = 0;
   const genderOf = (fileVal, first) => {
     if (!useMap) return letter(fileVal);
-    const g = letter(genderMap[String(first || '').toLowerCase()] || '');
+    // genderFromMap, not a bare index: letter() turns an inherited Object.prototype function into a
+    // confident 'F' (String(fn) starts "function"), so a first name of "Constructor"/"Tostring" would
+    // be ingested as female rather than as obvious garbage. See extractor.loadGenderMap.
+    const g = letter(ex.genderFromMap(genderMap, String(first || '').toLowerCase()));
     // A uniform column carries no information, so an unknown name is left blank rather than given
     // the repeated value back. A varying column does carry some, so it stands where the map is silent.
     if (!g) { genderBlank++; return genderIsLabel ? '' : letter(fileVal); }
@@ -240,8 +243,11 @@ function buildRecords(text, genderMap) {
   if (!CSV) { console.error('usage: node contacts-csv-ingest.js <file.csv> [--apply] [--source NAME]'); process.exit(1); }
   const file = path.isAbsolute(CSV) ? CSV : path.join(process.cwd(), CSV);
   if (!fs.existsSync(file)) { console.error('no such file: ' + file); process.exit(1); }
-  let genderMap = {};
-  try { genderMap = ex.loadGenderMap('names-genders.csv'); } catch { /* optional */ }
+  // __dirname, not a bare relative name: resolved against the CWD this silently missed the file
+  // whenever the script was run from anywhere but the repo root, and fell through to the empty map --
+  // which is how the plain-{} path above was reachable at all rather than merely theoretical.
+  let genderMap = Object.create(null);
+  try { genderMap = ex.loadGenderMap(path.join(__dirname, 'names-genders.csv')); } catch { /* optional */ }
 
   const { records, noEmailRows, stats, unmapped, mapped } = buildRecords(fs.readFileSync(file, 'utf8'), genderMap);
   const N = (x) => Number(x || 0).toLocaleString();
