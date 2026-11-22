@@ -39,7 +39,28 @@ function parseAddr(addr) {
   const total = (await client.count({ index: INDEX, body: { query } })).body.count;
   console.error(`bad-domain company records: ${total.toLocaleString()} | mode: ${APPLY ? 'APPLY' : 'DRY RUN'}`);
 
-  let scanned = 0, enriched = 0, geoFilled = 0, mergeShells = 0, batch = [];
+  let scanned = 0, enriched = 0, geoFilled = 0, mergeShells = 0, providerSelf = 0, batch = [];
+
+  // THE PROVIDER IS ITSELF A COMPANY, and it has a record in here like anyone else.
+  //
+  // non-company-domains splits its list in two and tests them differently: PLATFORM_HOSTS get the
+  // mailbox test, because "an @facebook.com address really does work at Facebook", while FREEMAIL_HOSTS
+  // are cleared OUTRIGHT on the reasoning that nobody is employed by their mailbox provider. That
+  // reasoning holds for a contact. It does not hold for a COMPANY record, where the provider itself is
+  // one of the companies -- and there is no mailbox here to test with.
+  //
+  // Measured 2026-11-22 over all 171,207 matched records: 670 (0.39%) are the provider itself, 336 of
+  // them HQ. Without this guard --apply would blank the real corporate domain of Telefonica Moviles
+  // Espana (telefonica.es), Frontier (104 records), Sky (97), Cox (67), O2 (7) and the National
+  // University of Singapore (19), and the field would simply be gone.
+  //
+  // The company-side equivalent of the mailbox test: the record IS the provider when the first token of
+  // its name matches the domain's first label. Deliberately narrow -- it only protects a record that
+  // names itself after the host, which is exactly the case the outright rule gets wrong. It will not
+  // catch a provider under a different trading name (Deutsche Telekom on t-online.de), so 670 is a
+  // floor, not a ceiling; widen it only with a measurement in hand.
+  const firstLabel = (d) => String(d || '').toLowerCase().replace(/^www\./, '').split('.')[0];
+  const nameHead = (s) => (String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').trim().split(/\s+/)[0] || '');
   const flush = async () => { if (APPLY && batch.length) { const r = await client.bulk({ body: batch, refresh: false }); if ((r.body || r).errors) { /* ignore per-item */ } } batch = []; };
 
   let resp = await client.search({ index: INDEX, scroll: '5m', size: 1000,
@@ -54,6 +75,9 @@ function parseAddr(addr) {
       // locality/region/country when GM left them blank. Only flag the mass-merge shell (an HQ that
       // aggregated many businesses under one bad host, location_count huge) for reporting — not deletion.
       if (s.company_type === 'HQ' && Number(s.location_count) > 50) mergeShells++;
+      // Leave the provider's own record exactly as it is -- domain, website and all.
+      const lab = firstLabel(s.domain);
+      if (lab && nameHead(s.name || s.company_name) === lab) { providerSelf++; continue; }
       const doc = { domain: '', website: '' };
       if (s.name && !s.company_name) doc.company_name = s.name;          // apply Company Name from the source business name
       if (!s.locality && !s.region && s.full_address) { const a = parseAddr(s.full_address); if (a.city || a.region) { doc.locality = co.titleCase ? co.titleCase(a.city) : a.city; doc.region = (a.region || '').toUpperCase(); doc.country = a.country || 'United States'; geoFilled++; } }
@@ -67,5 +91,5 @@ function parseAddr(addr) {
   await flush();
   try { await client.clearScroll({ body: { scroll_id: [sid] } }); } catch (e) { /* */ }
   console.error('\nsample changes:'); for (const x of samples) console.error('  ', JSON.stringify(x));
-  console.error(`\nDONE: scanned ${scanned.toLocaleString()} | ${APPLY ? 'fixed' : 'would fix'} ${enriched.toLocaleString()} records (domain/website cleared, geo-filled ${geoFilled.toLocaleString()}) | kept all; ${mergeShells} mass-merge shell(s) flagged${APPLY ? '' : '  (dry run — add --apply)'}`);
+  console.error(`\nDONE: scanned ${scanned.toLocaleString()} | ${APPLY ? 'fixed' : 'would fix'} ${enriched.toLocaleString()} records (domain/website cleared, geo-filled ${geoFilled.toLocaleString()}) | kept all; ${providerSelf.toLocaleString()} left untouched as the provider's own record; ${mergeShells} mass-merge shell(s) flagged${APPLY ? '' : '  (dry run — add --apply)'}`);
 })().catch((e) => { console.error('ERR', e.message); process.exit(1); });
