@@ -106,4 +106,24 @@ async function queueBioUrls(file, opts = {}) {
   return { queued: lines.length, objects, failed };
 }
 
-module.exports = { queueBioUrls, chunkByBytes, sourceNameFor, MAX_BODY, MAX_URLS };
+// May a reader stop before taking `next`? Lives here, with the writer, because the hazard is created
+// by how this module writes: chunkByBytes emits many objects back to back, and S3's LastModified has
+// only ONE-SECOND granularity, so a burst shares timestamps. On 2026-11-21 one hand-off wrote 57
+// objects across four seconds -- 10, 20, 20 and 7 to a second.
+//
+// bio-feed may only advance its cursor to a timestamp strictly BELOW the earliest object it left
+// behind (otherwise an unread object is skipped for good). So a pass that stops PART WAY through a
+// same-second group cannot advance the cursor at all: next pass re-reads exactly those objects, finds
+// their URLs already queued, does nothing, and never reaches the rest. A livelock -- and it reads as a
+// run of healthy passes, because the cursor doc updates, `objects` is non-zero and nothing errors.
+//
+// Reachable only once BIO_FEED_MAX_URLS is small enough that one group no longer fits; the 250,000
+// default swallowed every group whole, which is why lowering it to 50,000 is what exposed this.
+// Finishing the group overruns the cap by at most one group and guarantees forward progress.
+function truncateHere(urlCount, maxUrls, next, last) {
+  if (urlCount < maxUrls) return false;
+  if (last && next && next.iso === last.iso && next.prio === last.prio) return false;  // finish the group
+  return true;
+}
+
+module.exports = { queueBioUrls, chunkByBytes, sourceNameFor, truncateHere, MAX_BODY, MAX_URLS };

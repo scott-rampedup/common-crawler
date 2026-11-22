@@ -242,6 +242,60 @@ T('chunk: one oversized URL still gets its own chunk rather than being dropped',
   eq(chunkByBytes([big], 100, 20000), [[big]], 'oversized');
 });
 
+// ---- truncateHere: a pass must never stop inside a same-second group ----
+// S3 LastModified is second-granular, so a burst of queued objects shares timestamps. bio-feed may
+// only advance its cursor BELOW the earliest object it left behind, so stopping part way through a
+// group means the cursor cannot move at all and the same objects are re-read forever while the rest
+// are never reached. Reproduce the real shape: 57 objects over four seconds (10/20/20/7), a cap that
+// admits only ~17, and the group of 20 that trapped it on 2026-11-21.
+const { truncateHere } = require('./queue-bio-urls');
+// Walk the objects exactly as bio-feed's reader loop does, and report what the cursor could become.
+const runPass = (objs, maxUrls, perObj) => {
+  const consumed = []; let urls = 0;
+  for (const f of objs) {
+    if (truncateHere(urls, maxUrls, f, consumed.length ? consumed[consumed.length - 1] : null)) break;
+    consumed.push(f); urls += perObj;
+  }
+  const keys = new Set(consumed.map((c) => c.key));
+  let minSkipped = '';
+  for (const f of objs) if (!keys.has(f.key) && (!minSkipped || f.iso < minSkipped)) minSkipped = f.iso;
+  let cur = '';
+  if (minSkipped) { for (const f of consumed) if (f.iso < minSkipped && f.iso > cur) cur = f.iso; }
+  else cur = consumed.length ? consumed[consumed.length - 1].iso : '';
+  return { consumed: consumed.length, cursor: cur };
+};
+const burst = (() => {
+  const out = []; let n = 0;
+  for (const [sec, cnt] of [['28', 10], ['29', 20], ['30', 20], ['31', 7]]) {
+    for (let i = 0; i < cnt; i++) out.push({ key: 'k' + (n++), iso: `2026-11-21T23:17:${sec}.000Z`, prio: 0 });
+  }
+  return out;
+})();
+T('truncateHere: the real 57-object burst still advances the cursor', () => {
+  const r = runPass(burst, 50000, 3000);          // cap admits ~17 objects; the group is 20
+  if (r.consumed <= 17) throw new Error(`stopped at ${r.consumed} objects, inside the group`);
+  if (!r.cursor) throw new Error('cursor could not advance — this is the livelock');
+  eq(r.cursor, '2026-11-21T23:17:29.000Z', 'advanced a whole group');
+});
+T('truncateHere: repeated passes drain the burst instead of looping', () => {
+  let rest = burst.slice(), cur = '', guard = 0;
+  while (rest.length && guard++ < 10) {
+    const r = runPass(rest, 50000, 3000);
+    if (!r.consumed) throw new Error('a pass consumed nothing');
+    const next = r.cursor || cur;
+    if (next === cur && rest.length) throw new Error('cursor stalled — livelock');
+    cur = next; rest = rest.filter((f) => f.iso > cur);
+  }
+  eq(rest.length, 0, 'queue drained');
+  if (guard >= 10) throw new Error('took too many passes');
+});
+T('truncateHere: stops normally at a group boundary once the cap is reached',
+  () => eq(truncateHere(50000, 50000, { iso: 'B', prio: 0 }, { iso: 'A', prio: 0 }), true, 'boundary'));
+T('truncateHere: does not stop below the cap',
+  () => eq(truncateHere(10, 50000, { iso: 'B', prio: 0 }, { iso: 'A', prio: 0 }), false, 'under cap'));
+T('truncateHere: a priority change is a boundary even at the same timestamp',
+  () => eq(truncateHere(50000, 50000, { iso: 'A', prio: 1 }, { iso: 'A', prio: 0 }), true, 'prio boundary'));
+
 // ---- genderFromMap: a plain {} must not answer with its prototype ----
 // cc-engine.js defaulted `genderMap = {}` in six signatures. A plain object answers "constructor",
 // "tostring" and "valueof" with inherited FUNCTIONS, which are truthy, and 'constructor' passes the

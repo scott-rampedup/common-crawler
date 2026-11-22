@@ -44,6 +44,7 @@ const BUCKET = process.env.OUT_BUCKET || `aws-athena-query-results-475987770186-
 const PREFIX = process.env.MONITOR_QUEUE_PREFIX || 'monitor-queue/pending/';
 const CFG = process.env.CC_CONFIG_INDEX || 'cc_config';
 const CURSOR_ID = 'bio_feed_cursor';
+const { truncateHere } = require('./queue-bio-urls');
 const MAX_URLS = Number(process.env.BIO_FEED_MAX_URLS) || 250000;
 const RUN = 'feed-' + new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
 
@@ -111,7 +112,7 @@ async function getCursor(osc) {
   const prioOf = new Map();
   const consumed = [];
   for (const f of fresh) {
-    if (urls.size >= MAX_URLS) {
+    if (truncateHere(urls.size, MAX_URLS, f, consumed.length ? consumed[consumed.length - 1] : null)) {
       console.error(`  hit BIO_FEED_MAX_URLS (${MAX_URLS.toLocaleString()}) — ${(fresh.length - consumed.length).toLocaleString()} object(s) wait for the next pass`);
       break;
     }
