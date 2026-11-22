@@ -27,7 +27,15 @@ function parseAddr(addr) {
 
 (async () => {
   if (!process.env.OPENSEARCH_ENDPOINT) { console.error('need OPENSEARCH_ENDPOINT'); process.exit(1); }
-  const query = { bool: { should: [...co.NON_COMPANY_DOMAINS].map((d) => ({ term: { domain: d } })), minimum_should_match: 1 } };
+  // ONE `terms` query, not a bool.should of one `term` per host. The should-form built a clause per
+  // domain and the list is ~4,900 long, so every run died on
+  //   query_shard_exception: maxClauseCount is set to 1024
+  // before reading a single record. That limit counts BOOL CLAUSES; a `terms` query is a single clause
+  // holding many values, bounded instead by index.max_terms_count (65,536 by default), so the same
+  // list fits with room to spare. This tool has therefore been unable to run since the list passed
+  // 1,024 entries -- which is part of why the platform-domain records it exists to clean are still
+  // in the index.
+  const query = { terms: { domain: [...co.NON_COMPANY_DOMAINS] } };
   const total = (await client.count({ index: INDEX, body: { query } })).body.count;
   console.error(`bad-domain company records: ${total.toLocaleString()} | mode: ${APPLY ? 'APPLY' : 'DRY RUN'}`);
 
