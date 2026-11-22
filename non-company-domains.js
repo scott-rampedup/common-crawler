@@ -167,6 +167,35 @@ const PLATFORM_HOSTS = new Set([
   'is.gd', 'tiny.cc', 'bl.ink', 'short.io', 'qr.page', 'wa.link', 'linktr.ee',
   'idealist.org', 'complaintsboard.com', 'information.com', 'intensedebate.com', 'leadiq.com',
   'opendorse.com', 'prowly.com', 'indiemart.com', 'hugedomains.com',
+  // Added 2026-11-22, measured rather than guessed: these are the hosts standing as the root domain of
+  // the most DUPLICATE HQ records in the company index, against the rule of one HQ per root domain.
+  // Counts are HQ rows sharing that single domain.
+  //
+  // 'indiamart.com' (50,757 HQ rows) is the headline, and it is a TYPO fix as much as an addition:
+  // 'indiemart.com' directly above was already meant to be this host and never matched anything,
+  // because matching is exact on the full host. One transposed letter is the whole reason the single
+  // worst offender in the index walked past a guard written for it. The misspelling stays -- it costs
+  // nothing and may yet be a real squat.
+  //
+  // Exact host strings, taken from the index as stored: 'apps.apple.com' is listed but 'apple.com' is
+  // NOT, and 'open.spotify.com' but not 'spotify.com', because exact matching means the subdomain can
+  // be refused without touching the genuine company behind it.
+  'indiamart.com',          // 50,757 HQ rows
+  'behance.net',            //  3,021
+  'open.spotify.com',       //  1,534
+  'fiverr.com',             //    846
+  'vimeo.com',              //    836
+  'forms.gle',              //    811
+  'medium.com',             //    736
+  'anchor.fm',              //    628
+  'apps.apple.com',         //    521
+  'g.co',                   //    452
+  'discord.gg',             //    444
+  // Deliberately NOT added, though they appear in the same measurement: marriott.com (927),
+  // hilton.com (425) and all.accor.com (448). Those are real employers whose records are duplicated
+  // because individual properties were filed as HQ instead of Location. Blocklisting them would
+  // delete genuine companies to paper over a classification bug; they are hq-resolve-dryrun's job,
+  // under its rules 1 and 4 (one HQ per registrable root, everything else becomes a Location).
 ]);
 
 const NON_COMPANY_DOMAINS = new Set([...FREEMAIL_HOSTS, ...PLATFORM_HOSTS]);

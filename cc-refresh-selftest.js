@@ -296,6 +296,30 @@ T('truncateHere: does not stop below the cap',
 T('truncateHere: a priority change is a boundary even at the same timestamp',
   () => eq(truncateHere(50000, 50000, { iso: 'A', prio: 1 }, { iso: 'A', prio: 0 }), true, 'prio boundary'));
 
+// ---- non-company domains: the hosts that broke "one HQ per root domain" ----
+// Measured 2026-11-22: HQ records 40,922,853 against ~20,075,338 distinct root domains, so 50.9% were
+// duplicates. The worst were platform hosts standing as a company website. This matters beyond tidiness
+// because cc-monthly-refresh fans ONE fetched page out to every record sharing that URL -- so a single
+// read of indiamart.com would write IndiaMART's logo, description and address onto 50,757 unrelated
+// businesses and stamp cc_crawl on them. Matching is EXACT on the full host, which is both why
+// 'indiemart.com' never matched IndiaMART and why 'apps.apple.com' can be refused without touching
+// Apple. Pin both halves: the refusals, and the real employers that must survive.
+const ncd = require('./non-company-domains');
+for (const host of ['indiamart.com', 'behance.net', 'open.spotify.com', 'fiverr.com', 'vimeo.com',
+                    'forms.gle', 'medium.com', 'anchor.fm', 'apps.apple.com', 'g.co', 'discord.gg']) {
+  T(`non-company: ${host} cannot stand as a company domain`,
+    () => eq(ncd.isBadCompanyDomain(host), true, host));
+}
+// Real employers duplicated by a CLASSIFICATION bug, not a platform one. Blocklisting these would
+// delete genuine companies instead of reclassifying their properties as Locations.
+for (const host of ['marriott.com', 'hilton.com', 'all.accor.com', 'apple.com', 'spotify.com',
+                    'linklaters.com']) {
+  T(`non-company: ${host} is a real employer and must NOT be blocked`,
+    () => eq(ncd.isBadCompanyDomain(host), false, host));
+}
+T('non-company: matching is exact, so a subdomain never blocks its parent',
+  () => { eq(ncd.isBadCompanyDomain('apps.apple.com'), true, 'sub'); eq(ncd.isBadCompanyDomain('apple.com'), false, 'parent'); });
+
 // ---- genderFromMap: a plain {} must not answer with its prototype ----
 // cc-engine.js defaulted `genderMap = {}` in six signatures. A plain object answers "constructor",
 // "tostring" and "valueof" with inherited FUNCTIONS, which are truthy, and 'constructor' passes the
